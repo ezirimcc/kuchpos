@@ -1,0 +1,424 @@
+# KuchPos — Specification
+
+**Status:** Draft 3 — Batch 1 and Batch 2 answered; permission table and proposed defaults accepted · **Date:** 2026-10-01 · **Nothing has been built yet.**
+
+KuchPos is a point-of-sale (POS) and inventory application for agricultural products shops. It holds several independent businesses, each kept completely separate.
+
+How to read this document:
+
+- **Confirmed** = you told me this. I treat it as fixed.
+- **Proposed** = my suggested default.
+- **Open** = I need an answer from you before the related part can be built.
+
+> **Accepted on 2026-10-01:** you approved the permission table (§5) and all proposed defaults (§7, and the items marked "Proposed" inside §4 and §8). They are now treated as **confirmed**, except where §10 still lists a question. The word "Proposed" is left in place so you can see which items came from me rather than from you.
+
+---
+
+## 1. Goals
+
+1. Cashiers can sell quickly and correctly, in any unit, with any mix of payment methods.
+2. The owner always knows how much stock is on the shelf and in the storeroom, and why it changed.
+3. The owner always knows who owes the shop money, and how much.
+4. Managers and the accountant can see reports from their own computers over the internet.
+5. Every change to stock or money can be traced to a person, a time, and a reason.
+
+## 2. Confirmed requirements
+
+| # | Requirement |
+|---|---|
+| C1 | Modern, easy-to-use web application, used mainly on computers. |
+| C2 | Online access from separate computers for managers and the accountant. |
+| C3 | Individual staff accounts with roles and permissions. Starting roles: admin, manager, accountant, cashier, storekeeper. |
+| C4 | Separate **shelf** and **storeroom** stock. Receive goods, transfer between locations, count stock, record adjustments with reasons. |
+| C5 | Several units per product. One base unit, plus other units with conversions specific to that product (e.g. single = 1, pack = 10 singles, carton = 100 singles). |
+| C6 | Each selling unit has its own price. A pack or carton price may already include a bulk discount. |
+| C7 | All units draw from one base-unit stock balance per location. Purchases, transfers and sales all let the user choose a unit. |
+| C8 | Some products are sold by weight (e.g. base unit kilogram, a bag = 50 kg, a sale of 2.5 kg). |
+| C9 | Payments: cash, external card/POS terminal, bank transfer, split payments, and credit. Version 1 only *records* external payments; no direct link to banks or terminals. |
+| C10 | Customer accounts showing credit sales, part payments, outstanding balance, later repayments. |
+| C11 | Extra discounts need a manager's approval. Preset unit prices do not. Record cashier, approving manager, reason, amount, time. The approval is valid only for that specific sale and that specific discount. |
+| C12 | Reports on sales, collections, stock movement and customer debt, for authorised users only. |
+| C13 | Basic offline checkout is wanted. Design for it from the start; build it after the online workflows are dependable. |
+| C14 | **Currency: Nigerian Naira (₦) with kobo.** Most prices are whole Naira, but kobo must be supported (two decimal places). |
+| C15 | **Tax rate is a setting**, changeable in the app because the rate changes in Nigeria. **Default 0%.** |
+| C16 | **Several independent businesses: 5 now, possibly 20.** Each has its own products, prices, stock, customers, staff, settings and reports. Nothing is shared and nothing moves between them. **There is no "branch" level.** |
+| C17 | **Owner role.** An owner has full admin rights in every business and can view all businesses. There can be several owners. |
+| C18 | Checkout computers run **Windows**. |
+| C19 | Receipts print on a **58 mm or 80 mm receipt printer**. A **barcode scanner** will be added in future; products have no barcodes today. |
+| C20 | Existing records are in **Excel**. **Admins can import records from Excel** into the app. |
+| C21 | **Tax:** shelf prices **include** tax. Each product has a **"taxable" tick-box**. |
+| C22 | **Internet/power outages are frequent.** Offline checkout is therefore required **before go-live**, not after. |
+| C23 | **One checkout computer per business** today; more may be added later. |
+
+## 3. Out of scope for version 1
+
+- Direct integration with banks, card terminals or mobile money.
+- Full accounting (general ledger, payroll, tax filing). KuchPos produces figures the accountant can export.
+- Online shop / customer-facing website.
+- Phone-first layouts (the app will open on a phone, but is designed for computer screens).
+- Supplier purchase orders and supplier debt tracking (only *receiving goods* is included; see §7, P9).
+- Moving stock, customers or debts between businesses (confirmed not needed).
+- Branches inside a business (confirmed not needed).
+- Charging businesses a subscription for using KuchPos, or letting a business sign itself up.
+
+---
+
+## 4. How the main features will work
+
+### 4.1 Products, units and prices
+
+- Every product has exactly one **base unit** (e.g. "single", "kg", "litre"). Stock is always stored in the base unit.
+- A product can have any number of **other units**. Each has a name and a **conversion**: how many base units it contains (pack = 10, carton = 100, bag = 50 kg).
+- Each unit can be marked as usable for **selling**, **purchasing/receiving**, or both.
+- Each selling unit has **its own price**. The carton price does not have to equal 100 × the single price.
+- A product is marked either **whole-number only** (you cannot sell 2.5 cartons of sachets) or **fractional allowed** (you can sell 2.5 kg). Fractional quantities are kept to 3 decimal places (so kilograms are accurate to the gram).
+- **Changing settings never rewrites history.** Every sale line, receipt line and transfer line stores a copy of the unit name, the conversion and the price *as they were at that moment*. If you later change "carton" from 100 to 96, old sales still say 100.
+- A unit that has already been used in a transaction cannot be deleted or have its conversion edited in place. It is retired and a new unit is created. A product's base unit cannot be changed once it has any stock history.
+- Price changes are kept in a price history (old price, new price, who, when).
+
+### 4.2 Stock locations and stock movements
+
+- A **business** has **locations**. Version 1 starts with two per business: **Shelf** and **Storeroom**. (The design allows more locations later without rework.)
+- Stock belongs to one business. Transfers happen only between locations **inside the same business**.
+- Each product has one stock balance **per location**, in base units.
+- Stock only ever changes through a recorded **stock movement**. Each movement stores: product, location, quantity change in base units, the unit and conversion the user picked, type, the document it belongs to, who did it, and when. Movements are never edited or deleted — a mistake is fixed by a new, opposite movement.
+- Movement types:
+  - **Goods received** — stock arrives from a supplier into a chosen location (usually Storeroom). Records supplier, unit, quantity, cost price.
+  - **Transfer** — moves stock between Storeroom and Shelf. One document, two movements (out of one, into the other), saved together.
+  - **Sale** — takes stock out of the selling location.
+  - **Stock count** — staff enter what they physically counted; the system shows the difference from what it expected.
+  - **Adjustment** — corrects a difference, always with a **reason** chosen from a list (damaged, expired, theft/loss, count correction, sample/gift, data entry error, other + note).
+  - **Return** *(proposed, §7)*.
+- **Stock cannot go below zero** while online. If the Shelf has 3 and the cashier tries to sell 5, the sale is refused with a clear message.
+
+### 4.3 Checkout (selling)
+
+1. Cashier finds a product by name, code, or barcode.
+2. Cashier picks the unit (single / pack / carton / kg…) and quantity. The preset price for that unit fills in automatically.
+3. Optional: attach a customer (required for credit sales).
+4. Optional: request an extra discount (needs manager approval, §4.5).
+5. Take payment: one method or several (split).
+6. The sale is saved, stock is reduced, payments are recorded, and a receipt is shown for printing.
+
+Rules:
+
+- **All or nothing.** The sale, its stock movements, its payments and any customer debt are saved in one step. If any part fails, none of it is saved.
+- **No double sales.** Each sale gets a unique ID on the cashier's computer before it is sent. If the Save button is pressed twice, or the network repeats the request, the server recognises the ID and saves it only once.
+- **Two cashiers at once.** If two cashiers try to sell the last item at the same moment, exactly one succeeds; the other gets an "insufficient stock" message.
+- A completed sale is never edited. Corrections happen through a void or return *(proposed, §7)*.
+- **Proposed:** sales take stock from the **Shelf** by default; a permitted user can choose **Storeroom** for a line (useful for 50 kg bags that never sit on the shelf). Permitted users are managers, admins and owners (accepted as P7).
+- **Proposed:** each cashier opens a **till session** at the start of a shift (opening cash) and closes it at the end (counted cash vs expected cash). This is what makes the cash collections report trustworthy.
+
+### 4.4 Payments and customer accounts
+
+- Payment methods: **Cash**, **Card/POS terminal** (recorded, with optional reference number), **Bank transfer** (recorded, with optional reference), **Credit** (added to the customer's account).
+- **Split payment:** any combination. The parts must add up exactly to the sale total.
+- Cash: the app records amount tendered and change given.
+- **Credit sales** require a named customer account. Walk-in customers cannot buy on credit.
+- Each customer has an **account history** that only grows: credit sales increase the balance, repayments reduce it. The outstanding balance is always the sum of that history, so it can always be explained line by line.
+- **Repayments** can be made at any time, by any payment method, in part or in full. **Proposed:** a repayment is applied to the oldest unpaid sale first, unless the user picks a specific sale.
+- A customer **statement** shows every credit sale, every repayment and the running balance.
+
+### 4.5 Extra discounts and manager approval
+
+- A preset unit price (including a cheaper carton price) is **not** a discount and needs no approval.
+- An **extra discount** is any reduction below the preset price, on one line or on the whole sale.
+- Flow: cashier enters the discount and a reason → a manager approves it → the sale can be completed.
+- **Two ways to approve (proposed):** (a) the manager types their own username and password/PIN on the cashier's screen, or (b) the manager approves from their own computer, in a "waiting for approval" list.
+- The approval is tied to **that sale and that exact discount**. If the cashier changes the items, quantities or discount afterwards, the approval no longer matches and a new one is needed. An approval can be used once, and expires if unused (**proposed:** 10 minutes).
+- Stored for every approval: cashier, approving manager, reason, discount amount, time requested, time approved, and the sale it was used on.
+- The server checks the approval when saving the sale. Hiding the button is not the protection; the server check is.
+
+### 4.6 Reports
+
+All reports cover one business at a time. They can be filtered by date range and (where it applies) location, cashier, product or customer, and exported as a spreadsheet file (CSV).
+
+| Report | Shows |
+|---|---|
+| Sales | Sales by day, product, unit, cashier; discounts given; (proposed) cost and profit margin |
+| Collections | Money actually received, by method (cash / card / transfer), by cashier and till session; includes debt repayments |
+| Stock on hand | Current quantity per product per location, shown in base units and in larger units |
+| Stock movement | Every change to stock for a product or period, with who and why |
+| Customer debt | Outstanding balance per customer, age of debt, statement per customer |
+| Discounts & approvals | Every extra discount: cashier, approver, reason, amount |
+| Activity log | Who changed what and when (staff, prices, settings) |
+
+### 4.7 Businesses and owners
+
+Two levels:
+
+```
+KuchPos (the whole system)          ← owners work here, across all businesses
+ └─ Business   e.g. "Kuch Agro – Main Market"   ← completely separate from other businesses
+     ├─ Locations   Shelf, Storeroom
+     ├─ Terminals   the checkout computer(s)
+     ├─ Products, units, prices
+     ├─ Customers and their debts
+     └─ Staff       admin, manager, accountant, cashier, storekeeper
+```
+
+- Each **business** is sealed off. Its products, prices, stock, customers, staff, settings and reports are invisible to every other business. A customer who owes one business owes nothing at another. This is checked on the server for every request, not just hidden on screen.
+- Each **staff member** (admin, manager, accountant, cashier, storekeeper) belongs to **exactly one business**.
+- **Owners** sit above the businesses:
+  - An owner can **create a business**, rename it, and deactivate it (deactivated = nobody can sign in to it; its records are kept).
+  - An owner can **open any business** and do anything its admin can do. The owner picks which business to work in from a list; the screen always shows clearly which business is open.
+  - An owner can create and disable **other owners**. The system refuses to disable the last remaining owner.
+  - An owner sees an **overview page** listing every business side by side (e.g. today's sales, cash collected, outstanding customer debt). Figures are shown per business and are not mixed together.
+  - Everything an owner does inside a business is written to that business's activity log under the owner's name.
+- A person needing ordinary access to two businesses gets two separate accounts (or is made an owner).
+
+### 4.8 Importing from Excel
+
+- A business **admin** (or an owner) can bring in existing records from Excel instead of typing them. An import always goes into the one business that is open.
+- What can be imported: **products with their units and prices**, **opening stock per location**, **customers**, and **customers' opening debts**. (Suppliers too, if useful.)
+- How it works:
+  1. Download a **template** spreadsheet from the app (the columns the app expects, with an example row).
+  2. Copy your data into the template and upload it.
+  3. The app shows a **preview**: how many rows are fine, and for each problem row, the row number and what is wrong ("row 14: price is not a number").
+  4. Nothing is saved until you press Confirm. **The whole file is saved, or none of it** — never half a file.
+- Imports are **traceable**: each one is recorded (who, when, which file, how many rows). Imported opening stock is recorded as "opening balance" stock movements, and imported debts as "opening balance" entries on the customer's account, so they appear in the history like everything else.
+- Uploading the same file twice by mistake is detected and refused.
+- Import is meant for **setting up** a business. Day-to-day changes are made on the normal screens.
+- Because the businesses are independent, each one is imported separately. The same template can be reused, so a shared product list can be loaded into each business in turn.
+
+### 4.9 Tax
+
+- **Confirmed:** the tax rate is a **setting per business**, starting at **0%**. An admin can change it.
+- A rate change takes effect **from the moment it is changed** (or from a chosen date). Old sales keep the rate they were sold at — each sale line stores its own tax rate and tax amount.
+- While the rate is 0%, receipts and reports show no tax line.
+- **Confirmed:** shelf prices **already include tax**. When the rate is above 0, the customer pays the same shelf price, and the receipt shows how much of the total is tax.
+- **Confirmed:** each product has a **"taxable" tick-box**. Unticked products carry no tax whatever the rate.
+- Worked example at 7.5%: a taxable product priced ₦1,075.00 contains ₦75.00 tax (1,075 × 7.5 ÷ 107.5). Tax is worked out per line and rounded to the kobo.
+- Note: because prices include tax, raising the rate does not raise what the customer pays — it reduces what the business keeps. Prices must be raised separately if you want to pass the tax on.
+
+---
+
+## 5. Permission table — **approved 2026-10-01**
+
+✅ = allowed · 👁 = view only · 📝 = can request, needs approval · — = not allowed
+
+**Owner** (not shown as a column): everything in the Admin column, in **every** business, plus the owner-only actions below.
+
+| Owner-only action | Owner | Everyone else |
+|---|:-:|:-:|
+| Create, rename or deactivate a business | ✅ | — |
+| Open any business and act as its admin | ✅ | — |
+| Create or disable owners | ✅ | — |
+| View the all-businesses overview | ✅ | — |
+
+The table below applies **inside one business**.
+
+| Action | Admin | Manager | Accountant | Cashier | Storekeeper |
+|---|:-:|:-:|:-:|:-:|:-:|
+| **Staff & settings** | | | | | |
+| Create / disable staff accounts, set roles, reset passwords | ✅ | — | — | — | — |
+| Change business settings (tax rate, receipt text) | ✅ | — | — | — | — |
+| Create locations and terminals | ✅ | — | — | — | — |
+| Import records from Excel | ✅ | — | — | — | — |
+| View activity log | ✅ | 👁 | 👁 | — | — |
+| **Products & prices** | | | | | |
+| Create / edit products and units | ✅ | ✅ | — | — | — |
+| Change selling prices | ✅ | ✅ | — | — | — |
+| View selling prices | ✅ | ✅ | ✅ | ✅ | ✅ |
+| View cost prices and profit margins | ✅ | ✅ | ✅ | — | — |
+| **Selling** | | | | | |
+| Make a sale at preset prices | ✅ | ✅ | — | ✅ | — |
+| Take cash / card / transfer / split payment | ✅ | ✅ | — | ✅ | — |
+| Sell on credit to a customer | ✅ | ✅ | — | ✅ | — |
+| Request an extra discount | ✅ | ✅ | — | 📝 | — |
+| Approve an extra discount | ✅ | ✅ | — | — | — |
+| Void a sale / process a return *(proposed feature)* | ✅ | ✅ | — | 📝 | — |
+| Open and close own till session | ✅ | ✅ | — | ✅ | — |
+| Review any till session | ✅ | ✅ | ✅ | — | — |
+| **Customers** | | | | | |
+| Create a customer, edit contact details | ✅ | ✅ | ✅ | ✅ | — |
+| Set a customer's credit limit *(proposed feature)* | ✅ | ✅ | — | — | — |
+| Record a debt repayment | ✅ | ✅ | ✅ | ✅ | — |
+| View customer statements and balances | ✅ | ✅ | ✅ | 👁 balance only | — |
+| **Stock** | | | | | |
+| View stock quantities | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Receive goods from a supplier | ✅ | ✅ | — | — | ✅ |
+| Transfer between Storeroom and Shelf | ✅ | ✅ | — | — | ✅ |
+| Enter a stock count | ✅ | ✅ | — | — | ✅ |
+| Record a stock adjustment | ✅ | ✅ | — | — | 📝 |
+| Approve a stock adjustment *(proposed feature)* | ✅ | ✅ | — | — | — |
+| **Reports** | | | | | |
+| Sales report | ✅ | ✅ | ✅ | own shift only | — |
+| Collections report | ✅ | ✅ | ✅ | own shift only | — |
+| Stock on hand / stock movement report | ✅ | ✅ | ✅ | — | ✅ |
+| Customer debt report | ✅ | ✅ | ✅ | — | — |
+| Discounts & approvals report | ✅ | ✅ | ✅ | — | — |
+| Export reports to spreadsheet | ✅ | ✅ | ✅ | — | — |
+
+How this table fits with businesses:
+
+- Every permission applies **only inside the person's own business**. A manager of one business cannot see or approve anything in another.
+- "Admin" means the **admin of one business**. Only owners cross businesses.
+
+Points accepted as part of the approval (say if you want any changed later — permissions are defined in one place so this is cheap):
+
+- The **accountant can record debt repayments** but cannot sell or change stock.
+- The **storekeeper enters cost** when receiving goods but cannot see cost or margin reports.
+- **Cashiers cannot move stock** from Storeroom to Shelf.
+- A **manager who is also selling** can approve their own discount. It is recorded and shown on the approvals report.
+- Only **managers, admins and owners** may sell a line directly from the Storeroom (P7).
+- Each person has exactly one role.
+
+---
+
+## 6. Recommended technical approach
+
+One approach, chosen because it is widely used, well documented, and lets the whole application live in **one project in one programming language** (TypeScript). Versions were checked against official sources on 2026-10-01.
+
+| Part | Plain-language meaning | Choice | Version checked |
+|---|---|---|---|
+| **Interface** | The screens staff see in the browser | **Next.js** (with React), **Tailwind CSS** and **shadcn/ui** for ready-made, clean-looking buttons, tables and forms | Next.js 16.3 · React 19 · Tailwind CSS 4.3 |
+| **Server** | The program on the internet that checks permissions, applies business rules, and talks to the database | The **same Next.js project** — it contains both the screens and the server code | Runs on Node.js 24 (long-term-support line; already installed on your Mac: 24.21.0) |
+| **Database** | Where all products, stock, sales and debts are permanently stored | **PostgreSQL**, a mature database that is strong at "save everything together or nothing" and at handling simultaneous users | PostgreSQL 17 or 18 (18.6 is current) |
+| **Database toolkit** | Lets the code read and write the database safely, and applies structure changes in a controlled, recorded way | **Prisma ORM** | **7.10** (stable). *Version 8 is still a release candidate and must not be used yet.* |
+| **Login system** | Staff accounts, passwords, sessions | **Better Auth**, storing accounts in *our own* database. Staff sign in with a username and password. Only an admin can create accounts — there is no public sign-up page. Passwords are stored scrambled (hashed), never readable. | 1.7 |
+| **Hosting** | The company that keeps the app running online | **Vercel** for the app, **Neon** for the PostgreSQL database, in the same region | Current managed services |
+| **Offline storage** | Where the checkout keeps data on the cashier's computer when the internet is down | The browser's built-in database (**IndexedDB**, used through the **Dexie** library), plus a **service worker** (through **Serwist**) so the app opens without internet | Dexie 4 · Serwist 9 |
+| **Money & quantity maths** | Avoids rounding errors | Exact decimal numbers in the database (`NUMERIC`) and the **decimal.js** library in code. Ordinary computer "floating point" numbers are never used for money or quantities. | decimal.js 10 |
+| **Input checking** | Rejects bad data before it is saved | **Zod** | 4 |
+| **Excel import** | Reads the spreadsheet an admin uploads | A spreadsheet-reading library, **to be chosen at the import milestone** after checking which is currently maintained (two of the well-known ones have not been updated on the package registry for a long time) | — |
+| **Automated tests** | Programs that check the app still works after each change | **Vitest** (rules and database behaviour) and **Playwright** (clicks through the real screens) | Vitest 5 · Playwright 1.63 |
+| **Version control** | A history of every change, with the ability to go back | **Git** (installed: 2.39) with a private **GitHub** repository as the off-computer copy | — |
+
+Why this combination:
+
+- **One project, one language.** Fewer moving parts for a single owner to maintain or hand to another developer.
+- **Mainstream.** Next.js, PostgreSQL and Prisma are among the most widely used tools of their kind, so help and developers are easy to find.
+- **No lock-in.** Accounts and data live in a standard PostgreSQL database that you own. The app uses no hosting-company-only features, so it can move to another host if needed.
+- **Offline is possible later without a rewrite**, because it is a browser app that can be "installed" on the checkout computer.
+
+Things you should know:
+
+- **Vercel's free plan is for non-commercial use only** (stated in their documentation). A shop is commercial, so a paid plan is required for the live system.
+- **Neon has no data centre in Africa.** Its nearest regions to Nigeria are in Europe (Frankfurt, London). The app server will be placed in the same region as the database. Which of the two is faster from your shops will be measured at Milestone M3.
+- **Windows checkout computers.** The app runs in the browser (Chrome or Edge), so nothing special is installed. The app is developed on your Mac but must be tried on a real Windows checkout computer with the real receipt printer before go-live.
+- **Barcode scanners need no special work.** A scanner behaves like a very fast keyboard. Products get an optional barcode field now; when you buy a scanner, scanning into the search box finds the product.
+- **Neon's free plan keeps only a few hours of restore history.** The live shop database should be on a paid plan with at least several days of "point-in-time restore" (the ability to rewind the database to a moment before a mistake).
+- **Development database on your Mac.** I propose installing **Postgres.app** (a free, click-to-install PostgreSQL for Mac) so development and tests work quickly and without internet. Your Mac runs macOS 13; if the current Postgres.app does not support it, the fallback is a separate development database on Neon.
+- **Receipt printing in version 1** uses the browser's normal Print function with a layout sized for receipt paper. This works with any printer already installed in Windows and needs no special drivers in the app. Each terminal has a **paper width setting: 58 mm or 80 mm**.
+
+### 6.1 Likely cost categories (no prices — these change; check each provider's site)
+
+| Category | What it is | Type |
+|---|---|---|
+| App hosting | Paid plan with the hosting company (per team member per month, plus usage above an included amount) | Monthly |
+| Database hosting | Paid plan covering computing time, storage, and days of restore history | Monthly, usage-based |
+| Domain name | An address such as `kuchpos.example` | Yearly |
+| Email sending *(optional)* | Only if you want password-reset emails; otherwise the admin resets passwords | Free tier or monthly |
+| Error monitoring *(optional)* | A service that alerts when the app crashes | Free tier or monthly |
+| Extra backup storage *(optional)* | A second copy of nightly backups held somewhere else | Small monthly |
+| Code storage | GitHub private repository | Normally free for this size |
+| Hardware | Checkout computers, receipt printer(s), barcode scanner(s), cash drawer, scale, backup power, backup internet (e.g. mobile data) | One-off + upkeep |
+| Development | The AI assistant subscription/usage, and your time | Ongoing |
+| Maintenance | Security updates, small fixes, occasional help from a developer | Ongoing |
+
+---
+
+## 7. Defaults — **all accepted 2026-10-01**
+
+| # | Topic | Proposal | Why |
+|---|---|---|---|
+| P1 | **Batch and expiry tracking** | Version 1: when receiving goods, staff may *optionally* record a batch number and expiry date; an "expiring soon" list is built from those receipts. Stock balances are **not** split per batch. Full per-batch tracking (sell oldest-expiry first, per-batch balances) is a later phase. | Seeds, feeds and agro-chemicals expire, so the dates matter. But full batch tracking makes every sale, transfer and count more complicated. This gives the warning without the complexity. |
+| P2 | **Returns and refunds** | Include a simple version: a return must refer to an original sale; needs manager approval; returned stock goes either back to a chosen location or is written off as damaged; refund is paid out in cash/transfer or deducted from the customer's debt. A **void** (cancel the whole sale, same day, before till close) follows the same approval rule. The original sale is never altered. | Mistakes at the till are certain to happen. Without a proper return, staff will "fix" them with stock adjustments, which hides the truth. |
+| P3 | **Credit limits** | Each customer may have an optional credit limit. A credit sale that would take the balance over the limit needs manager approval (same mechanism as discounts). No limit set = manager approval for every credit sale above an amount you choose, or no restriction — your choice. | Protects against debts growing unnoticed while keeping the cashier fast for trusted customers. |
+| P4 | **Costing method** | **Moving weighted average cost** per product. Each time goods are received, the average cost is recalculated. Each sale line stores the average cost at that moment, so profit reports stay stable even if costs change later. | Simple, standard, works without batch tracking, and good enough for margin reporting. (The alternative, first-in-first-out, needs batch-level tracking.) Your accountant should confirm. |
+| P5 | **Stock adjustment approval** | Adjustments entered by a **storekeeper** wait for a manager's approval before they change stock. Adjustments by a manager or admin apply immediately. All are logged with a reason and appear on the stock movement report. | Adjustments are the easiest way to hide missing stock, so a second person should see them. |
+| P6 | **Till sessions (cash-up)** | Cashier opens a shift with a starting cash amount and closes it by entering counted cash. The system shows expected vs counted. | Needed for a meaningful collections report. |
+| P7 | **Selling location** | Sales draw from Shelf by default; managers/admins (or all sellers, if you prefer) may pick Storeroom per line. | Bulky bags often never reach the shelf. |
+| P8 | **Staff sign-in** | Username + password, created by the admin. No email needed for staff. Admin can disable an account instantly and reset a password. Sessions end automatically after a period of inactivity. | Many shop staff do not use work email. |
+| P9 | **Suppliers** | Keep a simple supplier list (name, phone) used when receiving goods. No purchase orders or supplier debts in version 1. | Enough to trace where stock came from. |
+| P10 | **Rounding** | Each sale line total is rounded to the nearest kobo (half rounds up). The sale total is the sum of the rounded lines. Stored totals are never recalculated later. Amounts display as ₦1,250.00. | Makes receipts, reports and the database always agree. Matters for weighed goods (e.g. 2.375 kg × ₦1,333). |
+| P11 | **Business structure** | *Replaced by your decision:* independent businesses with no branch level, and owners above them (§4.7). | — |
+| P12 | **Dates and times** | Stored in universal time, displayed in Nigerian time (West Africa Time). "Today's sales" means the Nigerian calendar day. | Avoids reports splitting a day at the wrong hour. |
+| P13 | **Sign-in names** | Each username is unique across the whole system (not just within one business), so the sign-in page needs only username and password. | Simplest for staff. The alternative — typing a business code as well — is only needed if unrelated businesses want the same usernames. |
+
+---
+
+## 8. Offline checkout — design from the start, build before go-live
+
+Because outages are frequent (C22), a shop could not rely on an online-only system. Offline checkout is therefore built as soon as the online selling workflows are complete and tested, and **before** any business goes live. See PLAN M12.
+
+Two practical points outside the software:
+
+- Offline checkout covers **internet** outages. During a **power** outage the checkout computer and receipt printer still need electricity — a laptop, or a backup power unit (UPS/inverter) for a desktop and the printer.
+- Managers and the accountant working from other computers need internet; only the checkout works offline.
+
+Decisions made now so that offline can be added without rework:
+
+1. **Every sale gets its ID on the cashier's computer**, not from the server. (This is the same mechanism that prevents duplicate sales online.)
+2. **Each checkout computer is a registered "terminal"** with a short code. Receipt numbers are *terminal code + running number*, so two computers can never produce the same receipt number even when disconnected.
+3. **The server accepts a sale together with the prices and conversions the cashier saw**, checks them, and records both the device time and the server time.
+4. The checkout screen is built so it can run from data held on the computer (product list, units, prices) rather than asking the server for every keystroke.
+
+Proposed offline behaviour (to be confirmed before that milestone):
+
+- Works for: sales at preset prices paid by cash, card terminal, or transfer.
+- Does **not** work offline: extra discounts needing approval, credit sales (or only up to a small limit), returns, stock receiving/transfers/counts, reports.
+- The cashier must have signed in on that computer while online; offline use is allowed for a limited time (e.g. one working day).
+- Offline sales wait in a queue on the computer and are sent automatically when the internet returns. A clear indicator shows "offline — N sales waiting".
+- Stock is checked against the last known figures. If an offline sale later turns out to exceed stock, the sale is still accepted (the goods have already left the shop) and listed in an **offline exceptions report** for a manager to review.
+- Risk to understand: if a checkout computer is lost or its browser data is cleared before syncing, sales still in the queue are lost. Printed receipts and a daily "queue is empty" check reduce this risk.
+
+---
+
+## 9. Quality and safety rules the system must meet
+
+1. **Permissions are enforced on the server.** Hiding a button is for convenience only.
+2. **Traceable history.** Stock movements, payments, and customer account entries are add-only records. Corrections are new records, never edits or deletions.
+3. **All-or-nothing saving.** A sale and its stock and payment changes are saved together or not at all. The same applies to transfers, receipts, adjustments and returns.
+4. **No duplicates; safe with simultaneous users.** Unique IDs per submission; the database itself refuses negative stock.
+5. **Exact arithmetic** for money and fractional quantities.
+6. **History is preserved** when units, conversions or prices change.
+7. **Sample data** is used during development; real shop data is entered only in the live system.
+8. **Passwords and secret keys never go into source control.**
+9. **Backups** exist, and restoring from one has been practised before go-live.
+10. **Activity log** for sensitive actions: sign-ins, staff changes, price changes, approvals, adjustments, voids, imports.
+11. **Businesses are sealed off from each other.** Every record belongs to a business; the server limits every read and write to the signed-in person's business (or, for an owner, the business they have opened). Automated tests try to reach another business's data and must be refused.
+
+---
+
+## 10. Open questions
+
+### Batch 1 — answered 2026-10-01
+
+| # | Question | Answer |
+|---|---|---|
+| Q1 | Currency and country | Naira and kobo; Nigeria. Most prices whole Naira, kobo supported. → C14 |
+| Q2 | Tax | Rate is an app setting, default 0%. → C15. *Inclusive/exempt details still open: Q9.* |
+| Q3 | Size | 5 shops now, up to 20; independent; no stock movement between them; app must support separate businesses; Windows. → C16, C18 |
+| Q4 | Hardware | 58 mm or 80 mm receipt printer; barcode scanner later; no barcodes now. → C19 |
+| Q5 | Existing records | In Excel; admins must be able to import. → C20 |
+
+### Batch 2 — answered 2026-10-01
+
+| # | Question | Answer |
+|---|---|---|
+| Q6 | Shared or separate catalogue | Treat every shop as an **independent business**. **No branch level.** Each business has its own products and prices. → C16 |
+| Q7 | Who businesses are for; who sees across them | An **owner** role with full admin rights in every business and a view of all businesses. Several owners allowed. → C17 |
+| Q8 | Customers and staff across shops | Not shared. Each business has its own customers, debts and staff. → C16 |
+| Q9 | Tax when not zero | Prices include tax; "taxable" tick-box per product. → C21 |
+| Q10 | Internet and checkout computers | Outages are frequent; one checkout computer per business, possibly more later. → C22, C23 |
+| Q11 | Permission table and proposed defaults | Accepted. → §5, §7 |
+| Q12 | Manager approving own discount | Allowed and recorded (accepted with the permission table). |
+| Q13 | Selling from the Storeroom | Managers, admins and owners only (accepted as P7). |
+
+### Still open — each will be asked when its milestone is reached
+
+Nothing below blocks the first milestones (M1–M3).
+
+| # | Question | Needed before |
+|---|---|---|
+| Q14 | What must appear on the receipt (business name, address, phone, tax number, return policy)? | M8 Checkout |
+| Q15 | Do some customers get special prices (e.g. a wholesale price list), separate from unit prices? | M4 Products and prices |
+| Q16 | May a customer pay in advance (hold a deposit with the shop)? *Default if unanswered: no.* | M10 Customers and credit |
+| Q17 | Should the system allow backdated entries (e.g. entering yesterday's delivery today)? *Default if unanswered: no; everything is dated when entered.* | M5 Receiving goods |
+| Q18 | What format does the accountant need for exports? *Default: CSV, which opens in Excel.* | M14 Reports |
+| Q19 | Who will be the owners, who will be the admin of each business, and who holds the hosting and domain accounts? | M3 First online deployment |
+| Q20 | What do your Excel files look like today (which columns; one file per shop)? A sample with made-up or non-sensitive rows is enough. | M15 Excel import |
+| Q21 | Credit limits (P3): for a customer with **no** limit set, should credit sales be unrestricted, or need manager approval above a set amount? *Default: unrestricted.* | M10 Customers and credit |
+| Q22 | **What must work during an outage?** With frequent outages, should credit sales to existing customers and manager-approved discounts be possible offline (with weaker checking), or only ordinary paid sales? | M12 Offline checkout |

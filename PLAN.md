@@ -65,7 +65,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - *Calling the server directly:* every operation that exists so far (staff, settings, activity log, businesses, owners — 19 operations) is called directly as an owner without a business, an owner inside a business, and each of the five roles (133 checks). Rows of the table whose features are not built yet (selling, stock, reports…) get this direct test in the milestone that builds them; a test fails if any new operation is left out.
 - *Business separation:* direct tests using Business B's record ids from Business A, plus tests of the shared data layer itself.
 
-### M3 · First online deployment (test site)
+### M3 · First online deployment (test site) ✅ (verified 2026-10-02, tag `m3`)
 **Goal:** The app is reachable on the internet at `pos.kuch99.com` with sample data, so hosting problems are found early, not at the end.
 
 *Changed 2026-10-02: hosted on the owner's existing HOSTAFRICA shared hosting (zero extra cost) with its MariaDB database, instead of Vercel + Neon.*
@@ -75,7 +75,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - A repeatable "build on the Mac, upload, apply database changes, restart" procedure, written down as numbered steps.
 - Run the database structure and the sample-data seed on the host. Confirm the database-level rules (checks and triggers) were accepted by the host's MariaDB 10.6.
 - Sign-in attempt limiting that works on this host. A "TEST — sample data" banner.
-- Decide how the test site and the later live site will be kept apart on one hosting account (separate subdomain and separate database).
+- *(Moved to M17)* Decide how the test site and the later live site will be kept apart on one hosting account (separate subdomain and separate database).
 
 **Accept when:**
 - 🧑 From a different computer — ideally a **Windows** checkout computer in one of the shops — you open `https://pos.kuch99.com`, see the padlock, sign in, and pages feel quick.

@@ -47,7 +47,10 @@ describe("database update tool for the hosting server", () => {
       `SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = '${SCRATCH}'`,
     );
     expect(tables.map((table) => table.name)).toEqual(
-      expect.arrayContaining(["business", "user", "session", "account", "activity_log", "rateLimit"]),
+      expect.arrayContaining([
+        "business", "user", "session", "account", "activity_log", "rateLimit",
+        "location", "terminal", "product", "product_unit", "price_change", "tax_rate_change",
+      ]),
     );
 
     const triggers = await scratchQuery<{ name: string }>(
@@ -56,6 +59,10 @@ describe("database update tool for the hosting server", () => {
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual([
       "activity_log_no_delete",
       "activity_log_no_update",
+      "price_change_no_delete",
+      "price_change_no_update",
+      "tax_rate_change_no_delete",
+      "tax_rate_change_no_update",
     ]);
 
     const checks = await scratchQuery<{ name: string }>(
@@ -66,6 +73,10 @@ describe("database update tool for the hosting server", () => {
         "user_owner_has_no_business_check",
         "user_username_lowercase_check",
         "business_idle_sign_out_minutes_check",
+        "business_tax_rate_percent_check",
+        "terminal_code_format_check",
+        "product_unit_factor_check",
+        "product_unit_price_check",
       ]),
     );
   });

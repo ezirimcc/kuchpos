@@ -34,8 +34,9 @@ Nothing is built or installed on the server. Secrets live only in a `.env` file 
 5. **Node.js application.** Setup Node.js App → Create Application: version 24.21.0, mode Production, application root `domains/kuchpos`, URL `pos.kuch99.com`, start-up file `app.js`. Do **not** run "NPM Install".
 6. **Database structure.** Setup Node.js App → open the application → **Run JS script** → `migrate`.
 7. **Sample data (TEST site only).** **Run JS script** → `seed`.
-8. **HTTPS.** SSL/TLS Certificates → issue a free Let's Encrypt certificate for `pos.kuch99.com`.
-9. **Check.** Open `https://pos.kuch99.com/api/health` — it should say the app is ok and the database is connected.
+8. **HTTPS.** Make sure a certificate covers the address (the existing `*.kuch99.com` certificate does).
+9. **Placeholder page.** File Manager → `domains/kuch99.com/public_html/pos` → delete `index.html` (keep `.htaccess`). Otherwise the front address shows DirectAdmin's placeholder instead of the app.
+10. **Check.** Open `https://pos.kuch99.com/api/health` — it should say the app is ok and the database is connected.
 
 ## Uploading a new version (every update)
 

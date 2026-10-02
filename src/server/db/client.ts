@@ -1,6 +1,15 @@
+import "server-only";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 
+/**
+ * The raw, UNSCOPED database client.
+ *
+ * Only the login code (src/server/auth), the cross-business owner code
+ * (src/server/platform) and this folder may import it. Everything else must
+ * use `businessDb()` from ./scoped, which limits every query to one business.
+ * An ESLint rule enforces this.
+ */
 function createPrismaClient(): PrismaClient {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
@@ -19,17 +28,13 @@ export function getDb(): PrismaClient {
   return globalForPrisma.prisma;
 }
 
-export type DatabaseStatus =
-  | { connected: true; serverVersion: string }
-  | { connected: false; reason: string };
-
 /** Asks the database a trivial question to confirm it is reachable. */
-export async function checkDatabase(): Promise<DatabaseStatus> {
+export async function isDatabaseReachable(): Promise<boolean> {
   try {
-    const rows = await getDb().$queryRaw<{ server_version: string }[]>`SHOW server_version`;
-    return { connected: true, serverVersion: rows[0]?.server_version ?? "unknown" };
+    await getDb().$queryRaw`SELECT 1`;
+    return true;
   } catch (error) {
     console.error("Database check failed:", error);
-    return { connected: false, reason: "The app could not reach the database." };
+    return false;
   }
 }

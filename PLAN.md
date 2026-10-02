@@ -38,7 +38,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Install Postgres.app (guided). Create a free GitHub account if you do not have one, and a private repository (guided).
 
-### M2 · Businesses, owners, sign-in, staff accounts and permissions
+### M2 · Businesses, owners, sign-in, staff accounts and permissions ✅ (verified 2026-10-02, tag `m2`)
 **Goal:** Only known people get in; staff see only their own business; owners can open any business; each role can do only what the table allows.
 - **Businesses** exist as records. Owner screens: create / rename / deactivate a business; create its first admin; create and disable other owners; choose which business to open.
 - Business admin screen: create staff, set role, disable account, reset password.
@@ -46,6 +46,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - One central permission list in code that mirrors SPEC §5; every server action checks role **and business**.
 - One shared way of reading and writing data that always limits it to the business in use, so that no screen can forget.
 - Activity log started (sign-ins, staff changes, owner actions inside a business).
+- Settings screen with the first setting: automatic sign-out time per business (C24). "My account" screen where anyone changes their own password (C25).
 - Sample data: one owner; two businesses; one staff member per role in each.
 
 **Accept when:**
@@ -58,6 +59,11 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 For every server action, a test signed in to Business A asks for a Business B record by its ID and is refused.
 - 🤖 Only an owner can create a business or an owner; the last owner cannot be disabled.
 - 🤖 A signed-out request to any protected action is refused.
+
+**How the 🤖 checks were met (2026-10-02):** 465 automated tests and 26 browser tests pass.
+- *Permission table:* every row of SPEC §5 is tested for all five roles against the central permission list (185 checks).
+- *Calling the server directly:* every operation that exists so far (staff, settings, activity log, businesses, owners — 19 operations) is called directly as an owner without a business, an owner inside a business, and each of the five roles (133 checks). Rows of the table whose features are not built yet (selling, stock, reports…) get this direct test in the milestone that builds them; a test fails if any new operation is left out.
+- *Business separation:* direct tests using Business B's record ids from Business A, plus tests of the shared data layer itself.
 
 ### M3 · First online deployment (test site)
 **Goal:** The app is reachable on the internet at a private test address, so deployment problems are found early, not at the end.

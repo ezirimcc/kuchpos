@@ -9,7 +9,9 @@ Next.js's own rules for coding agents are in AGENTS.md (kept up to date by `next
 
 ## Current status
 
-- **M1 (project skeleton) is done** — verified by the owner on 2026-10-02, committed and tagged `m1`. **Next: M2** (businesses, owners, sign-in, staff accounts and permissions).
+- **M1 (project skeleton) is done** — verified by the owner on 2026-10-02, tagged `m1`.
+- **M2 (businesses, owners, sign-in, staff, permissions, automatic sign-out setting, change own password) is done** — verified by the owner on 2026-10-02, tagged `m2`.
+- **Next: M3 (first online deployment / test site).** It needs Q19 answered first (who the owners and admins are, and who holds the hosting accounts), and the owner must create the Vercel and Neon accounts themselves.
 - Remaining open questions (SPEC §10, Q14–Q22) are each tied to a milestone. Ask them when that milestone is next, not before.
 - Update this section at the end of every milestone: which milestone is done, which is next.
 
@@ -37,7 +39,7 @@ Next.js's own rules for coding agents are in AGENTS.md (kept up to date by `next
 | Styling / components | Tailwind CSS 4, shadcn/ui |
 | Database | PostgreSQL 17 or 18 (local: Postgres.app; hosted: Neon) |
 | Database toolkit | Prisma ORM **7.10.x** with `@prisma/adapter-pg` |
-| Login | Better Auth 1.7 (username + admin plugins), sessions in our database |
+| Login | Better Auth 1.7 (username plugin only), sessions in our database. Accounts are managed by our own code — see "Login notes" |
 | Validation | Zod 4 |
 | Exact arithmetic | decimal.js 10 |
 | Tests | Vitest 5, Playwright |
@@ -63,6 +65,8 @@ Version rules:
 - **Time zone:** Africa/Lagos for display and for "business day" boundaries.
 - **Clients:** Windows checkout computers, Chrome/Edge. Receipts via browser print at **58 mm or 80 mm** (per-terminal setting). Barcode is an optional product field; a scanner is just keyboard input.
 - **Excel import** by business admins and owners, always into one business (SPEC §4.8, PLAN M15).
+- **Automatic sign-out** is a per-business setting (`business.idleSignOutMinutes`, 5–480, default 30) changed by the admin on the Settings screen. Owners are fixed at 30 minutes. Enforced on every request in `src/server/auth/context.ts` using `session.lastActiveAt`; the login library's own session lifetime is only the 8-hour upper bound.
+- **Everyone can change their own password** (`/account`, `src/server/auth/account.ts`): current password required; other sessions of that person are signed out.
 
 ## Engineering rules (non-negotiable)
 
@@ -157,17 +161,41 @@ Version rules:
 | Run browser tests (uses installed Google Chrome) | `npm run test:e2e` |
 | Apply database structure changes (creates a migration) | `npm run db:migrate` |
 | Regenerate the database client after a schema change | `npm run db:generate` |
+| Wipe the development database and load fresh sample data | `npm run db:seed` |
+| Run only the fast tests / only the database tests | `npm run test:unit` / `npm run test:db` |
 
-*Loading sample data (seed) is added at M2.*
+- `npm run test` runs both the fast tests and the database tests (the latter against `kuchpos_test`, never the development database).
+- `npm run test:e2e` **re-seeds the development database first**, so anything created by hand in sample data is wiped.
+- After changing `prisma/schema.prisma`: run `npm run db:migrate`, then `npm run db:generate`, then **restart `npm run dev`** (the running server keeps the old database client in memory and fails with "Prisma schema mismatch").
+- Sample users: `owner`, and `gv.` / `sf.` + `admin`, `manager`, `accountant`, `cashier`, `storekeeper` (e.g. `gv.cashier`). Their shared password is `SEED_PASSWORD` in `.env`.
 
 ## Project layout and local setup notes
 
-- `src/app/` screens and routes · `src/lib/` shared server/business code · `src/components/ui/` shadcn components · `prisma/` database schema and migrations · `tests/unit/`, `tests/e2e/` tests (unit tests may also sit next to the code as `*.test.ts`).
+- `src/app/` screens and thin `"use server"` actions · `src/server/` everything that runs only on the server · `src/lib/` small helpers safe for both sides · `src/components/` screen components · `prisma/` database schema, migrations and seed · `tests/unit/` (no database), `tests/db/` (real PostgreSQL), `tests/e2e/` (browser).
+- **How a request is handled** — keep to this shape for every new feature:
+  1. A screen (`src/app/(app)/**/page.tsx`) calls `requirePagePermission("…")` and then an operation in `src/server`.
+  2. A form posts to a `"use server"` action, which does nothing but call `runAction()` (`src/server/action.ts`) and pass plain form fields to an operation.
+  3. The operation (`src/server/business/*.ts`, or `src/server/platform/*.ts` for owner-only cross-business work) calls `authorize(context, "permission")` first, validates input with Zod via `parseInput`, and uses `businessDb(context)` — never the raw client.
+  4. `tests/db/access.test.ts` lists **every** exported operation with who may call it; a test fails if an operation is missing from that list. Add each new operation there, with a `runAgainstB` case if it takes a record id.
+- **Permissions:** `src/server/permissions.ts` is the one map. `tests/unit/permissions.test.ts` holds an independent copy of SPEC §5; both must change together, and only after SPEC.md changes.
+- **Business scoping:** `src/server/db/scoped.ts`. When adding a table, add it to `BUSINESS_SCOPE` there (and to the `TRUNCATE` lists in `prisma/seed.ts` and `tests/support/world.ts`). ESLint forbids importing the raw client outside `src/server/db`, `src/server/auth`, `src/server/platform`.
+- **Menu:** `src/server/navigation.ts`. Items with `href: null` show as "coming soon"; fill in the address when the screen is built.
+- **After any successful action the whole page frame is refreshed** (`revalidatePath("/", "layout")` in `runAction`). Without it the shared header/menu stays stale. Actions look up the signed-in person fresh; pages use the per-request cached `requireContext()`.
+- **Login notes:**
+  - Better Auth's *admin* plugin is deliberately **not** used: its web endpoints know nothing about businesses, so one business's admin could list or reset users of another. Accounts are created/disabled/reset by our own operations, using the library only to hash and check passwords and to hold sessions.
+  - Only three login addresses are exposed (`ALLOWED_AUTH_PATHS` in `src/server/auth/auth.ts`): sign in, sign out, get session. Everything else the library offers returns 404.
+  - `role`, `businessId`, `disabledAt` and `session.activeBusinessId` are columns the library does not know about, so it can never write them.
+  - A disabled account / deactivated business is refused at sign-in (session hook) **and** on every request (`resolveContext`).
+  - The library needs an email per user; staff get a placeholder `username@users.kuchpos.invalid`.
+  - Operations on a person's OWN account live in `src/server/auth/account.ts`, need no permission (any signed-in person), and take the account only from the session.
+  - Sign-in rate limiting is the library's default (on in production, in-memory). In-memory limits do not work across serverless instances — switch to database storage at M3/M16.
+- **shadcn/ui:** `button.tsx` came from the registry. `input`, `label`, `card`, `table`, `badge`, `alert`, `native-select` were written by hand in the same style because the registry site was unreachable on 2026-10-02. Replace them with registry versions only if there is a reason to.
 - `src/lib/decimal.ts`, `money.ts`, `quantity.ts` are the **only** place money and quantity maths happens (rule 5). Parse with `parseMoney` / `parseQuantity`; never construct amounts from JavaScript numbers.
 - decimal.js gotcha: `isPositive()` is true for zero. Use `greaterThan(0)`.
 - Prisma 7.10 names its config file **`prisma7.config.ts`** (not `prisma.config.ts`). The generated client lives in `src/generated/prisma` (git-ignored; recreated by `npm install` / `npm run db:generate`). Import from `@/generated/prisma/client`; get the client with `getDb()` from `src/lib/db.ts`.
 - `prisma init` downloads AI-agent "skill" folders (`.agents/`, `.windsurf/`, `.claude/skills/`, `skills-lock.json`). They were not asked for and were deleted. Do not run `prisma init` again.
 - Local database: Postgres.app (PostgreSQL 18), database `kuchpos_dev`, no password, connection in `.env`. Its tools are at `/Applications/Postgres.app/Contents/Versions/latest/bin/`.
+- Browser tests wait up to 15 seconds per check (`expect.timeout` in `playwright.config.ts`): this Mac is slow when busy, and 5 seconds produced false failures.
 - This Mac runs macOS 13 (Intel). Playwright's downloadable browsers do not support it, so `playwright.config.ts` uses the installed Google Chrome (`channel: "chrome"`). Do not run `playwright install`.
 - `npm audit` reports high-severity advisories in `mysql2` and `deepmerge-ts`. Both are pulled in only by the Prisma command-line tool (a development tool; the app uses PostgreSQL, never MySQL). The offered fix is `--force`, which would jump to the Prisma 8 release candidate — do not apply it. Re-check when upgrading Prisma.
 - `@types/node` is pinned to 24 (Vitest 5 requires 22 or 24+; the generator's default of 20 conflicts).
@@ -180,4 +208,7 @@ Version rules:
 | 2026-10-01 | Batch 1 answered: Naira + kobo; tax is a setting, default 0%; multi-business, 5→20 shops; Windows; 58/80 mm receipts, barcode later; Excel import by admins. |
 | 2026-10-01 | M1 started. Project scaffolded (Next.js 16.3.8, Prisma 7.10.0, Vitest 5, Playwright 1.63, shadcn/ui). |
 | 2026-10-02 | M1 verified and tagged `m1`. Version history is under the name Chima Ezirim; GitHub repository: https://github.com/ezirimcc/kuchpos (private). |
+| 2026-10-02 | M2 built. Design choices recorded under "Login notes". |
+| 2026-10-02 | M2 verified by the owner and tagged `m2`. The owner accepted the automatic sign-out details (default 30 min, range 5–480 min, owners fixed at 30 min). |
+| 2026-10-02 | Owner decided: automatic sign-out is an admin setting per business (Q23 → C24); everyone can change their own password (Q24 → C25). Both built into M2. Chosen by the assistant, owner informed: default 30 min, range 5–480 min, owners fixed at 30 min. |
 | 2026-10-01 | Batch 2 answered: **no branches** — every shop is an independent business; **owner** role (several allowed) with full admin rights in all businesses; customers/staff not shared; prices tax-inclusive with per-product taxable flag; outages frequent → offline moved to M12, before go-live; one checkout computer per business. Permission table and defaults P1–P13 accepted. Milestones renumbered (M12 offline, M13 returns, M14 reports, M15 Excel import, M16 hardening, M17 live environment, M18 go-live). |

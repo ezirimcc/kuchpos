@@ -49,6 +49,8 @@ How to read this document:
 | C21 | **Tax:** shelf prices **include** tax. Each product has a **"taxable" tick-box**. |
 | C22 | **Internet/power outages are frequent.** Offline checkout is therefore required **before go-live**, not after. |
 | C23 | **One checkout computer per business** today; more may be added later. |
+| C24 | **Automatic sign-out is a setting per business**, changed by that business's admin. A screen left unused for longer than the setting asks for the password again. |
+| C25 | **Everyone can change their own password** after signing in (they must type their current password first). |
 
 ## 3. Out of scope for version 1
 
@@ -212,7 +214,8 @@ The table below applies **inside one business**.
 |---|:-:|:-:|:-:|:-:|:-:|
 | **Staff & settings** | | | | | |
 | Create / disable staff accounts, set roles, reset passwords | ✅ | — | — | — | — |
-| Change business settings (tax rate, receipt text) | ✅ | — | — | — | — |
+| Change business settings (tax rate, receipt text, automatic sign-out time) | ✅ | — | — | — | — |
+| Change own password | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Create locations and terminals | ✅ | — | — | — | — |
 | Import records from Excel | ✅ | — | — | — | — |
 | View activity log | ✅ | 👁 | 👁 | — | — |
@@ -276,7 +279,7 @@ One approach, chosen because it is widely used, well documented, and lets the wh
 | **Server** | The program on the internet that checks permissions, applies business rules, and talks to the database | The **same Next.js project** — it contains both the screens and the server code | Runs on Node.js 24 (long-term-support line; already installed on your Mac: 24.21.0) |
 | **Database** | Where all products, stock, sales and debts are permanently stored | **PostgreSQL**, a mature database that is strong at "save everything together or nothing" and at handling simultaneous users | PostgreSQL 17 or 18 (18.6 is current) |
 | **Database toolkit** | Lets the code read and write the database safely, and applies structure changes in a controlled, recorded way | **Prisma ORM** | **7.10** (stable). *Version 8 is still a release candidate and must not be used yet.* |
-| **Login system** | Staff accounts, passwords, sessions | **Better Auth**, storing accounts in *our own* database. Staff sign in with a username and password. Only an admin can create accounts — there is no public sign-up page. Passwords are stored scrambled (hashed), never readable. | 1.7 |
+| **Login system** | Staff accounts, passwords, sessions | **Better Auth**, storing accounts in *our own* database. Staff sign in with a username and password. Only an admin or owner can create accounts — there is no public sign-up page. Passwords are stored scrambled (hashed), never readable. Usernames: 3–30 characters (letters, numbers, dot, underscore), not case-sensitive. Passwords: at least 8 characters. | 1.7 |
 | **Hosting** | The company that keeps the app running online | **Vercel** for the app, **Neon** for the PostgreSQL database, in the same region | Current managed services |
 | **Offline storage** | Where the checkout keeps data on the cashier's computer when the internet is down | The browser's built-in database (**IndexedDB**, used through the **Dexie** library), plus a **service worker** (through **Serwist**) so the app opens without internet | Dexie 4 · Serwist 9 |
 | **Money & quantity maths** | Avoids rounding errors | Exact decimal numbers in the database (`NUMERIC`) and the **decimal.js** library in code. Ordinary computer "floating point" numbers are never used for money or quantities. | decimal.js 10 |
@@ -406,6 +409,8 @@ Proposed offline behaviour (to be confirmed before that milestone):
 | Q11 | Permission table and proposed defaults | Accepted. → §5, §7 |
 | Q12 | Manager approving own discount | Allowed and recorded (accepted with the permission table). |
 | Q13 | Selling from the Storeroom | Managers, admins and owners only (accepted as P7). |
+| Q23 | Automatic sign-out | 8 hours is too long; make it an admin setting per business. → C24. *Details chosen by me, say if you want them changed:* a new business starts at **30 minutes**; the admin may choose between **5 minutes and 8 hours**; **owners** are always signed out after **30 minutes** unused, whichever business they have open. |
+| Q24 | Changing your own password | Yes. → C25. Changing it signs that person out on any other computer. |
 
 ### Still open — each will be asked when its milestone is reached
 

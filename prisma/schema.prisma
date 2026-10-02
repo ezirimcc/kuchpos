@@ -1,7 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// KuchPos database structure.
+// Change this file, then run `npm run db:migrate` to create a migration. Never edit an applied migration.
 
 generator client {
   provider = "prisma-client"
@@ -10,4 +8,146 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+/// OWNER sits above all businesses. The other five roles belong to exactly one business.
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  ACCOUNTANT
+  CASHIER
+  STOREKEEPER
+}
+
+/// One independent shop. Everything a shop owns carries its businessId.
+model Business {
+  id            String    @id @default(uuid()) @db.Uuid
+  name          String
+  /// Lower-cased name, used to stop two businesses having the same name.
+  nameKey       String    @unique
+  /// Set when an owner deactivates the business: nobody can sign in to it, records are kept.
+  deactivatedAt DateTime? @db.Timestamptz(3)
+  /// Staff are signed out after this many minutes without using the app (5 to 480; database CHECK).
+  idleSignOutMinutes Int  @default(30)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+
+  users         User[]
+  activityLogs  ActivityLog[]
+  openedIn      Session[]
+
+  @@map("business")
+}
+
+/// A person who can sign in. Core columns are required by the Better Auth login library.
+model User {
+  id              String    @id
+  name            String
+  /// Not used for sign-in or contact; the login library requires a unique value here.
+  email           String    @unique
+  emailVerified   Boolean   @default(false)
+  image           String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+  /// Sign-in name. Unique across the whole system, always lower case.
+  username        String    @unique
+  displayUsername String?
+
+  role            Role
+  /// Empty for owners; set for everyone else (enforced by a database CHECK).
+  businessId      String?   @db.Uuid
+  business        Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  /// Set when the account is disabled. Accounts are never deleted.
+  disabledAt      DateTime? @db.Timestamptz(3)
+
+  sessions        Session[]
+  accounts        Account[]
+  activityLogs    ActivityLog[]
+
+  @@index([businessId])
+  @@map("user")
+}
+
+/// A signed-in browser. Core columns are required by the login library.
+model Session {
+  id               String    @id
+  expiresAt        DateTime  @db.Timestamptz(3)
+  token            String    @unique
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  ipAddress        String?
+  userAgent        String?
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// When this session last made a request. Used for automatic sign-out after inactivity.
+  lastActiveAt     DateTime  @default(now()) @db.Timestamptz(3)
+
+  /// For owners only: the business they currently have open.
+  activeBusinessId String?   @db.Uuid
+  activeBusiness   Business? @relation(fields: [activeBusinessId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@map("session")
+}
+
+/// A way of signing in for a user. KuchPos uses only "credential" (username + password).
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
+  scope                 String?
+  /// Scrambled (hashed) password. Never readable.
+  password              String?
+  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+/// Required by the login library; unused by KuchPos today.
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+/// Who did what and when. Add-only: the database refuses changes and deletions.
+model ActivityLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  /// The business the event belongs to. Empty for system-level events (owners, creating businesses).
+  businessId  String?   @db.Uuid
+  business    Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  actorUserId String?
+  actor       User?     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+  /// Copies of the actor's name and role at the time, so the log still reads correctly later.
+  actorName   String
+  actorRole   Role?
+  /// Machine-readable event name, e.g. "staff.created".
+  action      String
+  /// Plain-language sentence shown on screen.
+  summary     String
+  targetType  String?
+  targetId    String?
+  details     Json?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([businessId, createdAt])
+  @@map("activity_log")
 }

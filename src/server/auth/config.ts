@@ -18,6 +18,18 @@ export const LAST_ACTIVE_WRITE_INTERVAL_MS = 60 * 1000;
 /** While someone is active, their session's expiry is pushed forward at most this often. */
 export const SESSION_REFRESH_SECONDS = 5 * 60;
 
+/**
+ * How many sign-in attempts one internet address may make per minute before it is told to wait.
+ * Can be raised temporarily with the SIGN_IN_ATTEMPTS_PER_MINUTE setting (used when running the
+ * browser tests against the online test site).
+ */
+export const DEFAULT_SIGN_IN_ATTEMPTS_PER_MINUTE = 10;
+
+export function signInAttemptsPerMinute(): number {
+  const configured = Number.parseInt(process.env.SIGN_IN_ATTEMPTS_PER_MINUTE ?? "", 10);
+  return Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_SIGN_IN_ATTEMPTS_PER_MINUTE;
+}
+
 export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_PASSWORD_LENGTH = 128;
 export const MIN_USERNAME_LENGTH = 3;

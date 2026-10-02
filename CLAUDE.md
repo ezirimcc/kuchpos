@@ -12,7 +12,7 @@ Next.js's own rules for coding agents are in AGENTS.md (kept up to date by `next
 - **M1 (project skeleton) is done** — verified by the owner on 2026-10-02, tagged `m1`.
 - **M2 (businesses, owners, sign-in, staff, permissions, automatic sign-out setting, change own password) is done** — verified by the owner on 2026-10-02, tagged `m2`.
 - **Database switched from PostgreSQL to MariaDB on 2026-10-02** (owner's decision, for zero-cost hosting). All tests pass on MariaDB; committed after `m2`.
-- **Next: M3 (first online deployment / test site)** on the owner's HOSTAFRICA shared hosting at `pos.kuch99.com`. Waiting on: HOSTAFRICA's reply about Node.js 22/24 (not a blocker — the app runs on 20.19.4).
+- **M3 (first online deployment / test site) in progress.** The app side is ready and rehearsed locally: upload bundle, start-up file, database update tool, sign-in rate limiting, TEST banner. **Waiting on the owner** to do the DirectAdmin steps (database, upload, settings file, Node.js application, HTTPS), guided step by step. Still to prove on the host: Passenger start-up, trigger creation, visitor address for rate limiting.
 - Remaining open questions (SPEC §10, Q14–Q22) are each tied to a milestone. Ask them when that milestone is next, not before.
 - Update this section at the end of every milestone: which milestone is done, which is next.
 
@@ -163,6 +163,7 @@ Version rules:
 | Apply database structure changes (creates a migration) | `npm run db:migrate` |
 | Regenerate the database client after a schema change | `npm run db:generate` |
 | Wipe the development database and load fresh sample data | `npm run db:seed` |
+| Build the zip file to upload to the hosting server (`deploy/kuchpos-deploy.zip`) | `npm run deploy:build` |
 | Run only the fast tests / only the database tests | `npm run test:unit` / `npm run test:db` |
 
 - `npm run test` runs both the fast tests and the database tests (the latter against `kuchpos_test`, never the development database).
@@ -206,6 +207,10 @@ Version rules:
   - Raw SQL uses backticks for names. `SELECT … FOR UPDATE` works inside `$transaction`. Default isolation is REPEATABLE READ.
   - Not yet proven on the hosting server (check at M3): that the database user may create triggers, and that `prisma migrate deploy` runs there. If triggers are refused, say so to the owner; the add-only rule would then rest on the application alone.
   - Session tokens and ids are compared case-insensitively because of the collation. Acceptable (cookies are signed), but do not rely on case to distinguish values.
+- **Deployment** is described step by step in [DEPLOY.md](DEPLOY.md); keep it accurate whenever the procedure changes. Pieces: `next.config.ts` (`output: "standalone"`), `scripts/build-deploy.mjs` (builds and zips; fails if this Mac's login secret ends up in the bundle), `hosting/app.js` (start-up file), `hosting/migrate.ts` (applies Prisma migration files on the server and records them in `_prisma_migrations` exactly as Prisma does — tested in `tests/db/migrate-tool.test.ts`), `hosting/env.example`.
+- With `output: "standalone"`, `next start` no longer applies; a production build is started with `node .next/standalone/server.js` (the bundle's `app.js` does this). A full local rehearsal of the server procedure on Node 20 was done on 2026-10-02 (migrate, seed, start, sign in, rate limit, ~230 MB memory). Not yet proven: running under the host's Passenger launcher.
+- **Sign-in rate limiting** is on in production only (or with `RATE_LIMIT=on`), stored in the `rateLimit` table: 10 sign-in attempts per minute per internet address (`SIGN_IN_ATTEMPTS_PER_MINUTE` overrides). Check on the host that the visitor's address is seen correctly (the `x-forwarded-for` header); if not, all visitors share one counter.
+- `KUCHPOS_ENVIRONMENT=test` on a server shows the yellow TEST banner (`src/components/environment-banner.tsx`).
 - **Hosting notes (HOSTAFRICA):** DirectAdmin at `ls11.host-ww.net:2222`, account for `kuch99.com`, subdomain `pos.kuch99.com` created by the owner. Tools seen in the panel: Setup Node.js App (CloudLinux selector, runs the app under Passenger), phpMyAdmin, Terminal, Git, Cron Jobs, Backup and Restore, SSH Keys. The owner logs in; never ask for or handle the hosting password. Build on the Mac and upload; do not build on the server.
 - Verified on 2026-10-02: a production build made on Node 24 starts and serves sign-in and pages under Node 20.19.4 (`npx node@20.19.4 node_modules/next/dist/bin/next start`). One production dependency (`kysely`, inside the login library) declares Node >=22 but worked in that test. Re-run this check after dependency upgrades while the host is on Node 20.
 - Browser tests wait up to 15 seconds per check (`expect.timeout` in `playwright.config.ts`): this Mac is slow when busy, and 5 seconds produced false failures.

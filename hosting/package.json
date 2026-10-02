@@ -1,0 +1,9 @@
+{
+  "name": "kuchpos-hosted",
+  "private": true,
+  "description": "KuchPos as uploaded to the hosting server. Built on the development computer; nothing is installed here.",
+  "scripts": {
+    "migrate": "node tools/migrate.cjs",
+    "seed": "node tools/seed.cjs"
+  }
+}

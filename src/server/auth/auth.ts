@@ -11,6 +11,7 @@ import {
   MIN_USERNAME_LENGTH,
   SESSION_IDLE_SECONDS,
   SESSION_REFRESH_SECONDS,
+  signInAttemptsPerMinute,
   USERNAME_PATTERN,
 } from "./config";
 
@@ -35,6 +36,17 @@ function createAuth() {
         usernameValidator: (value) => USERNAME_PATTERN.test(value.toLowerCase()),
       }),
     ],
+
+    // Slows down password guessing. Counts are kept in the database so the limit holds even if
+    // the hosting server runs several copies of the app. On only when the app is online
+    // (or when RATE_LIMIT=on, used by the automated tests).
+    rateLimit: {
+      enabled: process.env.NODE_ENV === "production" || process.env.RATE_LIMIT === "on",
+      storage: "database",
+      customRules: {
+        "/sign-in/username": { window: 60, max: signInAttemptsPerMinute() },
+      },
+    },
 
     // Sessions live in the database, so disabling an account takes effect at once.
     session: {

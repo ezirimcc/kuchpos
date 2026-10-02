@@ -15,6 +15,9 @@ const eslintConfig = defineConfig([
     "src/generated/**",
     "test-results/**",
     "playwright-report/**",
+    // The upload bundle for the hosting server, and its plain-Node start-up file.
+    "deploy/**",
+    "hosting/app.js",
   ]),
   {
     // CLAUDE.md rule 0: application code must reach the database through the

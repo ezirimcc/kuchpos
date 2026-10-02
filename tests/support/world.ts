@@ -24,6 +24,7 @@ export async function resetDatabase(): Promise<void> {
   const db = getDb();
   // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
   await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
+  await db.rateLimit.deleteMany();
   await db.session.deleteMany();
   await db.account.deleteMany();
   await db.verification.deleteMany();

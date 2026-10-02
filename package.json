@@ -16,7 +16,8 @@
     "check": "npm run lint && npm run typecheck && npm run test",
     "db:seed": "tsx prisma/seed.ts",
     "test:db": "vitest run --project db",
-    "test:unit": "vitest run --project unit"
+    "test:unit": "vitest run --project unit",
+    "deploy:build": "node scripts/build-deploy.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

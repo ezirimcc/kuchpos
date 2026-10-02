@@ -53,3 +53,6 @@ next-env.d.ts
 /src/generated/
 
 /src/generated/prisma
+
+# upload bundle for the hosting server
+/deploy/

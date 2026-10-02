@@ -7,7 +7,7 @@
  * The zip contains no secrets: the .env file lives only on the server.
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -25,6 +25,17 @@ run("npm", ["run", "build"]);
 const standalone = join(root, ".next", "standalone");
 if (!existsSync(join(standalone, "server.js"))) {
   throw new Error("The build did not produce .next/standalone/server.js.");
+}
+
+// The compact build must contain only the app. If project files (source code, documents,
+// tests) appear in it, something in the app code made the build copy the whole folder.
+const EXPECTED = new Set([".next", "node_modules", "package.json", "server.js", "public", ".env", ".env.example"]);
+const unexpected = readdirSync(standalone).filter((name) => !EXPECTED.has(name));
+if (unexpected.length > 0) {
+  throw new Error(
+    `The build contains files that should not be uploaded: ${unexpected.join(", ")}.\n` +
+      "This usually means server code reads files from disk using process.cwd(). Remove that and build again.",
+  );
 }
 
 console.log("2/5  Collecting the files …");

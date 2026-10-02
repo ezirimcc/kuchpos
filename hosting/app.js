@@ -12,6 +12,12 @@ if (fs.existsSync(envFile)) {
 }
 process.env.NODE_ENV = "production";
 
+try {
+  process.env.KUCHPOS_VERSION = fs.readFileSync(path.join(__dirname, "VERSION.txt"), "utf8").split("\n")[0].trim();
+} catch {
+  process.env.KUCHPOS_VERSION = "unknown";
+}
+
 for (const name of ["DATABASE_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL"]) {
   if (!process.env[name]) {
     console.error(`KuchPos cannot start: the setting ${name} is missing from the .env file.`);

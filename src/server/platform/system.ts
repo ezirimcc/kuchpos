@@ -1,7 +1,5 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { AppContext } from "@/server/auth/context";
 import { getDb } from "@/server/db/client";
 import { authorize } from "@/server/permissions";
@@ -28,15 +26,10 @@ export type SystemCheck = {
 class RollBack extends Error {}
 
 function readAppVersion(): string {
-  // VERSION.txt sits beside the "build" folder in the uploaded bundle.
-  for (const candidate of [join(process.cwd(), "..", "VERSION.txt"), join(process.cwd(), "VERSION.txt")]) {
-    try {
-      return readFileSync(candidate, "utf8").split("\n")[0].trim();
-    } catch {
-      // Try the next place.
-    }
-  }
-  return "development";
+  // Set by the start-up file on the hosting server (hosting/app.js) from VERSION.txt.
+  // Deliberately not read from disk here: file access in app code makes the build copy
+  // the whole project folder into the upload bundle.
+  return process.env.KUCHPOS_VERSION ?? "development";
 }
 
 async function refuses(attempt: () => Promise<unknown>): Promise<boolean> {

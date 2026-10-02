@@ -92,7 +92,7 @@ export default async function StaffPage() {
                   {isSelf ? (
                     ROLE_LABELS[person.role]
                   ) : (
-                    <ActionForm action={setStaffRoleAction} showSuccess={false} className="flex flex-wrap items-center gap-2">
+                    <ActionForm action={setStaffRoleAction} showSuccess={false} compact className="flex flex-wrap items-center gap-2">
                       <input type="hidden" name="userId" value={person.id} />
                       <NativeSelect
                         name="role"
@@ -113,7 +113,7 @@ export default async function StaffPage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <ActionForm action={resetStaffPasswordAction} resetOnSuccess className="flex flex-wrap items-center gap-2">
+                  <ActionForm action={resetStaffPasswordAction} resetOnSuccess compact className="flex flex-wrap items-center gap-2">
                     <input type="hidden" name="userId" value={person.id} />
                     <Input
                       name="password"

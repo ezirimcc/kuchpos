@@ -26,6 +26,12 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   Session: { filter: (businessId) => ({ user: { businessId } }), stamp: false },
   Account: { filter: (businessId) => ({ user: { businessId } }), stamp: false },
   Business: { filter: (businessId) => ({ id: businessId }), stamp: false },
+  Location: { filter: (businessId) => ({ businessId }), stamp: true },
+  Terminal: { filter: (businessId) => ({ businessId }), stamp: true },
+  Product: { filter: (businessId) => ({ businessId }), stamp: true },
+  ProductUnit: { filter: (businessId) => ({ businessId }), stamp: true },
+  PriceChange: { filter: (businessId) => ({ businessId }), stamp: true },
+  TaxRateChange: { filter: (businessId) => ({ businessId }), stamp: true },
 };
 
 const WHERE_OPERATIONS = new Set([
@@ -110,4 +116,16 @@ export function businessDb(subject: { business: { id: string } | null }): Scoped
     throw new Error("No business is in use.");
   }
   return createScopedDb(subject.business.id);
+}
+
+/**
+ * The id of the business in use, for the `businessId` field that new rows must carry.
+ * (The scoped client overwrites that field with its own business in any case; this just
+ * satisfies the type checker honestly instead of with a placeholder.)
+ */
+export function businessIdOf(subject: { business: { id: string } | null }): string {
+  if (!subject.business) {
+    throw new Error("No business is in use.");
+  }
+  return subject.business.id;
 }

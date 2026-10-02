@@ -13,6 +13,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { getDb } from "@/server/db/client";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { authorize } from "@/server/permissions";
+import { defaultLocations, defaultTerminal } from "@/server/business/defaults";
 
 /**
  * Owner-only operations that reach across businesses.
@@ -99,6 +100,8 @@ export async function createBusiness(context: AppContext, input: unknown): Promi
         data: { name: data.name.replace(/\s+/g, " "), nameKey: nameKey(data.name) },
       });
       const admin = await tx.user.create({ data: { ...adminRow, businessId: business.id } });
+      await tx.location.createMany({ data: defaultLocations(business.id) });
+      await tx.terminal.create({ data: defaultTerminal(business.id) });
       await tx.activityLog.createMany({
         data: [
           {

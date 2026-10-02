@@ -107,11 +107,11 @@ test("the admin sets the automatic sign-out time; a cashier cannot reach the set
 
   await page.getByLabel("Minutes without use").fill("3");
   await page.getByLabel("Minutes without use").evaluate((input: HTMLInputElement) => input.removeAttribute("min"));
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save sign-out time" }).click();
   await expect(page.getByText(/whole number of minutes from 5 to 480/)).toBeVisible();
 
   await page.getByLabel("Minutes without use").fill("15");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save sign-out time" }).click();
   await expect(page.getByText("Automatic sign-out time saved.")).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Minutes without use")).toHaveValue("15");

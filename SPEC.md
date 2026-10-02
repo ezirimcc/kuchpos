@@ -51,6 +51,9 @@ How to read this document:
 | C23 | **One checkout computer per business** today; more may be added later. |
 | C24 | **Automatic sign-out is a setting per business**, changed by that business's admin. A screen left unused for longer than the setting asks for the password again. |
 | C25 | **Everyone can change their own password** after signing in (they must type their current password first). |
+| C27 | **No special prices per customer.** Every customer pays the same preset unit prices. |
+| C28 | **Cart discount as a percentage or an amount.** At the cart, a discount can be entered either as a percentage or as a Naira value. It is allowed only when approved by a manager or someone above (admin, owner). The system always stores the resulting Naira amount. |
+| C29 | **No product images.** The app does not store pictures of products, to keep it fast and light. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -59,6 +62,8 @@ How to read this document:
 - Full accounting (general ledger, payroll, tax filing). KuchPos produces figures the accountant can export.
 - Online shop / customer-facing website.
 - Phone-first layouts (the app will open on a phone, but is designed for computer screens).
+- Product pictures (confirmed not wanted).
+- Customer-specific price lists (confirmed not needed).
 - Supplier purchase orders and supplier debt tracking (only *receiving goods* is included; see §7, P9).
 - Moving stock, customers or debts between businesses (confirmed not needed).
 - Branches inside a business (confirmed not needed).
@@ -125,7 +130,7 @@ Rules:
 ### 4.5 Extra discounts and manager approval
 
 - A preset unit price (including a cheaper carton price) is **not** a discount and needs no approval.
-- An **extra discount** is any reduction below the preset price, on one line or on the whole sale.
+- An **extra discount** is any reduction below the preset price, on one line or on the whole sale. It can be typed as a **percentage** or as a **Naira amount**; the system works out and stores the Naira amount.
 - Flow: cashier enters the discount and a reason → a manager approves it → the sale can be completed.
 - **Two ways to approve (proposed):** (a) the manager types their own username and password/PIN on the cashier's screen, or (b) the manager approves from their own computer, in a "waiting for approval" list.
 - The approval is tied to **that sale and that exact discount**. If the cashier changes the items, quantities or discount afterwards, the approval no longer matches and a new one is needed. An approval can be used once, and expires if unused (**proposed:** 10 minutes).
@@ -416,6 +421,7 @@ Proposed offline behaviour (to be confirmed before that milestone):
 | Q13 | Selling from the Storeroom | Managers, admins and owners only (accepted as P7). |
 | Q23 | Automatic sign-out | 8 hours is too long; make it an admin setting per business. → C24. *Details chosen by me, say if you want them changed:* a new business starts at **30 minutes**; the admin may choose between **5 minutes and 8 hours**; **owners** are always signed out after **30 minutes** unused, whichever business they have open. |
 | Q24 | Changing your own password | Yes. → C25. Changing it signs that person out on any other computer. |
+| Q15 | Special customer prices | No. → C27. Instead: a cart discount as % or value, approved by a manager or above. → C28 |
 
 ### Still open — each will be asked when its milestone is reached
 
@@ -424,7 +430,6 @@ Nothing below blocks the first milestones (M1–M3).
 | # | Question | Needed before |
 |---|---|---|
 | Q14 | What must appear on the receipt (business name, address, phone, tax number, return policy)? | M8 Checkout |
-| Q15 | Do some customers get special prices (e.g. a wholesale price list), separate from unit prices? | M4 Products and prices |
 | Q16 | May a customer pay in advance (hold a deposit with the shop)? *Default if unanswered: no.* | M10 Customers and credit |
 | Q17 | Should the system allow backdated entries (e.g. entering yesterday's delivery today)? *Default if unanswered: no; everything is dated when entered.* | M5 Receiving goods |
 | Q18 | What format does the accountant need for exports? *Default: CSV, which opens in Excel.* | M14 Reports |

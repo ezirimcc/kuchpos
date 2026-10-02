@@ -22,9 +22,76 @@ const ROLES: { role: Exclude<Role, "OWNER">; label: string }[] = [
   { role: "STOREKEEPER", label: "Storekeeper" },
 ];
 
+type SampleUnit = { name: string; factor: string; price: string | null; forSale?: boolean };
+type SampleProduct = { name: string; code: string; allowsFraction: boolean; taxable?: boolean; units: SampleUnit[] };
+
+// The first unit of each product is its base unit. Prices are invented.
+const GREEN_VALLEY_PRODUCTS: SampleProduct[] = [
+  {
+    name: "Tomato Seed Sachet",
+    code: "GV-SEED-01",
+    allowsFraction: false,
+    units: [
+      { name: "sachet", factor: "1", price: "500.00" },
+      { name: "pack", factor: "10", price: "4500.00" },
+      { name: "carton", factor: "100", price: "42000.00" },
+    ],
+  },
+  {
+    name: "NPK 15-15-15 Fertilizer",
+    code: "GV-FERT-01",
+    allowsFraction: true,
+    units: [
+      { name: "kg", factor: "1", price: "1250.50" },
+      { name: "bag", factor: "50", price: "58000.00" },
+    ],
+  },
+  {
+    name: "Liquid Herbicide",
+    code: "GV-HERB-01",
+    allowsFraction: true,
+    units: [
+      { name: "litre", factor: "1", price: "6500.00" },
+      { name: "250 ml bottle", factor: "0.25", price: "1800.00" },
+      { name: "5 litre keg", factor: "5", price: "30000.00" },
+    ],
+  },
+  {
+    name: "Maize Grain (untaxed sample)",
+    code: "GV-GRAIN-01",
+    allowsFraction: true,
+    taxable: false,
+    units: [
+      { name: "kg", factor: "1", price: "900.00" },
+      { name: "bag", factor: "100", price: "85000.00" },
+    ],
+  },
+];
+
+const SUNRISE_PRODUCTS: SampleProduct[] = [
+  {
+    name: "Layer Mash Poultry Feed",
+    code: "SF-FEED-01",
+    allowsFraction: true,
+    units: [
+      { name: "kg", factor: "1", price: "780.00" },
+      { name: "bag", factor: "25", price: "18500.00" },
+    ],
+  },
+  {
+    name: "Poultry Vaccine Vial",
+    code: "SF-VAC-01",
+    allowsFraction: false,
+    units: [
+      { name: "vial", factor: "1", price: "2200.00" },
+      { name: "box", factor: "20", price: "40000.00" },
+    ],
+  },
+];
+
 const BUSINESSES = [
-  { name: "Green Valley Agro (sample)", prefix: "gv", short: "Green Valley" },
-  { name: "Sunrise Farm Supplies (sample)", prefix: "sf", short: "Sunrise" },
+  { name: "Green Valley Agro (sample)", prefix: "gv", short: "Green Valley", products: GREEN_VALLEY_PRODUCTS },
+  { name: "Sunrise Farm Supplies (sample)", prefix: "sf", short: "Sunrise", products: SUNRISE_PRODUCTS },
 ];
 
 async function main() {
@@ -78,6 +145,12 @@ async function main() {
 
   // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
   await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
+  await db.$executeRawUnsafe("TRUNCATE TABLE `price_change`");
+  await db.$executeRawUnsafe("TRUNCATE TABLE `tax_rate_change`");
+  await db.productUnit.deleteMany();
+  await db.product.deleteMany();
+  await db.terminal.deleteMany();
+  await db.location.deleteMany();
   await db.rateLimit.deleteMany();
   await db.session.deleteMany();
   await db.account.deleteMany();
@@ -96,6 +169,53 @@ async function main() {
       const username = `${business.prefix}.${label.toLowerCase()}`;
       await person(`${business.short} ${label}`, username, role, created.id);
       usernames.push(username);
+    }
+
+    await db.location.createMany({
+      data: [
+        { businessId: created.id, name: "Shelf", kind: "SHELF" },
+        { businessId: created.id, name: "Storeroom", kind: "STOREROOM" },
+      ],
+    });
+    await db.terminal.create({ data: { businessId: created.id, code: "T1", name: "Checkout 1", paperWidth: "MM80" } });
+
+    for (const sample of business.products) {
+      const product = await db.product.create({
+        data: {
+          businessId: created.id,
+          name: sample.name,
+          code: sample.code,
+          allowsFraction: sample.allowsFraction,
+          taxable: sample.taxable ?? true,
+        },
+      });
+      for (const [index, unit] of sample.units.entries()) {
+        const row = await db.productUnit.create({
+          data: {
+            businessId: created.id,
+            productId: product.id,
+            name: unit.name,
+            activeName: unit.name,
+            factor: unit.factor,
+            isBase: index === 0,
+            forSale: unit.price !== null,
+            price: unit.price,
+          },
+        });
+        if (unit.price !== null) {
+          await db.priceChange.create({
+            data: {
+              businessId: created.id,
+              productId: product.id,
+              productUnitId: row.id,
+              unitName: unit.name,
+              oldPrice: null,
+              newPrice: unit.price,
+              changedByName: "Sample data",
+            },
+          });
+        }
+      }
     }
   }
 

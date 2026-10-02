@@ -4,6 +4,7 @@ import type { Role } from "@/generated/prisma/client";
 import type { AppContext } from "@/server/auth/context";
 import { placeholderEmail } from "@/server/auth/config";
 import { getDb } from "@/server/db/client";
+import { defaultLocations, defaultTerminal } from "@/server/business/defaults";
 import { BUSINESS_ROLES, type BusinessRole } from "@/server/permissions";
 
 export const TEST_PASSWORD = "correct-horse-battery";
@@ -24,6 +25,12 @@ export async function resetDatabase(): Promise<void> {
   const db = getDb();
   // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
   await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
+  await db.$executeRawUnsafe("TRUNCATE TABLE `price_change`");
+  await db.$executeRawUnsafe("TRUNCATE TABLE `tax_rate_change`");
+  await db.productUnit.deleteMany();
+  await db.product.deleteMany();
+  await db.terminal.deleteMany();
+  await db.location.deleteMany();
   await db.rateLimit.deleteMany();
   await db.session.deleteMany();
   await db.account.deleteMany();
@@ -88,9 +95,15 @@ export async function contextFor(
   };
 }
 
+export type TestProduct = { id: string; baseUnitId: string; packUnitId: string };
+
 export type TestBusiness = {
   id: string;
   name: string;
+  /** A whole-unit product "single = 1, pack = 10" priced ₦100.00 and ₦900.00. */
+  product: TestProduct;
+  shelfId: string;
+  terminalId: string;
   staff: Record<BusinessRole, TestUser>;
   /** A signed-in context for each role in this business. */
   as: Record<BusinessRole, AppContext>;
@@ -98,6 +111,24 @@ export type TestBusiness = {
 
 async function createBusiness(name: string, prefix: string): Promise<TestBusiness> {
   const business = await getDb().business.create({ data: { name, nameKey: name.toLowerCase() } });
+  await getDb().location.createMany({ data: defaultLocations(business.id) });
+  const terminal = await getDb().terminal.create({ data: defaultTerminal(business.id) });
+  const shelf = await getDb().location.findFirstOrThrow({ where: { businessId: business.id, kind: "SHELF" } });
+  const product = await getDb().product.create({
+    data: {
+      businessId: business.id,
+      name: `${prefix.toUpperCase()} Seed Sachet`,
+      code: `${prefix.toUpperCase()}-001`,
+      allowsFraction: false,
+      units: {
+        create: [
+          { businessId: business.id, name: "single", activeName: "single", factor: "1", isBase: true, price: "100.00" },
+          { businessId: business.id, name: "pack", activeName: "pack", factor: "10", price: "900.00" },
+        ],
+      },
+    },
+    include: { units: true },
+  });
   const ref = { id: business.id, name: business.name };
   const staff = {} as Record<BusinessRole, TestUser>;
   const as = {} as Record<BusinessRole, AppContext>;
@@ -109,7 +140,18 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
     });
     as[role] = await contextFor(staff[role], ref);
   }
-  return { ...ref, staff, as };
+  return {
+    ...ref,
+    staff,
+    as,
+    shelfId: shelf.id,
+    terminalId: terminal.id,
+    product: {
+      id: product.id,
+      baseUnitId: product.units.find((unit) => unit.isBase)!.id,
+      packUnitId: product.units.find((unit) => !unit.isBase)!.id,
+    },
+  };
 }
 
 export type World = {

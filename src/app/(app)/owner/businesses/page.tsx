@@ -55,7 +55,7 @@ export default async function BusinessesPage() {
                 </TableCell>
                 <TableCell>{business.staffCount}</TableCell>
                 <TableCell>
-                  <ActionForm action={renameBusinessAction} showSuccess={false} className="flex flex-wrap items-center gap-2">
+                  <ActionForm action={renameBusinessAction} showSuccess={false} compact className="flex flex-wrap items-center gap-2">
                     <input type="hidden" name="businessId" value={business.id} />
                     <Input
                       name="name"

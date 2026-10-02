@@ -91,7 +91,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ## Phase B — Products and stock
 
-### M4 · Business setup, products, units and prices
+### M4 · Business setup, products, units and prices — built 2026-10-02, awaiting owner's check
 **Goal:** The catalogue works, including multi-unit and weighed products.
 - Per business: locations (Shelf, Storeroom) and terminals (each with a code and a receipt paper width, 58 mm or 80 mm).
 - Business settings: **tax rate (default 0%)** with a history of changes; receipt text. Money in Naira and kobo.
@@ -109,7 +109,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 A cashier cannot change a price or the tax rate by calling the server directly.
 - 🤖 Conversions with decimals (e.g. 0.25 kg sachet) convert exactly.
 
-**You do:** Answer Q15 (special customer prices) before this starts.
+*(Q15 answered 2026-10-02: no special customer prices.)*
 
 ### M5 · Stock ledger and receiving goods
 **Goal:** Stock exists, and every unit of it has a recorded origin.
@@ -206,7 +206,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ### M11 · Extra discounts with manager approval
 **Goal:** Requirement C11, enforced by the server.
-- Discount per line or per sale, with reason. Approval at the cashier's screen (manager credentials) or remotely from the manager's own computer.
+- Discount per line or per sale, entered as a percentage or a Naira amount (C28), with reason. Approval at the cashier's screen (manager credentials) or remotely from the manager's own computer.
 - Approval bound to the sale ID and exact discount; single use; expires after 10 minutes.
 - Discounts & approvals report.
 

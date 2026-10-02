@@ -9,14 +9,17 @@ const REMOTE = process.env.E2E_BASE_URL;
 export default defineConfig({
   testDir: "./tests/e2e",
   globalSetup: REMOTE ? "./tests/e2e/remote-setup.ts" : "./tests/e2e/global-setup.ts",
-  // The online server can be slow to answer its first requests after a restart.
-  timeout: REMOTE ? 90_000 : 30_000,
+  // The online server is slow to answer its first requests after a restart, and the
+  // development server on this computer builds each screen the first time it is opened.
+  timeout: 90_000,
   fullyParallel: true,
+  // One browser at a time on this computer: it is often busy, and two at once cause false failures.
+  workers: REMOTE ? 2 : 1,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : REMOTE ? 1 : 0,
+  retries: process.env.CI ? 2 : 1,
   reporter: "list",
   // The development server on this computer can take several seconds to answer when busy.
-  expect: { timeout: 15_000 },
+  expect: { timeout: 30_000 },
   use: {
     baseURL: REMOTE ?? `http://localhost:${PORT}`,
     trace: "on-first-retry",

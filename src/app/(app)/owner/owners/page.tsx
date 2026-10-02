@@ -47,7 +47,7 @@ export default async function OwnersPage() {
                   {owner.active ? <Badge variant="success">Active</Badge> : <Badge variant="destructive">Disabled</Badge>}
                 </TableCell>
                 <TableCell>
-                  <ActionForm action={resetOwnerPasswordAction} resetOnSuccess className="flex flex-wrap items-center gap-2">
+                  <ActionForm action={resetOwnerPasswordAction} resetOnSuccess compact className="flex flex-wrap items-center gap-2">
                     <input type="hidden" name="userId" value={owner.id} />
                     <Input
                       name="password"

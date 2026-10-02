@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "@/server/auth/context";
 import * as activityLog from "@/server/business/activity-log";
+import * as catalog from "@/server/business/catalog";
+import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
 import * as staff from "@/server/business/staff";
 import { getDb } from "@/server/db/client";
@@ -59,6 +61,8 @@ let counter = 0;
 const unique = (prefix: string) => `${prefix}${++counter}`;
 
 const BUSINESS_ADMINS: Actor[] = ["ownerInA", "ADMIN"];
+const EVERYONE_IN_A: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER", "STOREKEEPER"];
+const PRODUCT_MANAGERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -111,6 +115,130 @@ const OPERATIONS: Operation[] = [
     name: "settings.setIdleSignOutMinutes",
     allowed: BUSINESS_ADMINS,
     run: (context) => settings.setIdleSignOutMinutes(context, { minutes: "45" }),
+  },
+  {
+    name: "settings.setTaxRate",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => settings.setTaxRate(context, { ratePercent: "7.5" }),
+  },
+  {
+    name: "settings.setReceiptText",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => settings.setReceiptText(context, { header: "12 Market Road", footer: "Thank you" }),
+  },
+  // --- Locations and terminals (SPEC §5: "Create locations and terminals") ---
+  {
+    name: "setup.getSetup",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => setup.getSetup(context),
+  },
+  {
+    name: "setup.renameLocation",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => setup.renameLocation(context, { locationId: world.a.shelfId, name: "Front shelf" }),
+    runAgainstB: (context) => setup.renameLocation(context, { locationId: world.b.shelfId, name: "Front shelf" }),
+  },
+  {
+    name: "setup.createTerminal",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => setup.createTerminal(context, { code: unique("T"), name: "Checkout 2", paperWidth: "MM58" }),
+  },
+  {
+    name: "setup.updateTerminal",
+    allowed: BUSINESS_ADMINS,
+    run: (context) =>
+      setup.updateTerminal(context, { terminalId: world.a.terminalId, name: "Front till", paperWidth: "MM58" }),
+    runAgainstB: (context) =>
+      setup.updateTerminal(context, { terminalId: world.b.terminalId, name: "Front till", paperWidth: "MM58" }),
+  },
+  {
+    name: "setup.setTerminalActive",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => setup.setTerminalActive(context, { terminalId: world.a.terminalId, active: false }),
+    runAgainstB: (context) => setup.setTerminalActive(context, { terminalId: world.b.terminalId, active: false }),
+  },
+  // --- Products and prices (SPEC §5: "Products & prices") ---
+  {
+    name: "catalog.listProducts",
+    allowed: EVERYONE_IN_A,
+    run: (context) => catalog.listProducts(context),
+  },
+  {
+    name: "catalog.getProduct",
+    allowed: EVERYONE_IN_A,
+    run: (context) => catalog.getProduct(context, { productId: world.a.product.id }),
+    runAgainstB: (context) => catalog.getProduct(context, { productId: world.b.product.id }),
+  },
+  {
+    name: "catalog.createProduct",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) =>
+      catalog.createProduct(context, {
+        name: unique("Product "),
+        code: "",
+        barcode: "",
+        baseUnitName: "single",
+        allowsFraction: false,
+        taxable: true,
+        baseForSale: true,
+        basePrice: "250",
+      }),
+  },
+  {
+    name: "catalog.updateProduct",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) =>
+      catalog.updateProduct(context, { productId: world.a.product.id, name: "Renamed", code: "", barcode: "", taxable: false }),
+    runAgainstB: (context) =>
+      catalog.updateProduct(context, { productId: world.b.product.id, name: "Renamed", code: "", barcode: "", taxable: false }),
+  },
+  {
+    name: "catalog.setProductActive",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => catalog.setProductActive(context, { productId: world.a.product.id, active: false }),
+    runAgainstB: (context) => catalog.setProductActive(context, { productId: world.b.product.id, active: false }),
+  },
+  {
+    name: "catalog.addUnit",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) =>
+      catalog.addUnit(context, {
+        productId: world.a.product.id,
+        name: "carton",
+        factor: "100",
+        forSale: true,
+        forPurchase: true,
+        price: "8500",
+      }),
+    runAgainstB: (context) =>
+      catalog.addUnit(context, {
+        productId: world.b.product.id,
+        name: "carton",
+        factor: "100",
+        forSale: true,
+        forPurchase: true,
+        price: "8500",
+      }),
+  },
+  {
+    name: "catalog.setUnitPrice",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => catalog.setUnitPrice(context, { unitId: world.a.product.packUnitId, price: "950" }),
+    runAgainstB: (context) => catalog.setUnitPrice(context, { unitId: world.b.product.packUnitId, price: "950" }),
+  },
+  {
+    name: "catalog.setUnitUsage",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) =>
+      catalog.setUnitUsage(context, { unitId: world.a.product.packUnitId, forSale: false, forPurchase: true, price: "" }),
+    runAgainstB: (context) =>
+      catalog.setUnitUsage(context, { unitId: world.b.product.packUnitId, forSale: false, forPurchase: true, price: "" }),
+  },
+  {
+    name: "catalog.retireUnit",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => catalog.retireUnit(context, { unitId: world.a.product.packUnitId }),
+    runAgainstB: (context) => catalog.retireUnit(context, { unitId: world.b.product.packUnitId }),
   },
   // --- Activity log (SPEC §5: "View activity log") ---
   {
@@ -203,6 +331,8 @@ describe("every server operation is listed here", () => {
       ...Object.keys(staff).map((name) => `staff.${name}`),
       ...Object.keys(activityLog).map((name) => `activityLog.${name}`),
       ...Object.keys(settings).map((name) => `settings.${name}`),
+      ...Object.keys(catalog).map((name) => `catalog.${name}`),
+      ...Object.keys(setup).map((name) => `setup.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),
       ...Object.keys(system).map((name) => `system.${name}`),
@@ -255,26 +385,27 @@ describe("a refused call changes nothing", () => {
   });
 });
 
+/** Everything business B owns, to prove a refused call from business A changed none of it. */
+async function snapshotOfB() {
+  const db = getDb();
+  const where = { businessId: world.b.id };
+  return {
+    users: await db.user.findMany({ where, orderBy: { id: "asc" }, include: { accounts: true } }),
+    products: await db.product.findMany({ where, orderBy: { id: "asc" }, include: { units: { orderBy: { id: "asc" } } } }),
+    priceChanges: await db.priceChange.count({ where }),
+    locations: await db.location.findMany({ where, orderBy: { id: "asc" } }),
+    terminals: await db.terminal.findMany({ where, orderBy: { id: "asc" } }),
+    business: await db.business.findUnique({ where: { id: world.b.id } }),
+  };
+}
+
 describe("business A cannot reach business B's records", () => {
   for (const operation of OPERATIONS.filter((op) => op.runAgainstB)) {
     for (const actor of ["ADMIN", "ownerInA"] as Actor[]) {
       it(`${operation.name} — ${actor} of A, using a B record id, gets "not found"`, async () => {
-        const before = await getDb().user.findUnique({
-          where: { id: world.b.staff.CASHIER.id },
-          include: { accounts: true },
-        });
-        const beforeStorekeeper = await getDb().user.findUnique({ where: { id: world.b.staff.STOREKEEPER.id } });
-
+        const before = await snapshotOfB();
         await expect(operation.runAgainstB!(contextOf(actor))).rejects.toBeInstanceOf(NotFoundError);
-
-        const after = await getDb().user.findUnique({
-          where: { id: world.b.staff.CASHIER.id },
-          include: { accounts: true },
-        });
-        expect(after).toEqual(before);
-        expect(await getDb().user.findUnique({ where: { id: world.b.staff.STOREKEEPER.id } })).toEqual(
-          beforeStorekeeper,
-        );
+        expect(await snapshotOfB()).toEqual(before);
       });
     }
   }

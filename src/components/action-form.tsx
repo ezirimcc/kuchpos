@@ -25,12 +25,18 @@ export function ActionForm({
   className,
   resetOnSuccess = false,
   showSuccess = true,
+  compact = false,
 }: {
   action: Action;
   children: React.ReactNode;
   className?: string;
   resetOnSuccess?: boolean;
   showSuccess?: boolean;
+  /**
+   * For small one-line forms built from plain inputs (no TextField): there is nowhere beside
+   * the input to show what is wrong with it, so the specific problems are listed in the message.
+   */
+  compact?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, IDLE);
   const formRef = useRef<HTMLFormElement>(null);
@@ -44,8 +50,10 @@ export function ActionForm({
       <form ref={formRef} action={formAction} className={className}>
         {children}
         {state.status === "error" && (
-          <Alert variant="destructive" className="mt-3">
-            {state.message}
+          <Alert variant="destructive" className={compact ? "basis-full" : "mt-3"}>
+            {compact && Object.keys(state.fieldErrors).length > 0
+              ? Object.values(state.fieldErrors).join(" ")
+              : state.message}
           </Alert>
         )}
         {state.status === "success" && showSuccess && (
@@ -119,5 +127,49 @@ export function SubmitButton({
     <Button type="submit" disabled={pending} {...props}>
       {pending ? pendingLabel : children}
     </Button>
+  );
+}
+
+export function TextAreaField({
+  name,
+  label,
+  hint,
+  ...props
+}: { name: string; label: string; hint?: string } & Omit<React.ComponentProps<"textarea">, "name">) {
+  const id = useId();
+  const error = useFieldError(name);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <textarea
+        id={id}
+        name={name}
+        aria-invalid={error ? true : undefined}
+        className="min-h-20 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive"
+        {...props}
+      />
+      <p className={error ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>{error ?? hint ?? "\u00a0"}</p>
+    </div>
+  );
+}
+
+export function CheckboxField({
+  name,
+  label,
+  hint,
+  ...props
+}: { name: string; label: string; hint?: string } & Omit<React.ComponentProps<"input">, "name" | "type">) {
+  const id = useId();
+  const error = useFieldError(name);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <input id={id} name={name} type="checkbox" className="size-4 accent-primary" {...props} />
+        <Label htmlFor={id}>{label}</Label>
+      </div>
+      {(error || hint) && (
+        <p className={error ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>{error ?? hint}</p>
+      )}
+    </div>
   );
 }

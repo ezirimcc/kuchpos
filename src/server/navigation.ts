@@ -12,7 +12,7 @@ const BUSINESS_MENU: NavEntry[] = [
   { label: "Sell", href: null, anyOf: ["sale.create"] },
   { label: "Customers", href: null, anyOf: ["customer.manage", "customer.balance.view"] },
   { label: "Stock", href: null, anyOf: ["stock.receive", "stock.transfer", "stock.count"] },
-  { label: "Products & prices", href: null, anyOf: ["product.manage", "price.manage"] },
+  { label: "Products & prices", href: "/products", anyOf: ["product.manage", "price.manage", "price.view"] },
   {
     label: "Reports",
     href: null,

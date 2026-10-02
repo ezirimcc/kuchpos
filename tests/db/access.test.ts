@@ -7,6 +7,7 @@ import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
 import * as owners from "@/server/platform/owners";
+import * as system from "@/server/platform/system";
 import { createUser, createWorld, type World } from "../support/world";
 
 /**
@@ -185,6 +186,11 @@ const OPERATIONS: Operation[] = [
       owners.resetOwnerPassword(context, { userId: world.owner.id, password: "another-password" }),
   },
   {
+    name: "system.getSystemCheck",
+    allowed: OWNERS,
+    run: (context) => system.getSystemCheck(context, { forwardedFor: null, forwardedProto: null }),
+  },
+  {
     name: "owners.listPlatformActivity",
     allowed: OWNERS,
     run: (context) => owners.listPlatformActivity(context),
@@ -199,6 +205,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(settings).map((name) => `settings.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),
+      ...Object.keys(system).map((name) => `system.${name}`),
     ].sort();
     expect(OPERATIONS.map((operation) => operation.name).sort()).toEqual(exported);
   });

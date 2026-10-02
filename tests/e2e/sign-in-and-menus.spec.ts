@@ -61,7 +61,13 @@ test.describe("each role sees its own menu", () => {
     await expectSignedInAs(page, "Owner");
     await expect(page).toHaveURL(/\/owner\/businesses$/);
     await expect(page.getByTestId("business-banner")).toContainText("No business open");
-    expect(await menuLabels(page)).toEqual(["Businesses", "Owners"]);
+    expect(await menuLabels(page)).toEqual(["Businesses", "Owners", "System check"]);
+
+    await page.getByRole("link", { name: "System check" }).click();
+    const rules = page.getByTestId("system-rule");
+    await expect(rules).toHaveCount(4);
+    await expect(page.getByText("NOT enforced")).toHaveCount(0);
+    await expect(page.getByText("Universal time (correct)")).toBeVisible();
   });
 });
 
@@ -77,7 +83,7 @@ test.describe("pages check permissions themselves", () => {
   test("an admin who types an owner page address is sent back home", async ({ page }) => {
     await signIn(page, "gv.admin");
     await expectSignedInAs(page, "Admin");
-    for (const path of ["/owner/businesses", "/owner/owners"]) {
+    for (const path of ["/owner/businesses", "/owner/owners", "/owner/system"]) {
       await page.goto(path);
       await expect(page).toHaveURL(/\/$/);
     }

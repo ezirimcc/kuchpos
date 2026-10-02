@@ -343,3 +343,24 @@ describe("staff accounts", () => {
     expect(text).not.toContain("brand-new-password");
   });
 });
+
+describe("system check", () => {
+  it("confirms the database enforces its own rules, and leaves nothing behind", async () => {
+    const { getSystemCheck } = await import("@/server/platform/system");
+    const businessesBefore = await getDb().business.count();
+    const logBefore = await getDb().activityLog.count();
+
+    const check = await getSystemCheck(world.ownerOutside, {
+      forwardedFor: "203.0.113.20, 10.0.0.1",
+      forwardedProto: "https",
+    });
+
+    expect(check.rules).toHaveLength(4);
+    expect(check.rules.filter((rule) => !rule.enforced)).toEqual([]);
+    expect(check.databaseTimeZone).toBe("+00:00");
+    expect(check.visitorAddress).toBe("203.0.113.20");
+    expect(await getDb().business.count()).toBe(businessesBefore);
+    expect(await getDb().activityLog.count()).toBe(logBefore);
+    expect((await getDb().user.findUnique({ where: { id: world.owner.id } }))?.businessId).toBeNull();
+  });
+});

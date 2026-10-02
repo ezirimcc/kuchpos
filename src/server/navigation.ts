@@ -32,6 +32,7 @@ const BUSINESS_MENU: NavEntry[] = [
 const OWNER_MENU: NavEntry[] = [
   { label: "Businesses", href: "/owner/businesses", anyOf: ["business.manage"] },
   { label: "Owners", href: "/owner/owners", anyOf: ["owner.manage"] },
+  { label: "System check", href: "/owner/system", anyOf: ["owner.manage"] },
 ];
 
 function visible(subject: PermissionSubject, entries: NavEntry[]): NavItem[] {

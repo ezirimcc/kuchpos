@@ -208,6 +208,7 @@ KuchPos (the whole system)          ← owners work here, across all businesses
 | Open any business and act as its admin | ✅ | — |
 | Create or disable owners | ✅ | — |
 | View the all-businesses overview | ✅ | — |
+| View the System check page (a report on the hosting server, used after each upload) | ✅ | — |
 
 The table below applies **inside one business**.
 
@@ -277,7 +278,7 @@ One approach, chosen because it is widely used, well documented, and lets the wh
 | Part | Plain-language meaning | Choice | Version checked |
 |---|---|---|---|
 | **Interface** | The screens staff see in the browser | **Next.js** (with React), **Tailwind CSS** and **shadcn/ui** for ready-made, clean-looking buttons, tables and forms | Next.js 16.3 · React 19 · Tailwind CSS 4.3 |
-| **Server** | The program on the internet that checks permissions, applies business rules, and talks to the database | The **same Next.js project** — it contains both the screens and the server code | Runs on Node.js. Your Mac has 24; the hosting server currently offers 20.19.4 at most (a request for 22/24 is with HOSTAFRICA support) |
+| **Server** | The program on the internet that checks permissions, applies business rules, and talks to the database | The **same Next.js project** — it contains both the screens and the server code | Runs on Node.js 24, on both your Mac and the hosting server |
 | **Database** | Where all products, stock, sales and debts are permanently stored | **MariaDB**, the database included in your hosting plan. It supports "save everything together or nothing" and simultaneous users. *(Changed from PostgreSQL on 2026-10-02 so the app can run on your existing hosting at no extra cost.)* | MariaDB 10.6 on the hosting server; 10.11 on your Mac |
 | **Database toolkit** | Lets the code read and write the database safely, and applies structure changes in a controlled, recorded way | **Prisma ORM** with its MariaDB connector | **7.10** (stable). *Version 8 is still a release candidate and must not be used yet.* |
 | **Login system** | Staff accounts, passwords, sessions | **Better Auth**, storing accounts in *our own* database. Staff sign in with a username and password. Only an admin or owner can create accounts — there is no public sign-up page. Passwords are stored scrambled (hashed), never readable. Usernames: 3–30 characters (letters, numbers, dot, underscore), not case-sensitive. Passwords: at least 8 characters. | 1.7 |
@@ -300,7 +301,7 @@ Things you should know:
 
 - **Zero extra hosting cost** was the deciding factor (your decision, 2026-10-02). The app uses hosting you already pay for.
 - **Shared hosting is less robust than a dedicated service.** The app shares a server with other customers' websites, with limits of 1 GB memory and part of one processor. That is enough for a handful of shops. If it ever proves too small, the app can move to a small private server (a "VPS") without being rewritten.
-- **Node.js 20 is the newest version the host offers today, and it no longer receives security fixes** (since April 2026). The app has been tested and runs on it. HOSTAFRICA has been asked to add version 22 or 24; switch as soon as they do.
+- **Node.js 24** is used on the hosting server (HOSTAFRICA added it on request on 2026-10-02). It is a long-term-support version that still receives security fixes.
 - **MariaDB is a little less strict than PostgreSQL.** The gaps are covered by extra rules written into the database (checks and triggers) and by automated tests.
 - **The database on your Mac (10.11) is newer than the one on the server (10.6).** Only features that exist in 10.6 may be used, and the full test suite must be run against the server before go-live.
 - **Backups:** HOSTAFRICA takes daily backups of the account. In addition, KuchPos will make its own scheduled backup copy, and restoring from it will be practised before go-live (PLAN M17). A host's backup alone is not enough for records of money.

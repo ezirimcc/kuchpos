@@ -21,9 +21,14 @@ export async function resetDatabase(): Promise<void> {
   if (!url.pathname.endsWith("_test")) {
     throw new Error("resetDatabase() may only run against a database whose name ends in _test.");
   }
-  await getDb().$executeRawUnsafe(
-    'TRUNCATE "activity_log", "session", "account", "verification", "user", "business" CASCADE',
-  );
+  const db = getDb();
+  // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
+  await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
+  await db.session.deleteMany();
+  await db.account.deleteMany();
+  await db.verification.deleteMany();
+  await db.user.deleteMany();
+  await db.business.deleteMany();
 }
 
 export type TestUser = { id: string; name: string; username: string; role: Role };

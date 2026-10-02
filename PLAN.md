@@ -26,7 +26,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 **Goal:** An empty but working app on your Mac, with the safety rails in place.
 - Start version control in this folder; add the ignore-list so secrets and generated files are never saved to it.
 - Create the Next.js project (TypeScript, Tailwind, shadcn/ui). *Note: the project generator creates its own `AGENTS.md`/`CLAUDE.md`; these must be merged with the existing `CLAUDE.md`, not overwrite it.*
-- Install the local PostgreSQL database; connect with Prisma 7.10 (pinned — not the 8 release candidate).
+- Install the local database; connect with Prisma 7.10 (pinned — not the 8 release candidate). *(Done with PostgreSQL at the time; replaced by MariaDB on 2026-10-02.)*
 - Add the exact-decimal helpers for Naira/kobo and for quantities, with tests.
 - Add test tooling (Vitest, Playwright) with one passing example each.
 - Add `.env.example` listing the settings needed, with no real values.
@@ -66,16 +66,26 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - *Business separation:* direct tests using Business B's record ids from Business A, plus tests of the shared data layer itself.
 
 ### M3 · First online deployment (test site)
-**Goal:** The app is reachable on the internet at a private test address, so deployment problems are found early, not at the end.
-- Create hosting and database accounts; test database in a European region (Frankfurt or London — whichever responds faster from Nigeria, measured here); app server in the same region.
-- Secrets entered in the hosting dashboard, never in code.
-- Each checkpoint pushed to GitHub deploys automatically to the test site.
+**Goal:** The app is reachable on the internet at `pos.kuch99.com` with sample data, so hosting problems are found early, not at the end.
+
+*Changed 2026-10-02: hosted on the owner's existing HOSTAFRICA shared hosting (zero extra cost) with its MariaDB database, instead of Vercel + Neon.*
+
+- Prepare the app to run under the host's Node.js launcher (a small start-up file; a compact production build made on the Mac).
+- On the host: a database and database user for the POS; the Node.js application for `pos.kuch99.com`; settings (database address, login secret, site address) entered in the control panel, never in code; HTTPS certificate for the subdomain.
+- A repeatable "build on the Mac, upload, apply database changes, restart" procedure, written down as numbered steps.
+- Run the database structure and the sample-data seed on the host. Confirm the database-level rules (checks and triggers) were accepted by the host's MariaDB 10.6.
+- Sign-in attempt limiting that works on this host. A "TEST — sample data" banner.
+- Decide how the test site and the later live site will be kept apart on one hosting account (separate subdomain and separate database).
 
 **Accept when:**
-- 🧑 From a different computer — ideally a **Windows** checkout computer in one of the shops — you open the test address and sign in, and pages feel quick.
+- 🧑 From a different computer — ideally a **Windows** checkout computer in one of the shops — you open `https://pos.kuch99.com`, see the padlock, sign in, and pages feel quick.
 - 🧑 The test site clearly shows a "TEST — sample data" banner.
+- 🧑 You upload a small visible change yourself by following the written steps (with the assistant guiding).
+- 🤖 The health address reports the database connected; the browser tests pass against the online test site.
+- 🤖 The database on the host refuses a change to the activity log and an out-of-range setting (the same rules the local tests check).
+- 🤖 Memory used by the app on the host stays comfortably under the 1 GB limit after the browser tests.
 
-**You do:** Answer Q19 (who holds the accounts). Create the Vercel and Neon accounts and enter payment details yourself (guided). Decide the test address.
+**You do:** Create the database and the Node.js application in DirectAdmin (guided, click by click; you type the passwords yourself). Pass on HOSTAFRICA's reply about Node.js 22/24.
 
 ---
 
@@ -292,15 +302,16 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ### M17 · Live environment, backups and restore drill
 **Goal:** A separate live system that can survive a mistake or failure.
-- Live database (paid plan with multi-day restore history) and live site at your domain, separate from the test site.
-- Scheduled backup export to a second place. **Practise a restore** into a scratch database and verify it.
+- Live database and live site at their own address on the hosting account, separate from the test site and its sample data.
+- KuchPos's own scheduled backup (a timed job on the host) copied to a second place off the server, in addition to the host's daily backups. **Practise a restore** into a scratch database and verify it.
+- Run the full automated test suite against the host's MariaDB 10.6 (the Mac has 10.11).
 - Short written runbook: how to restore, how to disable a staff account, what to do in a long outage, who to call.
 
 **Accept when:**
 - 🧑 You watch a restore from backup succeed.
 - 🧑 The live site is at your domain with a padlock (HTTPS), and shows no sample data.
 
-**You do:** Buy the domain; upgrade hosting/database plans; keep the account logins somewhere safe (a password manager). Make sure each checkout computer and printer has backup power.
+**You do:** Decide the live address; keep the hosting login somewhere safe (a password manager) and make sure a second trusted person can reach it. Make sure each checkout computer and printer has backup power.
 
 ### M18 · Go-live, one business at a time
 **Goal:** The shops run on KuchPos.
@@ -339,3 +350,5 @@ M15 (Excel import) can be brought forward to any point after M10 if you want to 
 - **Q15 (special customer prices):** a "yes" adds price lists to M4 and M8.
 - **More than one checkout computer in a business:** already allowed for by the design (terminals, simultaneous-sale protection); needs only extra testing.
 - **Offering KuchPos to outside businesses:** a separate later project (M19+).
+- **Shared hosting proving too small or too slow:** move to a small private server (VPS) with the same code; this would add a monthly cost.
+- **HOSTAFRICA adding Node.js 22/24:** switch the app to it at once (small task).

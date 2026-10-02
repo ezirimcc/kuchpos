@@ -11,7 +11,8 @@ Next.js's own rules for coding agents are in AGENTS.md (kept up to date by `next
 
 - **M1 (project skeleton) is done** — verified by the owner on 2026-10-02, tagged `m1`.
 - **M2 (businesses, owners, sign-in, staff, permissions, automatic sign-out setting, change own password) is done** — verified by the owner on 2026-10-02, tagged `m2`.
-- **Next: M3 (first online deployment / test site).** It needs Q19 answered first (who the owners and admins are, and who holds the hosting accounts), and the owner must create the Vercel and Neon accounts themselves.
+- **Database switched from PostgreSQL to MariaDB on 2026-10-02** (owner's decision, for zero-cost hosting). All tests pass on MariaDB; committed after `m2`.
+- **Next: M3 (first online deployment / test site)** on the owner's HOSTAFRICA shared hosting at `pos.kuch99.com`. Waiting on: HOSTAFRICA's reply about Node.js 22/24 (not a blocker — the app runs on 20.19.4).
 - Remaining open questions (SPEC §10, Q14–Q22) are each tied to a milestone. Ask them when that milestone is next, not before.
 - Update this section at the end of every milestone: which milestone is done, which is next.
 
@@ -34,17 +35,17 @@ Next.js's own rules for coding agents are in AGENTS.md (kept up to date by `next
 
 | Part | Choice |
 |---|---|
-| Runtime | Node.js 24 LTS |
+| Runtime | Node.js. Development Mac: 24 LTS. Hosting server: **20.19.4 is the newest offered** (end-of-life; 22/24 requested from the host). Code and production dependencies must keep working on 20.19 |
 | App framework (interface + server) | Next.js 16.3 (App Router, TypeScript, Turbopack), React 19 |
 | Styling / components | Tailwind CSS 4, shadcn/ui |
-| Database | PostgreSQL 17 or 18 (local: Postgres.app; hosted: Neon) |
-| Database toolkit | Prisma ORM **7.10.x** with `@prisma/adapter-pg` |
+| Database | **MariaDB**. Hosting server: 10.6.24. Development Mac: 10.11.6 (DBngin). Use only features that exist in 10.6 |
+| Database toolkit | Prisma ORM **7.10.x**, provider `mysql`, with `@prisma/adapter-mariadb` |
 | Login | Better Auth 1.7 (username plugin only), sessions in our database. Accounts are managed by our own code — see "Login notes" |
 | Validation | Zod 4 |
 | Exact arithmetic | decimal.js 10 |
 | Tests | Vitest 5, Playwright |
 | Offline (M12) | Dexie 4 (IndexedDB), Serwist 9 (service worker) |
-| Hosting | Vercel (paid plan — free plan is non-commercial only) + Neon, same region |
+| Hosting | The owner's existing **HOSTAFRICA shared web hosting** (DirectAdmin, CloudLinux; 1 GB memory, 75% of one core, 20 entry processes) at `pos.kuch99.com`. App and database on the same server. Zero extra budget |
 | Package manager | npm |
 
 Version rules:
@@ -57,7 +58,7 @@ Version rules:
 
 ## Confirmed facts that shape the code
 
-- **Currency:** Nigerian Naira with kobo. Money is `NUMERIC(14,2)`; display as `₦1,250.00`. No cash rounding beyond the kobo.
+- **Currency:** Nigerian Naira with kobo. Money is `DECIMAL(14,2)`; display as `₦1,250.00`. No cash rounding beyond the kobo.
 - **Tax:** a per-business setting, default **0%**, changeable by the admin, with a change history. Each sale line snapshots its tax rate and amount. Prices are **tax-inclusive**; each product has a `taxable` flag. Line tax = line total × rate ÷ (100 + rate), rounded half-up to the kobo, for taxable products only; the customer always pays the shelf price.
 - **Structure:** Platform → Business → Locations (Shelf, Storeroom) and Terminals. **No branch level — do not add one.** Products, prices, stock, customers, debts, staff, settings and reports all belong to exactly one business. Nothing is shared or moved between businesses.
 - **Roles:** five business roles (admin, manager, accountant, cashier, storekeeper), each account tied to exactly one business; plus **owner**, which is not tied to a business. Owners (there can be several) create/deactivate businesses, create other owners, can open any business with full admin rights, and see an all-businesses overview. The last owner cannot be disabled.
@@ -77,7 +78,7 @@ Version rules:
 - All data access goes through one scoped data-access layer that applies the business filter. Screens and actions never query the database client directly. The owner overview is the only cross-business read; it lives in its own clearly named module and returns per-business figures, never mixed rows.
 - A record fetched by ID must also match the session's business; a mismatch is reported as "not found".
 - Every server action has a cross-business test (PLAN M2). The seed always contains one owner and two businesses.
-- If KuchPos is ever offered to outside businesses, add PostgreSQL row-level security as a second layer before doing so.
+- If KuchPos is ever offered to outside businesses, add a second, database-level layer of separation first (MariaDB has no row-level security, so this would mean a separate database or database user per business).
 
 ### 1. Permissions are enforced on the server
 - Every server action and route handler starts by identifying the signed-in user and checking a named permission from **one central permission map** (mirrors SPEC §5), **together with business scope**. No exceptions.
@@ -107,7 +108,7 @@ Version rules:
 
 ### 5. Exact arithmetic
 - **Never use JavaScript `number` for money or quantities.** No `parseFloat`, `Number()`, `toFixed`, `+`, `*` on such values.
-- Database: `NUMERIC` columns with explicit precision — money to 2 decimal places (kobo), quantities and conversion factors to 3 decimal places. Never Prisma's default `Decimal(65,30)`; always specify `@db.Decimal(p, s)`.
+- Database: `DECIMAL` columns with explicit precision — money to 2 decimal places (kobo), quantities and conversion factors to 3 decimal places. Never Prisma's default `Decimal(65,30)`; always specify `@db.Decimal(p, s)`.
 - Code: `decimal.js` through a small shared money/quantity module. All rounding happens there, in one place: half-up, per sale line; the sale total is the sum of rounded lines.
 - Values cross the network as strings, not numbers.
 - Store every computed amount (line total, discount, tax, sale total, change). Never recompute a historical total from current settings.
@@ -148,7 +149,7 @@ Version rules:
 ## Testing expectations
 
 - Every acceptance check marked 🤖 in PLAN.md becomes an automated test.
-- Stock, money, permission and approval logic are tested against a **real PostgreSQL database**, not a fake, because the guarantees depend on the database.
+- Stock, money, permission and approval logic are tested against a **real MariaDB database**, not a fake, because the guarantees depend on the database.
 - Run the full test suite before proposing a checkpoint. Show the owner the summary.
 
 ## Commands
@@ -171,7 +172,7 @@ Version rules:
 
 ## Project layout and local setup notes
 
-- `src/app/` screens and thin `"use server"` actions · `src/server/` everything that runs only on the server · `src/lib/` small helpers safe for both sides · `src/components/` screen components · `prisma/` database schema, migrations and seed · `tests/unit/` (no database), `tests/db/` (real PostgreSQL), `tests/e2e/` (browser).
+- `src/app/` screens and thin `"use server"` actions · `src/server/` everything that runs only on the server · `src/lib/` small helpers safe for both sides · `src/components/` screen components · `prisma/` database schema, migrations and seed · `tests/unit/` (no database), `tests/db/` (real MariaDB), `tests/e2e/` (browser).
 - **How a request is handled** — keep to this shape for every new feature:
   1. A screen (`src/app/(app)/**/page.tsx`) calls `requirePagePermission("…")` and then an operation in `src/server`.
   2. A form posts to a `"use server"` action, which does nothing but call `runAction()` (`src/server/action.ts`) and pass plain form fields to an operation.
@@ -194,10 +195,22 @@ Version rules:
 - decimal.js gotcha: `isPositive()` is true for zero. Use `greaterThan(0)`.
 - Prisma 7.10 names its config file **`prisma7.config.ts`** (not `prisma.config.ts`). The generated client lives in `src/generated/prisma` (git-ignored; recreated by `npm install` / `npm run db:generate`). Import from `@/generated/prisma/client`; get the client with `getDb()` from `src/lib/db.ts`.
 - `prisma init` downloads AI-agent "skill" folders (`.agents/`, `.windsurf/`, `.claude/skills/`, `skills-lock.json`). They were not asked for and were deleted. Do not run `prisma init` again.
-- Local database: Postgres.app (PostgreSQL 18), database `kuchpos_dev`, no password, connection in `.env`. Its tools are at `/Applications/Postgres.app/Contents/Versions/latest/bin/`.
+- Local database: MariaDB 10.11.6 installed with the free DBngin app (user `root`, no password, port 3306). Databases `kuchpos_dev` and `kuchpos_test`. Its tools are at `/Users/Shared/DBngin/mariadb/10.11.6_intel/bin/` (e.g. `mariadb -h 127.0.0.1 -u root`). DBngin must be open with MariaDB started. Postgres.app is no longer used.
+- **MariaDB rules of thumb** (learned during the switch):
+  - `DATABASE_URL` is `mysql://USER:PASSWORD@HOST:PORT/DATABASE`. `src/server/db/client.ts` turns it into pool settings and runs `SET time_zone = '+00:00'` on every connection, so stored times are always UTC. Keep that for any new client (the seed script does the same).
+  - Text comparison is **not case-sensitive** (collation `utf8mb4_unicode_ci`). Use `BINARY` in raw SQL or CHECKs when case matters.
+  - No native UUID column in 10.6: ids are `CHAR(36)` (`@db.Char(36)`). Times are `@db.DateTime(3)`. A plain `String` is `VARCHAR(191)` — give longer text an explicit `@db.VarChar(n)` or `@db.Text`.
+  - A column used in a `CHECK` must not belong to a foreign key that cascades on update: declare such relations with `onUpdate: Restrict`.
+  - `CHECK` constraints and triggers are added by hand at the end of a migration file (Prisma cannot express them). Single-statement triggers only (`FOR EACH ROW SIGNAL SQLSTATE '45000' …`), so no `DELIMITER` is needed.
+  - `TRUNCATE … CASCADE` does not exist. Emptying tables for seed/tests: `TRUNCATE` the add-only tables (triggers block `DELETE`), then `deleteMany()` the rest in child-to-parent order.
+  - Raw SQL uses backticks for names. `SELECT … FOR UPDATE` works inside `$transaction`. Default isolation is REPEATABLE READ.
+  - Not yet proven on the hosting server (check at M3): that the database user may create triggers, and that `prisma migrate deploy` runs there. If triggers are refused, say so to the owner; the add-only rule would then rest on the application alone.
+  - Session tokens and ids are compared case-insensitively because of the collation. Acceptable (cookies are signed), but do not rely on case to distinguish values.
+- **Hosting notes (HOSTAFRICA):** DirectAdmin at `ls11.host-ww.net:2222`, account for `kuch99.com`, subdomain `pos.kuch99.com` created by the owner. Tools seen in the panel: Setup Node.js App (CloudLinux selector, runs the app under Passenger), phpMyAdmin, Terminal, Git, Cron Jobs, Backup and Restore, SSH Keys. The owner logs in; never ask for or handle the hosting password. Build on the Mac and upload; do not build on the server.
+- Verified on 2026-10-02: a production build made on Node 24 starts and serves sign-in and pages under Node 20.19.4 (`npx node@20.19.4 node_modules/next/dist/bin/next start`). One production dependency (`kysely`, inside the login library) declares Node >=22 but worked in that test. Re-run this check after dependency upgrades while the host is on Node 20.
 - Browser tests wait up to 15 seconds per check (`expect.timeout` in `playwright.config.ts`): this Mac is slow when busy, and 5 seconds produced false failures.
 - This Mac runs macOS 13 (Intel). Playwright's downloadable browsers do not support it, so `playwright.config.ts` uses the installed Google Chrome (`channel: "chrome"`). Do not run `playwright install`.
-- `npm audit` reports high-severity advisories in `mysql2` and `deepmerge-ts`. Both are pulled in only by the Prisma command-line tool (a development tool; the app uses PostgreSQL, never MySQL). The offered fix is `--force`, which would jump to the Prisma 8 release candidate — do not apply it. Re-check when upgrading Prisma.
+- `npm audit` reports high-severity advisories in `mysql2` and `deepmerge-ts`. Both are pulled in only by the Prisma command-line tool (a development tool; the app connects through the separate `mariadb` driver, not `mysql2`). The offered fix is `--force`, which would jump to the Prisma 8 release candidate — do not apply it. Re-check when upgrading Prisma.
 - `@types/node` is pinned to 24 (Vitest 5 requires 22 or 24+; the generator's default of 20 conflicts).
 
 ## Decisions log
@@ -211,4 +224,5 @@ Version rules:
 | 2026-10-02 | M2 built. Design choices recorded under "Login notes". |
 | 2026-10-02 | M2 verified by the owner and tagged `m2`. The owner accepted the automatic sign-out details (default 30 min, range 5–480 min, owners fixed at 30 min). |
 | 2026-10-02 | Owner decided: automatic sign-out is an admin setting per business (Q23 → C24); everyone can change their own password (Q24 → C25). Both built into M2. Chosen by the assistant, owner informed: default 30 min, range 5–480 min, owners fixed at 30 min. |
+| 2026-10-02 | Owner chose zero-budget hosting on the existing HOSTAFRICA shared plan (`pos.kuch99.com`) instead of Vercel + Neon, and approved switching the database from PostgreSQL to MariaDB. The PostgreSQL migrations from `m2` were replaced by one fresh MariaDB migration (they had only ever been applied to local databases). |
 | 2026-10-01 | Batch 2 answered: **no branches** — every shop is an independent business; **owner** role (several allowed) with full admin rights in all businesses; customers/staff not shared; prices tax-inclusive with per-product taxable flag; outages frequent → offline moved to M12, before go-live; one checkout computer per business. Permission table and defaults P1–P13 accepted. Milestones renumbered (M12 offline, M13 returns, M14 reports, M15 Excel import, M16 hardening, M17 live environment, M18 go-live). |

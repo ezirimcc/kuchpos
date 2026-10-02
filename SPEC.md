@@ -1,6 +1,6 @@
 # KuchPos — Specification
 
-**Status:** Draft 3 — Batch 1 and Batch 2 answered; permission table and proposed defaults accepted · **Date:** 2026-10-01 · **Nothing has been built yet.**
+**Status:** Draft 4 — hosting moved to the owner's existing HOSTAFRICA plan and the database changed to MariaDB (2026-10-02); Batch 1 and Batch 2 answered; permission table and proposed defaults accepted · **Date:** 2026-10-01 · **Nothing has been built yet.**
 
 KuchPos is a point-of-sale (POS) and inventory application for agricultural products shops. It holds several independent businesses, each kept completely separate.
 
@@ -51,6 +51,7 @@ How to read this document:
 | C23 | **One checkout computer per business** today; more may be added later. |
 | C24 | **Automatic sign-out is a setting per business**, changed by that business's admin. A screen left unused for longer than the setting asks for the password again. |
 | C25 | **Everyone can change their own password** after signing in (they must type their current password first). |
+| C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
 
@@ -276,13 +277,13 @@ One approach, chosen because it is widely used, well documented, and lets the wh
 | Part | Plain-language meaning | Choice | Version checked |
 |---|---|---|---|
 | **Interface** | The screens staff see in the browser | **Next.js** (with React), **Tailwind CSS** and **shadcn/ui** for ready-made, clean-looking buttons, tables and forms | Next.js 16.3 · React 19 · Tailwind CSS 4.3 |
-| **Server** | The program on the internet that checks permissions, applies business rules, and talks to the database | The **same Next.js project** — it contains both the screens and the server code | Runs on Node.js 24 (long-term-support line; already installed on your Mac: 24.21.0) |
-| **Database** | Where all products, stock, sales and debts are permanently stored | **PostgreSQL**, a mature database that is strong at "save everything together or nothing" and at handling simultaneous users | PostgreSQL 17 or 18 (18.6 is current) |
-| **Database toolkit** | Lets the code read and write the database safely, and applies structure changes in a controlled, recorded way | **Prisma ORM** | **7.10** (stable). *Version 8 is still a release candidate and must not be used yet.* |
+| **Server** | The program on the internet that checks permissions, applies business rules, and talks to the database | The **same Next.js project** — it contains both the screens and the server code | Runs on Node.js. Your Mac has 24; the hosting server currently offers 20.19.4 at most (a request for 22/24 is with HOSTAFRICA support) |
+| **Database** | Where all products, stock, sales and debts are permanently stored | **MariaDB**, the database included in your hosting plan. It supports "save everything together or nothing" and simultaneous users. *(Changed from PostgreSQL on 2026-10-02 so the app can run on your existing hosting at no extra cost.)* | MariaDB 10.6 on the hosting server; 10.11 on your Mac |
+| **Database toolkit** | Lets the code read and write the database safely, and applies structure changes in a controlled, recorded way | **Prisma ORM** with its MariaDB connector | **7.10** (stable). *Version 8 is still a release candidate and must not be used yet.* |
 | **Login system** | Staff accounts, passwords, sessions | **Better Auth**, storing accounts in *our own* database. Staff sign in with a username and password. Only an admin or owner can create accounts — there is no public sign-up page. Passwords are stored scrambled (hashed), never readable. Usernames: 3–30 characters (letters, numbers, dot, underscore), not case-sensitive. Passwords: at least 8 characters. | 1.7 |
-| **Hosting** | The company that keeps the app running online | **Vercel** for the app, **Neon** for the PostgreSQL database, in the same region | Current managed services |
+| **Hosting** | The company that keeps the app running online | **Your existing HOSTAFRICA web hosting account** (the `kuch99.com` account), at the address **`pos.kuch99.com`**. The app and its database sit on the same server. | 1 GB memory, DirectAdmin control panel |
 | **Offline storage** | Where the checkout keeps data on the cashier's computer when the internet is down | The browser's built-in database (**IndexedDB**, used through the **Dexie** library), plus a **service worker** (through **Serwist**) so the app opens without internet | Dexie 4 · Serwist 9 |
-| **Money & quantity maths** | Avoids rounding errors | Exact decimal numbers in the database (`NUMERIC`) and the **decimal.js** library in code. Ordinary computer "floating point" numbers are never used for money or quantities. | decimal.js 10 |
+| **Money & quantity maths** | Avoids rounding errors | Exact decimal numbers in the database (`DECIMAL`) and the **decimal.js** library in code. Ordinary computer "floating point" numbers are never used for money or quantities. | decimal.js 10 |
 | **Input checking** | Rejects bad data before it is saved | **Zod** | 4 |
 | **Excel import** | Reads the spreadsheet an admin uploads | A spreadsheet-reading library, **to be chosen at the import milestone** after checking which is currently maintained (two of the well-known ones have not been updated on the package registry for a long time) | — |
 | **Automated tests** | Programs that check the app still works after each change | **Vitest** (rules and database behaviour) and **Playwright** (clicks through the real screens) | Vitest 5 · Playwright 1.63 |
@@ -297,21 +298,24 @@ Why this combination:
 
 Things you should know:
 
-- **Vercel's free plan is for non-commercial use only** (stated in their documentation). A shop is commercial, so a paid plan is required for the live system.
-- **Neon has no data centre in Africa.** Its nearest regions to Nigeria are in Europe (Frankfurt, London). The app server will be placed in the same region as the database. Which of the two is faster from your shops will be measured at Milestone M3.
+- **Zero extra hosting cost** was the deciding factor (your decision, 2026-10-02). The app uses hosting you already pay for.
+- **Shared hosting is less robust than a dedicated service.** The app shares a server with other customers' websites, with limits of 1 GB memory and part of one processor. That is enough for a handful of shops. If it ever proves too small, the app can move to a small private server (a "VPS") without being rewritten.
+- **Node.js 20 is the newest version the host offers today, and it no longer receives security fixes** (since April 2026). The app has been tested and runs on it. HOSTAFRICA has been asked to add version 22 or 24; switch as soon as they do.
+- **MariaDB is a little less strict than PostgreSQL.** The gaps are covered by extra rules written into the database (checks and triggers) and by automated tests.
+- **The database on your Mac (10.11) is newer than the one on the server (10.6).** Only features that exist in 10.6 may be used, and the full test suite must be run against the server before go-live.
+- **Backups:** HOSTAFRICA takes daily backups of the account. In addition, KuchPos will make its own scheduled backup copy, and restoring from it will be practised before go-live (PLAN M17). A host's backup alone is not enough for records of money.
+- **Updates are uploaded, not automatic.** Each new version is built on your Mac and sent to the server, because shared hosting is too small to build the app itself.
 - **Windows checkout computers.** The app runs in the browser (Chrome or Edge), so nothing special is installed. The app is developed on your Mac but must be tried on a real Windows checkout computer with the real receipt printer before go-live.
 - **Barcode scanners need no special work.** A scanner behaves like a very fast keyboard. Products get an optional barcode field now; when you buy a scanner, scanning into the search box finds the product.
-- **Neon's free plan keeps only a few hours of restore history.** The live shop database should be on a paid plan with at least several days of "point-in-time restore" (the ability to rewind the database to a moment before a mistake).
-- **Development database on your Mac.** I propose installing **Postgres.app** (a free, click-to-install PostgreSQL for Mac) so development and tests work quickly and without internet. Your Mac runs macOS 13; if the current Postgres.app does not support it, the fallback is a separate development database on Neon.
 - **Receipt printing in version 1** uses the browser's normal Print function with a layout sized for receipt paper. This works with any printer already installed in Windows and needs no special drivers in the app. Each terminal has a **paper width setting: 58 mm or 80 mm**.
 
 ### 6.1 Likely cost categories (no prices — these change; check each provider's site)
 
 | Category | What it is | Type |
 |---|---|---|
-| App hosting | Paid plan with the hosting company (per team member per month, plus usage above an included amount) | Monthly |
-| Database hosting | Paid plan covering computing time, storage, and days of restore history | Monthly, usage-based |
-| Domain name | An address such as `kuchpos.example` | Yearly |
+| App and database hosting | Your existing HOSTAFRICA web hosting plan, which you already pay for | Yearly (existing) |
+| Domain name | `kuch99.com`, which you already own; `pos.kuch99.com` is a free subdomain of it | Yearly (existing) |
+| Possible later upgrade | A small private server (VPS), only if the shared plan proves too small or too slow | Monthly, only if needed |
 | Email sending *(optional)* | Only if you want password-reset emails; otherwise the admin resets passwords | Free tier or monthly |
 | Error monitoring *(optional)* | A service that alerts when the app crashes | Free tier or monthly |
 | Extra backup storage *(optional)* | A second copy of nightly backups held somewhere else | Small monthly |

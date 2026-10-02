@@ -36,7 +36,8 @@ export type StaffSummary = {
 export async function listStaff(context: AppContext): Promise<StaffSummary[]> {
   authorize(context, "staff.manage");
   const rows = await businessDb(context).user.findMany({
-    orderBy: [{ disabledAt: { sort: "asc", nulls: "first" } }, { name: "asc" }],
+    // Active accounts first (MariaDB sorts empty "disabledAt" values first), then by name.
+    orderBy: [{ disabledAt: "asc" }, { name: "asc" }],
     select: { id: true, name: true, username: true, role: true, disabledAt: true, createdAt: true },
   });
   return rows.map((row) => ({

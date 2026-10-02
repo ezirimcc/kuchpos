@@ -8,7 +8,7 @@ Point of sale and inventory for agricultural products shops.
 
 ## Running it on this computer
 
-1. Make sure Postgres.app is open and running.
+1. Open DBngin and make sure MariaDB is started (green light).
 2. Copy `.env.example` to `.env` and fill it in (first time only).
 3. Run `npm install` (first time only), then `npm run dev`.
 4. Open http://localhost:3000.

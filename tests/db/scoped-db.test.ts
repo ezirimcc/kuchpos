@@ -122,6 +122,44 @@ describe("rules enforced by the database itself", () => {
     ).rejects.toThrow();
   });
 
+  it("keeps times in universal time (UTC), whatever time zone the database server is in", async () => {
+    const db = getDb();
+    const [zone] = await db.$queryRaw<{ zone: string }[]>`SELECT @@session.time_zone AS zone`;
+    expect(zone.zone).toBe("+00:00");
+
+    // Let the DATABASE fill in "createdAt", then read it back through the app.
+    const id = randomUUID();
+    await db.$executeRaw`
+      INSERT INTO \`business\` (\`id\`, \`name\`, \`nameKey\`, \`updatedAt\`)
+      VALUES (${id}, 'Clock Check', 'clock check', UTC_TIMESTAMP(3))`;
+    const row = await db.business.findUniqueOrThrow({ where: { id } });
+    expect(Math.abs(Date.now() - row.createdAt.getTime())).toBeLessThan(10_000);
+  });
+
+  it("treats usernames that differ only by capitals as the same username", async () => {
+    await expect(
+      getDb().user.create({
+        data: {
+          id: randomUUID(),
+          name: "Copy",
+          username: "a.cashier",
+          email: "copy@users.kuchpos.invalid",
+          role: "CASHIER",
+          businessId: world.b.id,
+        },
+      }),
+    ).rejects.toThrow();
+    expect(await getDb().user.count({ where: { username: "A.CASHIER" } })).toBe(1);
+  });
+
+  it("refuses an automatic sign-out time outside 5 to 480 minutes", async () => {
+    for (const minutes of [4, 481, 0, -1]) {
+      await expect(
+        getDb().business.update({ where: { id: world.a.id }, data: { idleSignOutMinutes: minutes } }),
+      ).rejects.toThrow();
+    }
+  });
+
   it("refuses a username containing capital letters", async () => {
     await expect(
       getDb().user.update({ where: { id: world.a.staff.CASHIER.id }, data: { username: "A.Cashier" } }),

@@ -84,7 +84,7 @@ export async function setOwnerDisabled(context: AppContext, input: unknown): Pro
   await getDb().$transaction(async (tx) => {
     // Lock the active owners so two requests cannot each disable "the other one" at the same moment.
     const activeOwners = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "user" WHERE "role" = 'OWNER' AND "disabledAt" IS NULL FOR UPDATE`;
+      SELECT \`id\` FROM \`user\` WHERE \`role\` = 'OWNER' AND \`disabledAt\` IS NULL FOR UPDATE`;
 
     const owner = await tx.user.findFirst({ where: { id: data.userId, role: "OWNER" } });
     if (!owner) throw new NotFoundError("That owner could not be found.");

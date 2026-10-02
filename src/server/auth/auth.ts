@@ -18,7 +18,7 @@ function createAuth() {
   const db = getDb();
 
   return betterAuth({
-    database: prismaAdapter(db, { provider: "postgresql" }),
+    database: prismaAdapter(db, { provider: "mysql" }),
 
     // Username + password only. Accounts are created by owners and admins; there is no public sign-up.
     emailAndPassword: {

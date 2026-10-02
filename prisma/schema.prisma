@@ -7,7 +7,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
 }
 
 /// OWNER sits above all businesses. The other five roles belong to exactly one business.
@@ -22,16 +22,16 @@ enum Role {
 
 /// One independent shop. Everything a shop owns carries its businessId.
 model Business {
-  id            String    @id @default(uuid()) @db.Uuid
+  id            String    @id @default(uuid()) @db.Char(36)
   name          String
   /// Lower-cased name, used to stop two businesses having the same name.
   nameKey       String    @unique
   /// Set when an owner deactivates the business: nobody can sign in to it, records are kept.
-  deactivatedAt DateTime? @db.Timestamptz(3)
+  deactivatedAt DateTime? @db.DateTime(3)
   /// Staff are signed out after this many minutes without using the app (5 to 480; database CHECK).
   idleSignOutMinutes Int  @default(30)
-  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime  @updatedAt @db.Timestamptz(3)
+  createdAt     DateTime  @default(now()) @db.DateTime(3)
+  updatedAt     DateTime  @updatedAt @db.DateTime(3)
 
   users         User[]
   activityLogs  ActivityLog[]
@@ -48,18 +48,19 @@ model User {
   email           String    @unique
   emailVerified   Boolean   @default(false)
   image           String?
-  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.DateTime(3)
+  updatedAt       DateTime  @updatedAt @db.DateTime(3)
   /// Sign-in name. Unique across the whole system, always lower case.
   username        String    @unique
   displayUsername String?
 
   role            Role
   /// Empty for owners; set for everyone else (enforced by a database CHECK).
-  businessId      String?   @db.Uuid
-  business        Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
+  businessId      String?   @db.Char(36)
+  /// onUpdate must be Restrict: MariaDB refuses a CHECK on a column whose foreign key cascades.
+  business        Business? @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// Set when the account is disabled. Accounts are never deleted.
-  disabledAt      DateTime? @db.Timestamptz(3)
+  disabledAt      DateTime? @db.DateTime(3)
 
   sessions        Session[]
   accounts        Account[]
@@ -72,20 +73,20 @@ model User {
 /// A signed-in browser. Core columns are required by the login library.
 model Session {
   id               String    @id
-  expiresAt        DateTime  @db.Timestamptz(3)
+  expiresAt        DateTime  @db.DateTime(3)
   token            String    @unique
-  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.DateTime(3)
+  updatedAt        DateTime  @updatedAt @db.DateTime(3)
   ipAddress        String?
-  userAgent        String?
+  userAgent        String?   @db.Text
   userId           String
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// When this session last made a request. Used for automatic sign-out after inactivity.
-  lastActiveAt     DateTime  @default(now()) @db.Timestamptz(3)
+  lastActiveAt     DateTime  @default(now()) @db.DateTime(3)
 
   /// For owners only: the business they currently have open.
-  activeBusinessId String?   @db.Uuid
+  activeBusinessId String?   @db.Char(36)
   activeBusiness   Business? @relation(fields: [activeBusinessId], references: [id], onDelete: SetNull)
 
   @@index([userId])
@@ -99,16 +100,16 @@ model Account {
   providerId            String
   userId                String
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessToken           String?
-  refreshToken          String?
-  idToken               String?
-  accessTokenExpiresAt  DateTime? @db.Timestamptz(3)
-  refreshTokenExpiresAt DateTime? @db.Timestamptz(3)
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime? @db.DateTime(3)
+  refreshTokenExpiresAt DateTime? @db.DateTime(3)
   scope                 String?
   /// Scrambled (hashed) password. Never readable.
-  password              String?
-  createdAt             DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt             DateTime  @updatedAt @db.Timestamptz(3)
+  password              String?   @db.VarChar(255)
+  createdAt             DateTime  @default(now()) @db.DateTime(3)
+  updatedAt             DateTime  @updatedAt @db.DateTime(3)
 
   @@unique([providerId, accountId])
   @@index([userId])
@@ -119,20 +120,20 @@ model Account {
 model Verification {
   id         String   @id
   identifier String
-  value      String
-  expiresAt  DateTime @db.Timestamptz(3)
-  createdAt  DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+  value      String   @db.Text
+  expiresAt  DateTime @db.DateTime(3)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+  updatedAt  DateTime @updatedAt @db.DateTime(3)
 
   @@index([identifier])
   @@map("verification")
 }
 
-/// Who did what and when. Add-only: the database refuses changes and deletions.
+/// Who did what and when. Add-only: database triggers refuse changes and deletions.
 model ActivityLog {
-  id          String    @id @default(uuid()) @db.Uuid
+  id          String    @id @default(uuid()) @db.Char(36)
   /// The business the event belongs to. Empty for system-level events (owners, creating businesses).
-  businessId  String?   @db.Uuid
+  businessId  String?   @db.Char(36)
   business    Business? @relation(fields: [businessId], references: [id], onDelete: Restrict)
   actorUserId String?
   actor       User?     @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
@@ -142,11 +143,11 @@ model ActivityLog {
   /// Machine-readable event name, e.g. "staff.created".
   action      String
   /// Plain-language sentence shown on screen.
-  summary     String
+  summary     String    @db.VarChar(500)
   targetType  String?
   targetId    String?
   details     Json?
-  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @db.DateTime(3)
 
   @@index([businessId, createdAt])
   @@map("activity_log")

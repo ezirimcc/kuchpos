@@ -9,7 +9,7 @@
  * test site only — never the live system).
  */
 import { randomUUID } from "node:crypto";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { hashPassword } from "better-auth/crypto";
 import "dotenv/config";
 import { PrismaClient, type Role } from "../src/generated/prisma/client";
@@ -44,7 +44,18 @@ async function main() {
     );
   }
 
-  const db = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
+  const url = new URL(connectionString);
+  const db = new PrismaClient({
+    adapter: new PrismaMariaDb({
+      host: url.hostname,
+      port: url.port ? Number.parseInt(url.port, 10) : 3306,
+      user: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      database: databaseName,
+      connectionLimit: 2,
+      initSql: "SET time_zone = '+00:00'",
+    }),
+  });
   const passwordHash = await hashPassword(password);
 
   const person = (name: string, username: string, role: Role, businessId: string | null) => {
@@ -65,9 +76,13 @@ async function main() {
     });
   };
 
-  await db.$executeRawUnsafe(
-    'TRUNCATE "activity_log", "session", "account", "verification", "user", "business" CASCADE',
-  );
+  // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
+  await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
+  await db.session.deleteMany();
+  await db.account.deleteMany();
+  await db.verification.deleteMany();
+  await db.user.deleteMany();
+  await db.business.deleteMany();
 
   await person("Sample Owner", "owner", "OWNER", null);
   const usernames = ["owner"];

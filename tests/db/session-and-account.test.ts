@@ -228,3 +228,80 @@ describe("profile and dashboard", () => {
     expect((await getDashboard(world.b.as.ADMIN)).products).toBe(5);
   });
 });
+
+describe("editing your own profile", () => {
+  async function edit(context: Parameters<typeof changeOwnPassword>[0], input: Record<string, unknown>) {
+    const { updateOwnProfile } = await import("@/server/auth/account");
+    return updateOwnProfile(context, input);
+  }
+
+  it("changes full name and username, after which the new username signs in and the old one does not", async () => {
+    await edit(world.a.as.CASHIER, { name: "Chidi Okafor", username: "Chidi.Okafor", currentPassword: TEST_PASSWORD });
+
+    const user = await getDb().user.findUniqueOrThrow({ where: { id: world.a.staff.CASHIER.id } });
+    expect(user).toMatchObject({ name: "Chidi Okafor", username: "chidi.okafor", role: "CASHIER", businessId: world.a.id });
+    expect(await canSignIn("chidi.okafor", TEST_PASSWORD)).toBe(true);
+    expect(await canSignIn("a.cashier", TEST_PASSWORD)).toBe(false);
+  });
+
+  it("is allowed for an owner too", async () => {
+    await edit(world.ownerOutside, { name: "Chima Ezirim", username: "chima", currentPassword: TEST_PASSWORD });
+    const owner = await getDb().user.findUniqueOrThrow({ where: { id: world.owner.id } });
+    expect(owner).toMatchObject({ name: "Chima Ezirim", username: "chima", role: "OWNER", businessId: null });
+  });
+
+  it("refuses a wrong password and changes nothing", async () => {
+    await expect(
+      edit(world.a.as.CASHIER, { name: "Someone Else", username: "someone.else", currentPassword: "not-my-password" }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    const user = await getDb().user.findUniqueOrThrow({ where: { id: world.a.staff.CASHIER.id } });
+    expect(user).toMatchObject({ name: "Test a.cashier", username: "a.cashier" });
+  });
+
+  it("refuses a username someone else already has, in any business", async () => {
+    for (const username of ["a.manager", "b.cashier", "owner", "B.Cashier"]) {
+      await expect(
+        edit(world.a.as.CASHIER, { name: "Test a.cashier", username, currentPassword: TEST_PASSWORD }),
+        username,
+      ).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect((await getDb().user.findUniqueOrThrow({ where: { id: world.a.staff.CASHIER.id } })).username).toBe("a.cashier");
+  });
+
+  it("refuses a malformed name or username", async () => {
+    for (const input of [{ name: "", username: "a.cashier" }, { name: "Ok Name", username: "has spaces" }, { name: "Ok Name", username: "ab" }]) {
+      await expect(edit(world.a.as.CASHIER, { ...input, currentPassword: TEST_PASSWORD })).rejects.toBeInstanceOf(ValidationError);
+    }
+  });
+
+  it("cannot change role, business or another person's account, whatever else is sent", async () => {
+    await edit(world.a.as.CASHIER, {
+      name: "Renamed Cashier",
+      username: "a.cashier",
+      currentPassword: TEST_PASSWORD,
+      role: "ADMIN",
+      businessId: world.b.id,
+      userId: world.a.staff.ADMIN.id,
+    });
+    const cashier = await getDb().user.findUniqueOrThrow({ where: { id: world.a.staff.CASHIER.id } });
+    expect(cashier).toMatchObject({ name: "Renamed Cashier", role: "CASHIER", businessId: world.a.id });
+    const admin = await getDb().user.findUniqueOrThrow({ where: { id: world.a.staff.ADMIN.id } });
+    expect(admin.name).toBe("Test a.admin");
+  });
+
+  it("records the old and new values in the person's own business log, without the password", async () => {
+    await edit(world.a.as.CASHIER, { name: "Chidi Okafor", username: "chidi.okafor", currentPassword: TEST_PASSWORD });
+    const entry = await getDb().activityLog.findFirstOrThrow({ where: { action: "account.profile_changed" } });
+    expect(entry.businessId).toBe(world.a.id);
+    expect(entry.summary).toBe(
+      'Test a.cashier changed their own name from "Test a.cashier" to "Chidi Okafor" and username from "a.cashier" to "chidi.okafor".',
+    );
+    expect(JSON.stringify(entry)).not.toContain(TEST_PASSWORD);
+  });
+
+  it("does nothing and records nothing when nothing changed", async () => {
+    const before = await getDb().activityLog.count();
+    await edit(world.a.as.CASHIER, { name: "Test a.cashier", username: "a.cashier", currentPassword: "anything" });
+    expect(await getDb().activityLog.count()).toBe(before);
+  });
+});

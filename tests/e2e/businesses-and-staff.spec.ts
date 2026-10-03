@@ -80,13 +80,13 @@ test("the cashier changes their own password; the old one stops working", async 
 
   await openUserMenu(page);
   await page.getByRole("menuitem", { name: "Change password" }).click();
-  await page.getByLabel("Current password").fill("definitely-wrong");
+  await page.getByLabel("Your current password").fill("definitely-wrong");
   await page.getByLabel("New password", { exact: true }).fill(cashierOwnPassword);
   await page.getByLabel("New password again").fill(cashierOwnPassword);
   await page.getByRole("button", { name: "Change password" }).click();
   await expect(page.getByText("That is not your current password.")).toBeVisible();
 
-  await page.getByLabel("Current password").fill(SAMPLE_PASSWORD);
+  await page.getByLabel("Your current password").fill(SAMPLE_PASSWORD);
   await page.getByLabel("New password", { exact: true }).fill(cashierOwnPassword);
   await page.getByLabel("New password again").fill(cashierOwnPassword);
   await page.getByRole("button", { name: "Change password" }).click();

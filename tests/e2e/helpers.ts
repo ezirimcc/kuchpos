@@ -40,3 +40,9 @@ export async function signOut(page: Page) {
   await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/\/sign-in$/);
 }
+
+/** Opens a signed-in screen and waits until it is fully interactive, so typing is not lost. */
+export async function gotoReady(page: Page, path: string) {
+  await page.goto(path);
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+}

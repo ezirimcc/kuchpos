@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSignedInAs, openUserMenu, signIn } from "./helpers";
+import { expectSignedInAs, openUserMenu, SAMPLE_PASSWORD, signIn, signOut } from "./helpers";
 
 test("the dashboard greets the person and shows only the figures their role may see", async ({ page }) => {
   await signIn(page, "gv.admin");
@@ -64,4 +64,38 @@ test("the user menu leads to a profile page with the person's own details", asyn
   await expect(page.getByTestId("profile-role")).toHaveText("Storekeeper");
   await expect(page.getByTestId("profile-business")).toHaveText("Green Valley Agro (sample)");
   await expect(page.getByRole("button", { name: "Change password" })).toBeVisible();
+});
+
+test("a person edits their own name and username, then signs in with the new username", async ({ page }) => {
+  const stamp = Date.now().toString(36);
+  const newUsername = `gv.accounts.${stamp}`;
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  await page.goto("/account");
+
+  await page.getByLabel("Full name").fill("Ngozi Accounts");
+  await page.getByLabel("Username", { exact: true }).fill(newUsername);
+  await page.getByLabel("Current password, to confirm").fill("wrong-password");
+  await page.getByRole("button", { name: "Save my details" }).click();
+  await expect(page.getByText("That is not your current password.")).toBeVisible();
+
+  await page.getByLabel("Current password, to confirm").fill(SAMPLE_PASSWORD);
+  await page.getByRole("button", { name: "Save my details" }).click();
+  await expect(page.getByText("Your details have been saved.")).toBeVisible();
+  await expect(page.getByTestId("profile-name")).toHaveText("Ngozi Accounts");
+  await expect(page.getByTestId("signed-in-as")).toHaveText("Ngozi Accounts");
+
+  await signOut(page);
+  await signIn(page, "gv.accountant");
+  await expect(page.getByText("The username or password is not correct.")).toBeVisible();
+  await signIn(page, newUsername);
+  await expectSignedInAs(page, "Accountant");
+
+  // Put the sample account back so other tests find it under its usual username.
+  await page.goto("/account");
+  await page.getByLabel("Full name").fill("Green Valley Accountant");
+  await page.getByLabel("Username", { exact: true }).fill("gv.accountant");
+  await page.getByLabel("Current password, to confirm").fill(SAMPLE_PASSWORD);
+  await page.getByRole("button", { name: "Save my details" }).click();
+  await expect(page.getByTestId("profile-username")).toHaveText("gv.accountant");
 });

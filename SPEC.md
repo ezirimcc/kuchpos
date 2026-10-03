@@ -58,7 +58,7 @@ How to read this document:
 | C31 | **Long lists are split into pages and can be filtered.** Every screen with a table shows a page at a time, with search that updates as you type and filters suited to the list (products: category; activity log: date range and text). |
 | C32 | **Modern dashboard look**, following the reference design the owner supplied on 2026-10-03: soft grey background, large rounded panels, lime and deep-green gradients, pill-shaped buttons — without slowing the app down. Includes: a **light / dark mode switch**; a **side menu that collapses** to icons only and expands to icons with titles; a **user menu** (drop-down under the person's name) holding Profile, Change password and Sign out; the menu item is named **"Products & Categories"**. |
 | C33 | **Home dashboard**: a greeting by time of day ("Good morning, Name") with snapshot figures. It shows only figures the person's role may see. Sales, collections and debt figures appear on it as those features are built. |
-| C34 | **Profile page**: basic information about the signed-in person (name, username, role, business, when the account was created), with the change-password form. |
+| C34 | **Profile page**: basic information about the signed-in person (name, username, role, business, when the account was created), with the change-password form. **Each person can edit their own full name and username** (they must type their current password; the change is recorded in the activity log). Role and business can only be changed by an admin or owner. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -230,6 +230,7 @@ The table below applies **inside one business**.
 | Create / disable staff accounts, set roles, reset passwords | ✅ | — | — | — | — |
 | Change business settings (tax rate, receipt text, automatic sign-out time) | ✅ | — | — | — | — |
 | Change own password | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit own full name and username | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Create locations and terminals | ✅ | — | — | — | — |
 | Import records from Excel | ✅ | — | — | — | — |
 | View activity log | ✅ | 👁 | 👁 | — | — |

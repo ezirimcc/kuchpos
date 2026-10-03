@@ -2,7 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
-import { changeOwnPassword } from "@/server/auth/account";
+import { changeOwnPassword, updateOwnProfile } from "@/server/auth/account";
 
 export async function changeOwnPasswordAction(_previous: FormState, formData: FormData): Promise<FormState> {
   if (field(formData, "newPassword") !== field(formData, "repeatPassword")) {
@@ -16,6 +16,16 @@ export async function changeOwnPasswordAction(_previous: FormState, formData: Fo
     changeOwnPassword(context, {
       currentPassword: field(formData, "currentPassword"),
       newPassword: field(formData, "newPassword"),
+    }),
+  );
+}
+
+export async function updateOwnProfileAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Your details have been saved." }, (context) =>
+    updateOwnProfile(context, {
+      name: field(formData, "name"),
+      username: field(formData, "username"),
+      currentPassword: field(formData, "currentPassword"),
     }),
   );
 }

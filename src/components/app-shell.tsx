@@ -2,7 +2,7 @@
 
 import { PanelLeftClose, PanelLeftOpen, Sprout } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "cn";
 import { SideNav, type SideNavItem } from "@/components/side-nav";
 
@@ -33,6 +33,11 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(startCollapsed);
+
+  // Marks the page as fully interactive (used by the automated browser tests before they type).
+  useEffect(() => {
+    document.documentElement.dataset.ready = "true";
+  }, []);
 
   function toggle() {
     const next = !collapsed;

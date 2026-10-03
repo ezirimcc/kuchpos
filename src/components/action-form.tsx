@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useActionState, useContext, useEffect, useId, useRef } from "react";
+import { createContext, startTransition, useActionState, useContext, useEffect, useId, useRef } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +47,19 @@ export function ActionForm({
 
   return (
     <FormStateContext.Provider value={{ state, pending }}>
-      <form ref={formRef} action={formAction} className={className}>
+      <form
+        ref={formRef}
+        action={formAction}
+        // Sent by hand rather than left to the browser: otherwise every box is emptied after
+        // each attempt, and a person who made one mistake would have to type everything again.
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (pending) return;
+          const formData = new FormData(event.currentTarget);
+          startTransition(() => formAction(formData));
+        }}
+        className={className}
+      >
         {children}
         {state.status === "error" && (
           <Alert variant="destructive" className={compact ? "basis-full" : "mt-3"}>

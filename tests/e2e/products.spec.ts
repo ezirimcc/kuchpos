@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSignedInAs, openFromMenu, signIn } from "./helpers";
+import { expectSignedInAs, gotoReady, openFromMenu, signIn } from "./helpers";
 
 // These tests build on each other, so they run one after another.
 test.describe.configure({ mode: "serial" });
@@ -159,7 +159,7 @@ test("the admin changes the tax rate and adds a checkout terminal", async ({ pag
 test("the product list filters as you type, and by category, without reloading the page", async ({ page }) => {
   await signIn(page, "gv.manager");
   await expectSignedInAs(page, "Manager");
-  await page.goto("/products");
+  await gotoReady(page, "/products");
   await expect(page.getByTestId("product-row-Tomato Seed Sachet")).toBeVisible();
   await expect(page.getByTestId("product-row-Liquid Herbicide")).toBeVisible();
 
@@ -215,7 +215,7 @@ test("a manager adds a category, renames a product into it, and cannot remove a 
 test("the activity log can be searched as you type and narrowed to a date range", async ({ page }) => {
   await signIn(page, "gv.admin");
   await expectSignedInAs(page, "Admin");
-  await page.goto("/activity");
+  await gotoReady(page, "/activity");
 
   await page.getByLabel("Search the activity log").pressSequentially("carton");
   await expect(page.getByText(/added the unit "carton"/).first()).toBeVisible();

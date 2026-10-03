@@ -7,7 +7,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 import { getOwnProfile } from "@/server/auth/account";
 import { requirePageContext } from "@/server/auth/request";
 import { ROLE_LABELS } from "@/server/permissions";
-import { changeOwnPasswordAction } from "./actions";
+import { changeOwnPasswordAction, updateOwnProfileAction } from "./actions";
 
 export const metadata: Metadata = { title: "My profile — KuchPos" };
 
@@ -55,7 +55,7 @@ export default async function AccountPage() {
         <CardHeader>
           <CardTitle>Account details</CardTitle>
           <CardDescription>
-            To change your name, username or role, ask {profile.role === "OWNER" ? "another owner" : "your admin"}.
+            Your role and business can only be changed by {profile.role === "OWNER" ? "another owner" : "your admin or the owner"}.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -72,6 +72,41 @@ export default async function AccountPage() {
         </CardContent>
       </Card>
 
+      <Card id="edit">
+        <CardHeader>
+          <CardTitle>Edit my details</CardTitle>
+          <CardDescription>
+            Change your full name or the username you sign in with. Type your current password to confirm. The change
+            is recorded in the activity log.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ActionForm action={updateOwnProfileAction} className="flex max-w-md flex-col gap-1">
+            <TextField name="name" label="Full name" defaultValue={profile.name} key={`name-${profile.name}`} autoComplete="name" required />
+            <TextField
+              name="username"
+              label="Username"
+              defaultValue={profile.username}
+              key={`username-${profile.username}`}
+              hint="Letters, numbers, dots, underscores. You will sign in with this."
+              autoComplete="off"
+              autoCapitalize="none"
+              required
+            />
+            <TextField
+              name="currentPassword"
+              label="Current password, to confirm"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
+            <div>
+              <SubmitButton className="mt-2">Save my details</SubmitButton>
+            </div>
+          </ActionForm>
+        </CardContent>
+      </Card>
+
       <Card id="password" className="scroll-mt-4">
         <CardHeader>
           <CardTitle>Change my password</CardTitle>
@@ -81,7 +116,7 @@ export default async function AccountPage() {
         </CardHeader>
         <CardContent>
           <ActionForm action={changeOwnPasswordAction} resetOnSuccess className="flex max-w-md flex-col gap-1">
-            <TextField name="currentPassword" label="Current password" type="password" autoComplete="current-password" required />
+            <TextField name="currentPassword" label="Your current password" type="password" autoComplete="current-password" required />
             <TextField
               name="newPassword"
               label="New password"

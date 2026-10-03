@@ -7,7 +7,9 @@ import { ValidationError } from "@/server/errors";
 import type { Role } from "@/generated/prisma/client";
 import { OWNER_IDLE_SIGN_OUT_MINUTES } from "./config";
 import type { AppContext } from "./context";
-import { hashPassword, parseInput, passwordSchema } from "./users";
+import { Prisma } from "@/generated/prisma/client";
+import { placeholderEmail } from "./config";
+import { hashPassword, parseInput, passwordSchema, personNameSchema, usernameSchema } from "./users";
 
 /** Things any signed-in person may do to their OWN account. The account is always taken from the session. */
 
@@ -96,4 +98,78 @@ export async function getOwnProfile(context: AppContext): Promise<OwnProfile> {
     signedInAt: session?.createdAt ?? null,
     idleSignOutMinutes: user.business?.idleSignOutMinutes ?? OWNER_IDLE_SIGN_OUT_MINUTES,
   };
+}
+
+const updateOwnProfileSchema = z.object({
+  name: personNameSchema,
+  username: usernameSchema,
+  currentPassword: z.string().min(1, "Enter your current password to confirm the change."),
+});
+
+/**
+ * Lets the signed-in person change their own full name and username. They must prove
+ * they know their password, and the change is written to the activity log with the old
+ * and new values. Role and business are never changed here.
+ */
+export async function updateOwnProfile(context: AppContext, input: unknown): Promise<void> {
+  const data = parseInput(updateOwnProfileSchema, input);
+  const db = getDb();
+  const userId = context.actor.userId;
+
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { name: true, username: true, role: true, businessId: true },
+  });
+  const nameChanged = user.name !== data.name;
+  const usernameChanged = user.username !== data.username;
+  if (!nameChanged && !usernameChanged) return;
+
+  const account = await db.account.findFirst({ where: { userId, providerId: "credential" } });
+  const passwordMatches =
+    !!account?.password && (await verifyPassword({ hash: account.password, password: data.currentPassword }));
+  if (!passwordMatches) {
+    throw new ValidationError("Please correct the highlighted fields.", {
+      currentPassword: "That is not your current password.",
+    });
+  }
+
+  const changes = [
+    nameChanged ? `name from "${user.name}" to "${data.name}"` : null,
+    usernameChanged ? `username from "${user.username}" to "${data.username}"` : null,
+  ].filter(Boolean);
+
+  try {
+    await db.$transaction([
+      db.user.update({
+        where: { id: userId },
+        data: {
+          name: data.name,
+          ...(usernameChanged
+            ? { username: data.username, displayUsername: data.username, email: placeholderEmail(data.username) }
+            : {}),
+        },
+      }),
+      db.activityLog.create({
+        data: {
+          actorUserId: userId,
+          // The log shows the name the person had when they made the change.
+          actorName: user.name,
+          actorRole: user.role,
+          action: "account.profile_changed",
+          summary: `${user.name} changed their own ${changes.join(" and ")}.`,
+          targetType: "user",
+          targetId: userId,
+          details: { from: { name: user.name, username: user.username }, to: { name: data.name, username: data.username } },
+          businessId: user.businessId,
+        },
+      }),
+    ]);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new ValidationError("Please correct the highlighted fields.", {
+        username: "That username is already taken. Choose another.",
+      });
+    }
+    throw error;
+  }
 }

@@ -91,7 +91,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ## Phase B — Products and stock
 
-### M4 · Business setup, products, units and prices — built 2026-10-02, awaiting owner's check
+### M4 · Business setup, products, units and prices ✅ (verified 2026-10-03, tag `m4`)
 **Goal:** The catalogue works, including multi-unit and weighed products.
 - Per business: locations (Shelf, Storeroom) and terminals (each with a code and a receipt paper width, 58 mm or 80 mm).
 - Business settings: **tax rate (default 0%)** with a history of changes; receipt text. Money in Naira and kobo.

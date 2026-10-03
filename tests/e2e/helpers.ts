@@ -28,3 +28,15 @@ export async function menuLabels(page: Page): Promise<string[]> {
 export async function openFromMenu(page: Page, label: string) {
   await page.getByRole("navigation", { name: "Main menu" }).getByRole("link", { name: label, exact: true }).click();
 }
+
+/** Opens the drop-down under the person's name at the top right. */
+export async function openUserMenu(page: Page) {
+  await page.getByRole("button", { name: "Your account menu" }).click();
+}
+
+/** Signs out through the user menu and waits for the sign-in page. */
+export async function signOut(page: Page) {
+  await openUserMenu(page);
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/sign-in$/);
+}

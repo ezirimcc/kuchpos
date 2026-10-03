@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "@/server/auth/context";
 import * as activityLog from "@/server/business/activity-log";
 import * as catalog from "@/server/business/catalog";
+import * as dashboard from "@/server/business/dashboard";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
 import * as staff from "@/server/business/staff";
@@ -158,6 +159,11 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => setup.setTerminalActive(context, { terminalId: world.b.terminalId, active: false }),
   },
   // --- Products and prices (SPEC §5: "Products & prices") ---
+  {
+    name: "dashboard.getDashboard",
+    allowed: EVERYONE_IN_A,
+    run: (context) => dashboard.getDashboard(context),
+  },
   {
     name: "catalog.listProducts",
     allowed: EVERYONE_IN_A,
@@ -355,6 +361,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(settings).map((name) => `settings.${name}`),
       ...Object.keys(catalog).map((name) => `catalog.${name}`),
       ...Object.keys(setup).map((name) => `setup.${name}`),
+      ...Object.keys(dashboard).map((name) => `dashboard.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),
       ...Object.keys(system).map((name) => `system.${name}`),

@@ -13,10 +13,10 @@ export function PageHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex flex-wrap items-start justify-between gap-3 px-1 pt-1">
       <div className="flex items-start gap-3">
         {Icon && (
-          <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-foreground">
+          <span className="mt-0.5 flex size-11 shrink-0 items-center justify-center rounded-2xl bg-card text-link dark:border dark:border-border">
             <Icon className="size-5" aria-hidden />
           </span>
         )}

@@ -41,7 +41,7 @@ export default async function ActivityPage({ searchParams }: PageProps<"/activit
           <FilterDate name="from" label="From" />
           <FilterDate name="to" label="To" />
           {filtered && (
-            <Link href="/activity" className="text-sm text-primary underline-offset-4 hover:underline">
+            <Link href="/activity" className="text-sm text-link underline-offset-4 hover:underline">
               Clear filters
             </Link>
           )}
@@ -49,7 +49,7 @@ export default async function ActivityPage({ searchParams }: PageProps<"/activit
       </Suspense>
 
       {list.entries.length === 0 ? (
-        <p className="rounded-xl border border-dashed bg-card p-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">
           {filtered ? "Nothing matches these filters." : "Nothing has been recorded yet."}
         </p>
       ) : (

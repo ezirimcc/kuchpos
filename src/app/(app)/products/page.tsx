@@ -13,7 +13,7 @@ import { requirePagePermission } from "@/server/auth/request";
 import { listCategories, listProducts } from "@/server/business/catalog";
 import { can } from "@/server/permissions";
 
-export const metadata: Metadata = { title: "Products & prices — KuchPos" };
+export const metadata: Metadata = { title: "Products & Categories — KuchPos" };
 
 function text(value: string | string[] | undefined): string {
   return typeof value === "string" ? value : "";
@@ -40,7 +40,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
     <div className="flex flex-col gap-5">
       <PageHeader
         icon={Package}
-        title="Products & prices"
+        title="Products & Categories"
         description="Every unit a product is sold in, with its own price. Prices include tax."
       >
         {canManage && (
@@ -72,7 +72,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
       </Suspense>
 
       {list.products.length === 0 ? (
-        <p className="rounded-xl border border-dashed bg-card p-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">
           {filtered ? "No product matches. Try a different search or category." : "No products yet."}
         </p>
       ) : (
@@ -90,7 +90,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
             {list.products.map((product) => (
               <TableRow key={product.id} data-testid={`product-row-${product.name}`}>
                 <TableCell className="font-medium">
-                  <Link href={`/products/${product.id}`} className="text-primary underline-offset-4 hover:underline">
+                  <Link href={`/products/${product.id}`} className="text-link underline-offset-4 hover:underline">
                     {product.name}
                   </Link>
                   {!product.active && (

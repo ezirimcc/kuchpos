@@ -19,7 +19,7 @@ export default async function CategoriesPage() {
   return (
     <div className="flex max-w-3xl flex-col gap-5">
       <Link href="/products" className="flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:underline">
-        <ArrowLeft className="size-3.5" aria-hidden /> Products &amp; prices
+        <ArrowLeft className="size-3.5" aria-hidden /> Products &amp; Categories
       </Link>
       <PageHeader
         icon={Tags}
@@ -42,7 +42,7 @@ export default async function CategoriesPage() {
       </Card>
 
       {categories.length === 0 ? (
-        <p className="rounded-xl border border-dashed bg-card p-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">
           No categories yet.
         </p>
       ) : (
@@ -76,7 +76,7 @@ export default async function CategoriesPage() {
                 <TableCell>
                   <Link
                     href={`/products?category=${category.id}`}
-                    className="text-primary underline-offset-4 hover:underline"
+                    className="text-link underline-offset-4 hover:underline"
                   >
                     {category.productCount}
                   </Link>

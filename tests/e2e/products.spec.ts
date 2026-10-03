@@ -12,7 +12,7 @@ let sachetUrl = "";
 test("a manager creates a product sold as single, pack and carton, each with its own price", async ({ page }) => {
   await signIn(page, "gv.manager");
   await expectSignedInAs(page, "Manager");
-  await openFromMenu(page, "Products & prices");
+  await openFromMenu(page, "Products & Categories");
   await page.getByRole("link", { name: "Add a product" }).click();
 
   await page.getByLabel("Product name").fill(sachetName);

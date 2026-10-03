@@ -44,7 +44,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
         <Link href="/products" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
-          ← Products &amp; prices
+          ← Products &amp; Categories
         </Link>
         <h1 className="mt-1 flex flex-wrap items-center gap-2 text-2xl font-semibold tracking-tight">
           {product.name}

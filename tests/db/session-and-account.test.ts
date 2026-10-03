@@ -185,3 +185,46 @@ describe("changing your own password", () => {
     expect(JSON.stringify(entry)).not.toContain(TEST_PASSWORD);
   });
 });
+
+describe("profile and dashboard", () => {
+  it("shows a person their own basic details", async () => {
+    const { getOwnProfile } = await import("@/server/auth/account");
+    const profile = await getOwnProfile(world.a.as.CASHIER);
+    expect(profile).toMatchObject({
+      username: "a.cashier",
+      role: "CASHIER",
+      businessName: "Business A",
+      idleSignOutMinutes: 30,
+    });
+    expect(profile.signedInAt).toBeInstanceOf(Date);
+
+    const owner = await getOwnProfile(world.ownerOutside);
+    expect(owner).toMatchObject({ username: "owner", role: "OWNER", businessName: null, idleSignOutMinutes: 30 });
+  });
+
+  it("gives each role only the dashboard figures it may see", async () => {
+    const { getDashboard } = await import("@/server/business/dashboard");
+    const admin = await getDashboard(world.a.as.ADMIN);
+    expect(admin).toMatchObject({ products: 1, categories: 2, taxRatePercent: "0.00", staff: 5 });
+    expect(admin.activityToday).toBeGreaterThanOrEqual(0);
+    expect(admin.recentActivity).not.toBeNull();
+
+    const manager = await getDashboard(world.a.as.MANAGER);
+    expect(manager.staff).toBeNull();
+    expect(manager.recentActivity).not.toBeNull();
+
+    for (const role of ["CASHIER", "STOREKEEPER"] as const) {
+      const snapshot = await getDashboard(world.a.as[role]);
+      expect(snapshot).toMatchObject({ products: 1, categories: 2, staff: null, activityToday: null, recentActivity: null });
+    }
+  });
+
+  it("counts only the business in use on the dashboard", async () => {
+    const { getDashboard } = await import("@/server/business/dashboard");
+    await getDb().product.createMany({
+      data: Array.from({ length: 4 }, (_, index) => ({ businessId: world.b.id, name: `B extra ${index}`, allowsFraction: false })),
+    });
+    expect((await getDashboard(world.a.as.ADMIN)).products).toBe(1);
+    expect((await getDashboard(world.b.as.ADMIN)).products).toBe(5);
+  });
+});

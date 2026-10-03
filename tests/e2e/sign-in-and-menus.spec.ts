@@ -34,16 +34,16 @@ const MENUS: Array<{ username: string; role: string; menu: string[] }> = [
   {
     username: "gv.admin",
     role: "Admin",
-    menu: ["Sell", "Customers", "Stock", "Products & prices", "Reports", "Staff", "Activity log", "Settings"],
+    menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports", "Staff", "Activity log", "Settings"],
   },
   {
     username: "gv.manager",
     role: "Manager",
-    menu: ["Sell", "Customers", "Stock", "Products & prices", "Reports", "Activity log"],
+    menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"],
   },
-  { username: "gv.accountant", role: "Accountant", menu: ["Customers", "Products & prices", "Reports", "Activity log"] },
-  { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Customers", "Products & prices", "Reports"] },
-  { username: "gv.storekeeper", role: "Storekeeper", menu: ["Stock", "Products & prices", "Reports"] },
+  { username: "gv.accountant", role: "Accountant", menu: ["Customers", "Products & Categories", "Reports", "Activity log"] },
+  { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Customers", "Products & Categories", "Reports"] },
+  { username: "gv.storekeeper", role: "Storekeeper", menu: ["Stock", "Products & Categories", "Reports"] },
 ];
 
 test.describe("each role sees its own menu", () => {

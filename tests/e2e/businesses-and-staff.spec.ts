@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SAMPLE_PASSWORD, expectSignedInAs, openFromMenu, signIn } from "./helpers";
+import { SAMPLE_PASSWORD, expectSignedInAs, openFromMenu, openUserMenu, signIn, signOut } from "./helpers";
 
 // These tests change data, so they run one after another.
 test.describe.configure({ mode: "serial" });
@@ -68,8 +68,7 @@ test("the new admin signs in and creates a cashier, who can sign in", async ({ p
   await page.goto("/activity");
   await expect(page.getByText(`created the cashier account "${cashierUsername}"`)).toBeVisible();
 
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL(/\/sign-in$/);
+  await signOut(page);
 
   await signIn(page, cashierUsername);
   await expectSignedInAs(page, "Cashier");
@@ -79,7 +78,8 @@ test("the cashier changes their own password; the old one stops working", async 
   await signIn(page, cashierUsername);
   await expectSignedInAs(page, "Cashier");
 
-  await page.getByRole("link", { name: "Change password" }).click();
+  await openUserMenu(page);
+  await page.getByRole("menuitem", { name: "Change password" }).click();
   await page.getByLabel("Current password").fill("definitely-wrong");
   await page.getByLabel("New password", { exact: true }).fill(cashierOwnPassword);
   await page.getByLabel("New password again").fill(cashierOwnPassword);
@@ -92,7 +92,7 @@ test("the cashier changes their own password; the old one stops working", async 
   await page.getByRole("button", { name: "Change password" }).click();
   await expect(page.getByText("Your password has been changed.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await signOut(page);
   await signIn(page, cashierUsername, SAMPLE_PASSWORD);
   await expect(page.getByText("The username or password is not correct.")).toBeVisible();
   await signIn(page, cashierUsername, cashierOwnPassword);
@@ -116,7 +116,7 @@ test("the admin sets the automatic sign-out time; a cashier cannot reach the set
   await page.reload();
   await expect(page.getByLabel("Minutes without use")).toHaveValue("15");
 
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await signOut(page);
   await signIn(page, cashierUsername, cashierOwnPassword);
   await expectSignedInAs(page, "Cashier");
   await page.goto("/settings");

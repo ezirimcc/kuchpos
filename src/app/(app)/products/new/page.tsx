@@ -16,7 +16,7 @@ export default async function NewProductPage() {
     <div className="flex max-w-3xl flex-col gap-5">
       <div>
         <Link href="/products" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
-          ← Products &amp; prices
+          ← Products &amp; Categories
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Add a product</h1>
       </div>

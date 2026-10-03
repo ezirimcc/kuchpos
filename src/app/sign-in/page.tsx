@@ -20,9 +20,9 @@ export default async function SignInPage({ searchParams }: PageProps<"/sign-in">
   if (alreadySignedIn) redirect("/");
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-6 bg-gradient-to-b from-accent/60 to-background p-6">
+    <main className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
       <div className="flex flex-col items-center gap-3 text-center">
-        <span className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+        <span className="bg-brand-gradient flex size-14 items-center justify-center rounded-2xl text-white shadow-sm">
           <Sprout className="size-8" aria-hidden />
         </span>
         <div>

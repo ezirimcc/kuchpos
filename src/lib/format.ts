@@ -43,3 +43,26 @@ export function shopDayEnd(day: string): Date | null {
   const start = shopDayStart(day);
   return start ? new Date(start.getTime() + 24 * 60 * 60 * 1000) : null;
 }
+
+/** Today's date in the shop's own time, as "YYYY-MM-DD". */
+export function shopToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: SHOP_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+/** "Good morning", "Good afternoon" or "Good evening", by the shop's clock. */
+export function shopGreeting(now: Date = new Date()): string {
+  const hour = Number.parseInt(
+    new Intl.DateTimeFormat("en-GB", { timeZone: SHOP_TIME_ZONE, hour: "2-digit", hourCycle: "h23" }).format(now),
+    10,
+  );
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+const dateFormat = new Intl.DateTimeFormat("en-NG", { timeZone: SHOP_TIME_ZONE, day: "numeric", month: "long", year: "numeric" });
+
+/** A stored time as a Nigerian date, e.g. "3 October 2026". */
+export function formatDate(date: Date): string {
+  return dateFormat.format(date);
+}

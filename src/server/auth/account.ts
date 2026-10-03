@@ -4,6 +4,8 @@ import { z } from "zod";
 import { activityRow } from "@/server/activity";
 import { getDb } from "@/server/db/client";
 import { ValidationError } from "@/server/errors";
+import type { Role } from "@/generated/prisma/client";
+import { OWNER_IDLE_SIGN_OUT_MINUTES } from "./config";
 import type { AppContext } from "./context";
 import { hashPassword, parseInput, passwordSchema } from "./users";
 
@@ -54,4 +56,44 @@ export async function changeOwnPassword(context: AppContext, input: unknown): Pr
       },
     }),
   ]);
+}
+
+export type OwnProfile = {
+  name: string;
+  username: string;
+  role: Role;
+  /** The business the account belongs to; null for an owner. */
+  businessName: string | null;
+  accountCreatedAt: Date;
+  /** When the current sign-in on this computer started. */
+  signedInAt: Date | null;
+  /** Minutes without use before this person is signed out automatically. */
+  idleSignOutMinutes: number;
+};
+
+/** Basic information about the signed-in person's own account. */
+export async function getOwnProfile(context: AppContext): Promise<OwnProfile> {
+  const db = getDb();
+  const [user, session] = await Promise.all([
+    db.user.findUniqueOrThrow({
+      where: { id: context.actor.userId },
+      select: {
+        name: true,
+        username: true,
+        role: true,
+        createdAt: true,
+        business: { select: { name: true, idleSignOutMinutes: true } },
+      },
+    }),
+    db.session.findUnique({ where: { id: context.actor.sessionId }, select: { createdAt: true } }),
+  ]);
+  return {
+    name: user.name,
+    username: user.username,
+    role: user.role,
+    businessName: user.business?.name ?? null,
+    accountCreatedAt: user.createdAt,
+    signedInAt: session?.createdAt ?? null,
+    idleSignOutMinutes: user.business?.idleSignOutMinutes ?? OWNER_IDLE_SIGN_OUT_MINUTES,
+  };
 }

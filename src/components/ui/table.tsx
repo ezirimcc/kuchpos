@@ -3,14 +3,14 @@ import { cn } from "cn"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
-    <div data-slot="table-container" className="w-full overflow-x-auto rounded-xl border bg-card">
+    <div data-slot="table-container" className="w-full overflow-x-auto rounded-3xl border border-transparent bg-card p-2 dark:border-border">
       <table data-slot="table" className={cn("w-full caption-bottom text-sm", className)} {...props} />
     </div>
   )
 }
 
 function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
-  return <thead data-slot="table-header" className={cn("bg-muted/60 [&_tr]:border-b [&_tr]:hover:bg-transparent", className)} {...props} />
+  return <thead data-slot="table-header" className={cn("[&_th:first-child]:rounded-l-2xl [&_th:last-child]:rounded-r-2xl [&_th]:bg-muted [&_tr]:border-0 [&_tr]:hover:bg-transparent", className)} {...props} />
 }
 
 function TableBody({ className, ...props }: React.ComponentProps<"tbody">) {

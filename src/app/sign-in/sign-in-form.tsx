@@ -53,7 +53,7 @@ export function SignInForm() {
             <Input id="password" name="password" type="password" autoComplete="current-password" required />
           </div>
           {error && <Alert variant="destructive">{error}</Alert>}
-          <Button type="submit" size="lg" disabled={pending}>
+          <Button type="submit" size="lg" disabled={pending} className="mt-1">
             {pending ? "Signing in…" : "Sign in"}
           </Button>
         </form>

@@ -112,22 +112,29 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 *(Q15 answered 2026-10-02: no special customer prices.)*
 
-### M5 · Stock ledger and receiving goods
+### M5 · Stock ledger and receiving goods — built 2026-10-04, awaiting owner's check
 **Goal:** Stock exists, and every unit of it has a recorded origin.
 - Add-only stock movement ledger and per-location balances in base units; the database itself refuses a negative balance.
-- Suppliers (simple list). Goods-received document: supplier, location, lines with unit, quantity, cost; optional batch number and expiry date; "expiring soon" list.
-- Moving weighted average cost updated on receipt.
+- Suppliers (simple list).
+- Goods-received document: supplier, location, date, lines with unit, quantity and cost. Batch number and expiry date are asked for only on products set up to use them (C37), and are then required.
+- Backdating (C35): admins and managers may give an earlier date with a note; marked on the delivery and in the activity log. No future dates.
+- Moving weighted average cost updated on each delivery.
 - Stock on hand screen: per product, per location, shown in base units and broken into larger units.
+- Deliveries list and detail, with cost prices, for storekeeper, manager, admin (and accountant) (C36).
+- "Expiring soon" list, looking ahead the number of months set by the admin (C38, default 3).
 
 **Accept when:**
 - 🧑 Receiving 2 cartons (100 each) into Storeroom shows 200 singles there and 0 on Shelf.
 - 🧑 Receiving 3 bags of 50 kg shows 150.000 kg.
-- 🤖 Submitting the same receipt twice (same ID) creates it once.
+- 🧑 A product ticked "uses expiry date" cannot be received without one; a product not ticked is never asked.
+- 🧑 As storekeeper you cannot change the delivery date; as manager you can, but only with a note, and the activity log says it was backdated.
+- 🧑 A delivery expiring within the set number of months appears under "Expiring soon".
+- 🤖 Submitting the same delivery twice (same ID) creates it once.
 - 🤖 The balance always equals the sum of the movements, checked after every test.
-- 🤖 If one line of a receipt is invalid, nothing from that receipt is saved.
+- 🤖 If one line of a delivery is invalid, nothing from that delivery is saved.
 - 🤖 Receiving 100 at ₦50 then 100 at ₦70 gives an average cost of exactly ₦60.00.
-
-**You do:** Answer Q17 (backdated entries) before this starts.
+- 🤖 Two deliveries of the same product saved at the same instant both count, in stock and in average cost.
+- 🤖 A cashier cannot record or view a delivery; business A cannot see or receive into business B.
 
 ### M6 · Transfers
 **Goal:** Stock moves between Storeroom and Shelf with a paper trail.

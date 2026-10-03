@@ -103,3 +103,34 @@ describe("formatNaira", () => {
     expect(formatNaira(parseMoney("-2500"))).toBe("-₦2,500.00");
   });
 });
+
+describe("movingAverageCost", () => {
+  const d = (value: string) => new Decimal(value);
+
+  it("is the delivery's own cost per base unit when there was no stock", async () => {
+    const { movingAverageCost } = await import("./money");
+    const average = movingAverageCost({ quantityBefore: d("0"), averageBefore: d("0"), quantityAdded: d("100"), costAdded: d("5000") });
+    expect(average.toFixed(4)).toBe("50.0000");
+  });
+
+  it("gives exactly 60 after 100 at 50 then 100 at 70", async () => {
+    const { movingAverageCost } = await import("./money");
+    const average = movingAverageCost({ quantityBefore: d("100"), averageBefore: d("50"), quantityAdded: d("100"), costAdded: d("7000") });
+    expect(average.toFixed(4)).toBe("60.0000");
+  });
+
+  it("weights by quantity and rounds half-up to four decimal places", async () => {
+    const { movingAverageCost } = await import("./money");
+    // (3 × 10 + 20) ÷ (3 + 3) = 8.3333…
+    const average = movingAverageCost({ quantityBefore: d("3"), averageBefore: d("10"), quantityAdded: d("3"), costAdded: d("20") });
+    expect(average.toFixed(4)).toBe("8.3333");
+    // 1 ÷ 3 × … a value ending in exactly 5 at the fifth place rounds up: 0.00005 → 0.0001
+    expect(movingAverageCost({ quantityBefore: d("0"), averageBefore: d("0"), quantityAdded: d("20000"), costAdded: d("1") }).toFixed(4)).toBe("0.0001");
+  });
+
+  it("handles weighed goods: 2.5 kg costing 1,000 into 7.5 kg at 380", async () => {
+    const { movingAverageCost } = await import("./money");
+    const average = movingAverageCost({ quantityBefore: d("7.5"), averageBefore: d("380"), quantityAdded: d("2.5"), costAdded: d("1000") });
+    expect(average.toFixed(4)).toBe("385.0000");
+  });
+});

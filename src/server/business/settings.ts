@@ -26,6 +26,8 @@ export type BusinessSettings = {
   taxRatePercent: string;
   receiptHeader: string;
   receiptFooter: string;
+  /** How many months ahead an expiry date counts as "expiring soon". */
+  expiringSoonMonths: number;
   taxRateHistory: TaxRateChangeView[];
 };
 
@@ -39,6 +41,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
       taxRatePercent: true,
       receiptHeader: true,
       receiptFooter: true,
+      expiringSoonMonths: true,
     },
   });
   if (!business) throw new NotFoundError("That business could not be found.");
@@ -53,6 +56,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
     taxRatePercent: business.taxRatePercent.toFixed(2),
     receiptHeader: business.receiptHeader ?? "",
     receiptFooter: business.receiptFooter ?? "",
+    expiringSoonMonths: business.expiringSoonMonths,
     taxRateHistory: history.map((entry) => ({
       id: entry.id,
       createdAt: entry.createdAt,
@@ -169,6 +173,42 @@ export async function setReceiptText(context: AppContext, input: unknown): Promi
         summary: `${context.actor.name} changed the text printed on receipts.`,
         targetType: "business",
         targetId: business.id,
+      }),
+    });
+  });
+}
+
+const MIN_EXPIRING_MONTHS = 1;
+const MAX_EXPIRING_MONTHS = 36;
+const MONTHS_MESSAGE = `Enter a whole number of months from ${MIN_EXPIRING_MONTHS} to ${MAX_EXPIRING_MONTHS}.`;
+
+const expiringSoonSchema = z.object({
+  months: z
+    .string()
+    .trim()
+    .regex(/^\d{1,2}$/, MONTHS_MESSAGE)
+    .transform((text) => Number.parseInt(text, 10))
+    .pipe(z.number().min(MIN_EXPIRING_MONTHS, MONTHS_MESSAGE).max(MAX_EXPIRING_MONTHS, MONTHS_MESSAGE)),
+});
+
+/** Sets how many months ahead an expiry date counts as "expiring soon". */
+export async function setExpiringSoonMonths(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "settings.manage");
+  const { months } = parseInput(expiringSoonSchema, input);
+
+  await businessDb(context).$transaction(async (tx) => {
+    const business = await tx.business.findFirst({ select: { id: true, expiringSoonMonths: true } });
+    if (!business) throw new NotFoundError("That business could not be found.");
+    if (business.expiringSoonMonths === months) return;
+
+    await tx.business.update({ where: { id: business.id }, data: { expiringSoonMonths: months } });
+    await tx.activityLog.create({
+      data: activityRow(context, {
+        action: "settings.expiring_soon_changed",
+        summary: `${context.actor.name} changed "expiring soon" from ${business.expiringSoonMonths} to ${months} months.`,
+        targetType: "business",
+        targetId: business.id,
+        details: { from: business.expiringSoonMonths, to: months },
       }),
     });
   });

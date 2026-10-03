@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { expectSignedInAs, menuLabels, openFromMenu, signIn } from "./helpers";
 
 test.describe("signed out", () => {
-  for (const path of ["/", "/staff", "/activity", "/settings", "/account", "/products", "/products/new", "/products/categories", "/owner/businesses", "/owner/owners"]) {
+  for (const path of ["/", "/staff", "/activity", "/settings", "/account", "/products", "/products/new", "/products/categories", "/stock", "/stock/receive", "/stock/receipts", "/owner/businesses", "/owner/owners"]) {
     test(`visiting ${path} sends you to the sign-in page`, async ({ page }) => {
       await page.goto(path);
       await expect(page).toHaveURL(/\/sign-in$/);
@@ -41,8 +41,8 @@ const MENUS: Array<{ username: string; role: string; menu: string[] }> = [
     role: "Manager",
     menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"],
   },
-  { username: "gv.accountant", role: "Accountant", menu: ["Customers", "Products & Categories", "Reports", "Activity log"] },
-  { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Customers", "Products & Categories", "Reports"] },
+  { username: "gv.accountant", role: "Accountant", menu: ["Customers", "Stock", "Products & Categories", "Reports", "Activity log"] },
+  { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports"] },
   { username: "gv.storekeeper", role: "Storekeeper", menu: ["Stock", "Products & Categories", "Reports"] },
 ];
 
@@ -65,7 +65,7 @@ test.describe("each role sees its own menu", () => {
 
     await openFromMenu(page, "System check");
     const rules = page.getByTestId("system-rule");
-    await expect(rules).toHaveCount(4);
+    await expect(rules).toHaveCount(6);
     await expect(page.getByText("NOT enforced")).toHaveCount(0);
     await expect(page.getByText("Universal time (correct)")).toBeVisible();
   });

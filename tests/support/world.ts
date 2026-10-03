@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
 import type { Role } from "@/generated/prisma/client";
+import { emptyAllTables } from "../../prisma/empty-tables";
 import type { AppContext } from "@/server/auth/context";
 import { placeholderEmail } from "@/server/auth/config";
 import { getDb } from "@/server/db/client";
@@ -22,22 +23,7 @@ export async function resetDatabase(): Promise<void> {
   if (!url.pathname.endsWith("_test")) {
     throw new Error("resetDatabase() may only run against a database whose name ends in _test.");
   }
-  const db = getDb();
-  // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
-  await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
-  await db.$executeRawUnsafe("TRUNCATE TABLE `price_change`");
-  await db.$executeRawUnsafe("TRUNCATE TABLE `tax_rate_change`");
-  await db.productUnit.deleteMany();
-  await db.product.deleteMany();
-  await db.category.deleteMany();
-  await db.terminal.deleteMany();
-  await db.location.deleteMany();
-  await db.rateLimit.deleteMany();
-  await db.session.deleteMany();
-  await db.account.deleteMany();
-  await db.verification.deleteMany();
-  await db.user.deleteMany();
-  await db.business.deleteMany();
+  await emptyAllTables(getDb());
 }
 
 export type TestUser = { id: string; name: string; username: string; role: Role };
@@ -104,6 +90,8 @@ export type TestBusiness = {
   /** A whole-unit product "single = 1, pack = 10" priced ₦100.00 and ₦900.00. */
   product: TestProduct;
   shelfId: string;
+  storeroomId: string;
+  supplierId: string;
   terminalId: string;
   /** The category the sample product is in, and a second one with no products. */
   categoryId: string;
@@ -118,6 +106,8 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
   await getDb().location.createMany({ data: defaultLocations(business.id) });
   const terminal = await getDb().terminal.create({ data: defaultTerminal(business.id) });
   const shelf = await getDb().location.findFirstOrThrow({ where: { businessId: business.id, kind: "SHELF" } });
+  const storeroom = await getDb().location.findFirstOrThrow({ where: { businessId: business.id, kind: "STOREROOM" } });
+  const supplier = await getDb().supplier.create({ data: { businessId: business.id, name: `${prefix.toUpperCase()} Supplies Ltd` } });
   const category = await getDb().category.create({ data: { businessId: business.id, name: "Seeds" } });
   const emptyCategory = await getDb().category.create({ data: { businessId: business.id, name: "Empty" } });
   const product = await getDb().product.create({
@@ -152,6 +142,8 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
     staff,
     as,
     shelfId: shelf.id,
+    storeroomId: storeroom.id,
+    supplierId: supplier.id,
     terminalId: terminal.id,
     categoryId: category.id,
     emptyCategoryId: emptyCategory.id,
@@ -186,4 +178,29 @@ export async function createWorld(): Promise<World> {
     a,
     b,
   };
+}
+
+/**
+ * Checks the golden rule of the stock ledger for the whole database: every balance equals
+ * the sum of its movements, and there is no movement without a balance.
+ */
+export async function expectBalancesMatchMovements(): Promise<void> {
+  const db = getDb();
+  const mismatches = await db.$queryRaw<{ productId: string; locationId: string; balance: string; moved: string }[]>`
+    SELECT k.productId, k.locationId,
+           CAST(COALESCE(b.quantity, 0) AS CHAR) AS balance,
+           CAST(COALESCE(m.moved, 0) AS CHAR) AS moved
+    FROM (
+      SELECT productId, locationId FROM stock_balance
+      UNION
+      SELECT productId, locationId FROM stock_movement
+    ) k
+    LEFT JOIN stock_balance b ON b.productId = k.productId AND b.locationId = k.locationId
+    LEFT JOIN (
+      SELECT productId, locationId, SUM(quantityDelta) AS moved FROM stock_movement GROUP BY productId, locationId
+    ) m ON m.productId = k.productId AND m.locationId = k.locationId
+    WHERE COALESCE(b.quantity, 0) <> COALESCE(m.moved, 0)`;
+  if (mismatches.length > 0) {
+    throw new Error(`Stock balances do not match their movements: ${JSON.stringify(mismatches)}`);
+  }
 }

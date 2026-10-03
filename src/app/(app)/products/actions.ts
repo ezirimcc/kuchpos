@@ -27,6 +27,8 @@ export async function createProductAction(_previous: FormState, formData: FormDa
       baseUnitName: field(formData, "baseUnitName"),
       allowsFraction: field(formData, "soldBy") === "measure",
       taxable: field(formData, "taxable"),
+      tracksBatch: field(formData, "tracksBatch"),
+      tracksExpiry: field(formData, "tracksExpiry"),
       baseForSale: field(formData, "baseForSale"),
       basePrice: field(formData, "basePrice"),
     });
@@ -45,6 +47,8 @@ export async function updateProductAction(_previous: FormState, formData: FormDa
       barcode: field(formData, "barcode"),
       categoryId: field(formData, "categoryId"),
       taxable: field(formData, "taxable"),
+      tracksBatch: field(formData, "tracksBatch"),
+      tracksExpiry: field(formData, "tracksExpiry"),
     }),
   );
 }

@@ -33,6 +33,11 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   ProductUnit: { filter: (businessId) => ({ businessId }), stamp: true },
   PriceChange: { filter: (businessId) => ({ businessId }), stamp: true },
   TaxRateChange: { filter: (businessId) => ({ businessId }), stamp: true },
+  Supplier: { filter: (businessId) => ({ businessId }), stamp: true },
+  StockBalance: { filter: (businessId) => ({ businessId }), stamp: true },
+  StockMovement: { filter: (businessId) => ({ businessId }), stamp: true },
+  GoodsReceipt: { filter: (businessId) => ({ businessId }), stamp: true },
+  GoodsReceiptLine: { filter: (businessId) => ({ businessId }), stamp: true },
 };
 
 const WHERE_OPERATIONS = new Set([

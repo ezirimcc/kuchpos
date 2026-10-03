@@ -68,6 +68,16 @@ export default async function NewProductPage() {
                 defaultChecked
               />
               <CheckboxField name="taxable" label="Taxable" hint="Untick for products that carry no tax." defaultChecked />
+              <CheckboxField
+                name="tracksBatch"
+                label="Uses a batch number"
+                hint="Tick if every delivery of this product must record its batch number."
+              />
+              <CheckboxField
+                name="tracksExpiry"
+                label="Uses an expiry date"
+                hint="Tick if every delivery of this product must record when it expires."
+              />
             </div>
             <SubmitButton pendingLabel="Creating…" className="mt-4">
               Create product

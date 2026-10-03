@@ -50,20 +50,25 @@ describe("database update tool for the hosting server", () => {
       expect.arrayContaining([
         "business", "user", "session", "account", "activity_log", "rateLimit",
         "location", "terminal", "product", "product_unit", "price_change", "tax_rate_change",
+        "category", "supplier", "stock_balance", "stock_movement", "goods_receipt", "goods_receipt_line",
       ]),
     );
 
     const triggers = await scratchQuery<{ name: string }>(
       `SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = '${SCRATCH}'`,
     );
-    expect(triggers.map((trigger) => trigger.name).sort()).toEqual([
-      "activity_log_no_delete",
-      "activity_log_no_update",
-      "price_change_no_delete",
-      "price_change_no_update",
-      "tax_rate_change_no_delete",
-      "tax_rate_change_no_update",
-    ]);
+    // Every add-only table is protected against both changes and deletions.
+    const addOnlyTables = [
+      "activity_log",
+      "price_change",
+      "tax_rate_change",
+      "stock_movement",
+      "goods_receipt",
+      "goods_receipt_line",
+    ];
+    expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
+      addOnlyTables.flatMap((table) => [`${table}_no_delete`, `${table}_no_update`]).sort(),
+    );
 
     const checks = await scratchQuery<{ name: string }>(
       `SELECT CONSTRAINT_NAME AS name FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = '${SCRATCH}'`,
@@ -77,6 +82,12 @@ describe("database update tool for the hosting server", () => {
         "terminal_code_format_check",
         "product_unit_factor_check",
         "product_unit_price_check",
+        "business_expiring_soon_months_check",
+        "product_average_cost_check",
+        "stock_balance_not_negative_check",
+        "stock_movement_not_zero_check",
+        "goods_receipt_backdate_note_check",
+        "goods_receipt_line_amounts_check",
       ]),
     );
   });

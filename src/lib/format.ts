@@ -66,3 +66,63 @@ const dateFormat = new Intl.DateTimeFormat("en-NG", { timeZone: SHOP_TIME_ZONE, 
 export function formatDate(date: Date): string {
   return dateFormat.format(date);
 }
+
+/** A calendar day "YYYY-MM-DD" as the value stored in a date-only database column, or null if not a real date. */
+export function dayToDate(day: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const date = new Date(`${day}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== day ? null : date;
+}
+
+/** The reverse: a date-only database value back to "YYYY-MM-DD". */
+export function dateToDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+const dayFormat = new Intl.DateTimeFormat("en-NG", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" });
+
+/** A calendar day "YYYY-MM-DD" for reading, e.g. "3 Oct 2026". */
+export function formatDay(day: string): string {
+  const date = dayToDate(day);
+  return date ? dayFormat.format(date) : day;
+}
+
+/** A day the given number of months after another, as "YYYY-MM-DD" (the end of a shorter month is respected). */
+export function addMonths(day: string, months: number): string {
+  const [year, month, dayOfMonth] = day.split("-").map((part) => Number.parseInt(part, 10));
+  const target = new Date(Date.UTC(year, month - 1 + months, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(dayOfMonth, lastDay));
+  return target.toISOString().slice(0, 10);
+}
+
+/** Delivery numbers are shown as GR-000012. */
+export function receiptNumber(number: number): string {
+  return `GR-${String(number).padStart(6, "0")}`;
+}
+
+/**
+ * A quantity in base units, also broken into the product's larger units for reading:
+ * 215 singles with pack = 10 and carton = 100 → "2 carton + 1 pack + 5 single".
+ */
+export function breakIntoUnits(
+  baseQuantity: string,
+  baseUnitName: string,
+  units: { name: string; factor: string }[],
+): string {
+  let remaining = new Decimal(baseQuantity);
+  const parts: string[] = [];
+  const larger = units
+    .map((unit) => ({ name: unit.name, factor: new Decimal(unit.factor) }))
+    .filter((unit) => unit.factor.greaterThan(1))
+    .sort((a, b) => b.factor.comparedTo(a.factor));
+  for (const unit of larger) {
+    const count = remaining.dividedToIntegerBy(unit.factor);
+    if (count.greaterThan(0)) {
+      parts.push(`${count.toString()} ${unit.name}`);
+      remaining = remaining.minus(count.times(unit.factor));
+    }
+  }
+  if (remaining.greaterThan(0) || parts.length === 0) parts.push(`${remaining.toString()} ${baseUnitName}`);
+  return parts.join(" + ");
+}

@@ -13,6 +13,7 @@ import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { hashPassword } from "better-auth/crypto";
 import "dotenv/config";
 import { PrismaClient, type Role } from "../src/generated/prisma/client";
+import { emptyAllTables } from "./empty-tables";
 
 const ROLES: { role: Exclude<Role, "OWNER">; label: string }[] = [
   { role: "ADMIN", label: "Admin" },
@@ -29,6 +30,8 @@ type SampleProduct = {
   category: string;
   allowsFraction: boolean;
   taxable?: boolean;
+  tracksBatch?: boolean;
+  tracksExpiry?: boolean;
   units: SampleUnit[];
 };
 
@@ -60,6 +63,8 @@ const GREEN_VALLEY_PRODUCTS: SampleProduct[] = [
     code: "GV-HERB-01",
     category: "Crop protection",
     allowsFraction: true,
+    tracksBatch: true,
+    tracksExpiry: true,
     units: [
       { name: "litre", factor: "1", price: "6500.00" },
       { name: "250 ml bottle", factor: "0.25", price: "1800.00" },
@@ -95,6 +100,8 @@ const SUNRISE_PRODUCTS: SampleProduct[] = [
     code: "SF-VAC-01",
     category: "Animal health",
     allowsFraction: false,
+    tracksBatch: true,
+    tracksExpiry: true,
     units: [
       { name: "vial", factor: "1", price: "2200.00" },
       { name: "box", factor: "20", price: "40000.00" },
@@ -156,21 +163,7 @@ async function main() {
     });
   };
 
-  // The activity log refuses row deletions (database trigger), so it is emptied with TRUNCATE.
-  await db.$executeRawUnsafe("TRUNCATE TABLE `activity_log`");
-  await db.$executeRawUnsafe("TRUNCATE TABLE `price_change`");
-  await db.$executeRawUnsafe("TRUNCATE TABLE `tax_rate_change`");
-  await db.productUnit.deleteMany();
-  await db.product.deleteMany();
-  await db.category.deleteMany();
-  await db.terminal.deleteMany();
-  await db.location.deleteMany();
-  await db.rateLimit.deleteMany();
-  await db.session.deleteMany();
-  await db.account.deleteMany();
-  await db.verification.deleteMany();
-  await db.user.deleteMany();
-  await db.business.deleteMany();
+  await emptyAllTables(db);
 
   await person("Sample Owner", "owner", "OWNER", null);
   const usernames = ["owner"];
@@ -193,6 +186,13 @@ async function main() {
     });
     await db.terminal.create({ data: { businessId: created.id, code: "T1", name: "Checkout 1", paperWidth: "MM80" } });
 
+    await db.supplier.createMany({
+      data: [
+        { businessId: created.id, name: `${business.short} Wholesale Suppliers (sample)`, phone: "0800 000 0000" },
+        { businessId: created.id, name: "Farm Inputs Depot (sample)" },
+      ],
+    });
+
     const categoryIds = new Map<string, string>();
     for (const name of new Set(business.products.map((sample) => sample.category))) {
       const category = await db.category.create({ data: { businessId: created.id, name } });
@@ -208,6 +208,8 @@ async function main() {
           code: sample.code,
           allowsFraction: sample.allowsFraction,
           taxable: sample.taxable ?? true,
+          tracksBatch: sample.tracksBatch ?? false,
+          tracksExpiry: sample.tracksExpiry ?? false,
         },
       });
       for (const [index, unit] of sample.units.entries()) {

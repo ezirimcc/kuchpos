@@ -355,7 +355,7 @@ describe("system check", () => {
       forwardedProto: "https",
     });
 
-    expect(check.rules).toHaveLength(4);
+    expect(check.rules).toHaveLength(6);
     expect(check.rules.filter((rule) => !rule.enforced)).toEqual([]);
     expect(check.databaseTimeZone).toBe("+00:00");
     expect(check.visitorAddress).toBe("203.0.113.20");

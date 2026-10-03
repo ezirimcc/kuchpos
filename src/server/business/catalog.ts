@@ -45,6 +45,8 @@ export type ProductView = {
   barcode: string | null;
   allowsFraction: boolean;
   taxable: boolean;
+  tracksBatch: boolean;
+  tracksExpiry: boolean;
   active: boolean;
   category: { id: string; name: string } | null;
   baseUnitName: string;
@@ -93,6 +95,8 @@ type ProductRow = {
   barcode: string | null;
   allowsFraction: boolean;
   taxable: boolean;
+  tracksBatch: boolean;
+  tracksExpiry: boolean;
   deactivatedAt: Date | null;
   category: { id: string; name: string } | null;
   units: UnitRow[];
@@ -110,6 +114,8 @@ function productView(row: ProductRow): ProductView {
     barcode: row.barcode,
     allowsFraction: row.allowsFraction,
     taxable: row.taxable,
+    tracksBatch: row.tracksBatch,
+    tracksExpiry: row.tracksExpiry,
     active: row.deactivatedAt === null,
     category: row.category,
     baseUnitName: units.find((unit) => unit.isBase)?.name ?? "",
@@ -135,6 +141,8 @@ const PRODUCT_SELECT = {
   barcode: true,
   allowsFraction: true,
   taxable: true,
+  tracksBatch: true,
+  tracksExpiry: true,
   deactivatedAt: true,
   category: { select: { id: true, name: true } },
 } as const;
@@ -384,6 +392,8 @@ const createProductSchema = z.object({
   baseUnitName: unitNameSchema,
   allowsFraction: yesNo,
   taxable: yesNo,
+  tracksBatch: yesNo.optional().default(false),
+  tracksExpiry: yesNo.optional().default(false),
   baseForSale: yesNo,
   basePrice: optionalPrice,
 });
@@ -441,6 +451,8 @@ export async function createProduct(context: AppContext, input: unknown): Promis
           categoryId: category?.id ?? null,
           allowsFraction: data.allowsFraction,
           taxable: data.taxable,
+          tracksBatch: data.tracksBatch,
+          tracksExpiry: data.tracksExpiry,
         },
       });
       const unit = await tx.productUnit.create({
@@ -496,6 +508,8 @@ const updateProductSchema = z.object({
   barcode: barcodeSchema,
   categoryId: optionalCategoryId,
   taxable: yesNo,
+  tracksBatch: yesNo.optional(),
+  tracksExpiry: yesNo.optional(),
 });
 
 /** Changes a product's name, code, barcode, category or taxable tick. The base unit and "sold by" never change. */
@@ -517,6 +531,10 @@ export async function updateProduct(context: AppContext, input: unknown): Promis
     changes.push(category ? `category to "${category.name}"` : "category to none");
   }
   if (product.taxable !== data.taxable) changes.push(data.taxable ? "marked as taxable" : "marked as not taxable");
+  const tracksBatch = data.tracksBatch ?? product.tracksBatch;
+  const tracksExpiry = data.tracksExpiry ?? product.tracksExpiry;
+  if (product.tracksBatch !== tracksBatch) changes.push(tracksBatch ? "now uses batch numbers" : "no longer uses batch numbers");
+  if (product.tracksExpiry !== tracksExpiry) changes.push(tracksExpiry ? "now uses expiry dates" : "no longer uses expiry dates");
   if (changes.length === 0) return;
 
   try {
@@ -529,6 +547,8 @@ export async function updateProduct(context: AppContext, input: unknown): Promis
           barcode: data.barcode,
           categoryId: category?.id ?? null,
           taxable: data.taxable,
+          tracksBatch,
+          tracksExpiry,
         },
       });
       await tx.activityLog.create({

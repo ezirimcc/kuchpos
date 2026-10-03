@@ -2,7 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
-import { setIdleSignOutMinutes, setReceiptText, setTaxRate } from "@/server/business/settings";
+import { setExpiringSoonMonths, setIdleSignOutMinutes, setReceiptText, setTaxRate } from "@/server/business/settings";
 import { createTerminal, renameLocation, setTerminalActive, updateTerminal } from "@/server/business/setup";
 
 export async function setIdleSignOutAction(_previous: FormState, formData: FormData): Promise<FormState> {
@@ -53,5 +53,11 @@ export async function setTerminalActiveAction(_previous: FormState, formData: Fo
   const active = field(formData, "active") === "true";
   return runAction({ success: active ? "Terminal brought back." : "Terminal taken out of use." }, (context) =>
     setTerminalActive(context, { terminalId: field(formData, "terminalId"), active }),
+  );
+}
+
+export async function setExpiringSoonAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Saved." }, (context) =>
+    setExpiringSoonMonths(context, { months: field(formData, "months") }),
   );
 }

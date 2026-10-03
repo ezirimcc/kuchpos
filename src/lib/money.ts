@@ -48,3 +48,29 @@ export function taxIncludedIn(amount: Decimal, ratePercent: Decimal): Decimal {
   if (ratePercent.isZero()) return new Decimal(0);
   return roundMoney(amount.times(ratePercent).dividedBy(ratePercent.plus(100)));
 }
+
+/** Average cost of one base unit is kept to four decimal places, so small units stay accurate. */
+export const COST_DECIMAL_PLACES = 4;
+
+export function roundCost(amount: Decimal): Decimal {
+  return amount.toDecimalPlaces(COST_DECIMAL_PLACES, Decimal.ROUND_HALF_UP);
+}
+
+/**
+ * Moving weighted average cost of one base unit after a delivery.
+ * (stock before × old average + cost of the delivery) ÷ (stock before + quantity delivered).
+ * With no stock before, the new average is simply the delivery's own cost per base unit.
+ */
+export function movingAverageCost(input: {
+  quantityBefore: Decimal;
+  averageBefore: Decimal;
+  quantityAdded: Decimal;
+  costAdded: Decimal;
+}): Decimal {
+  const { quantityBefore, averageBefore, quantityAdded, costAdded } = input;
+  if (!quantityAdded.greaterThan(0)) return roundCost(averageBefore);
+  if (!quantityBefore.greaterThan(0)) return roundCost(costAdded.dividedBy(quantityAdded));
+  return roundCost(
+    quantityBefore.times(averageBefore).plus(costAdded).dividedBy(quantityBefore.plus(quantityAdded)),
+  );
+}

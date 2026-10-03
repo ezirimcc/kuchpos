@@ -15,6 +15,7 @@ import { getSetup } from "@/server/business/setup";
 import {
   createTerminalAction,
   renameLocationAction,
+  setExpiringSoonAction,
   setIdleSignOutAction,
   setReceiptTextAction,
   setTaxRateAction,
@@ -217,6 +218,36 @@ export default async function SettingsPage() {
               ))}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Expiring soon</CardTitle>
+          <CardDescription>
+            How far ahead the “Expiring soon” list looks. A delivery whose expiry date falls within this many months
+            is listed there.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ActionForm action={setExpiringSoonAction}>
+            <div className="max-w-xs">
+              <TextField
+                name="months"
+                label="Months ahead"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={36}
+                step={1}
+                defaultValue={settings.expiringSoonMonths}
+                key={settings.expiringSoonMonths}
+                hint="From 1 to 36 months"
+                required
+              />
+            </div>
+            <SubmitButton className="mt-2">Save expiring-soon period</SubmitButton>
+          </ActionForm>
         </CardContent>
       </Card>
 

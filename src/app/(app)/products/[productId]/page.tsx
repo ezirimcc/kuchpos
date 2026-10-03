@@ -81,7 +81,14 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
                 <TextField name="code" label="Code (optional)" defaultValue={product.code ?? ""} autoComplete="off" />
                 <TextField name="barcode" label="Barcode (optional)" defaultValue={product.barcode ?? ""} autoComplete="off" />
               </div>
-              <CheckboxField name="taxable" label="Taxable" defaultChecked={product.taxable} />
+              <div className="flex flex-wrap gap-x-8 gap-y-2">
+                <CheckboxField name="taxable" label="Taxable" defaultChecked={product.taxable} />
+                <CheckboxField name="tracksBatch" label="Uses a batch number" defaultChecked={product.tracksBatch} />
+                <CheckboxField name="tracksExpiry" label="Uses an expiry date" defaultChecked={product.tracksExpiry} />
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                When ticked, every delivery of this product must give its batch number or expiry date.
+              </p>
               <SubmitButton className="mt-4">Save details</SubmitButton>
             </ActionForm>
           </CardContent>

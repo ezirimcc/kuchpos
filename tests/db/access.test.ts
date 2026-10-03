@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "@/server/auth/context";
 import * as activityLog from "@/server/business/activity-log";
@@ -6,6 +7,8 @@ import * as dashboard from "@/server/business/dashboard";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
 import * as staff from "@/server/business/staff";
+import * as stock from "@/server/business/stock";
+import * as suppliers from "@/server/business/suppliers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
@@ -19,8 +22,23 @@ import { createUser, createWorld, type World } from "../support/world";
  */
 
 let world: World;
+/** A delivery already recorded in each business, for operations that look one up by id. */
+let receiptInA = "";
+let receiptInB = "";
+
+function delivery(business: World["a"]) {
+  return {
+    requestId: randomUUID(),
+    supplierId: business.supplierId,
+    locationId: business.storeroomId,
+    lines: [{ productId: business.product.id, unitId: business.product.packUnitId, quantity: "2", unitCost: "700" }],
+  };
+}
+
 beforeEach(async () => {
   world = await createWorld();
+  receiptInA = (await stock.receiveGoods(world.a.as.ADMIN, delivery(world.a))).id;
+  receiptInB = (await stock.receiveGoods(world.b.as.ADMIN, delivery(world.b))).id;
 });
 
 type Actor =
@@ -64,6 +82,8 @@ const unique = (prefix: string) => `${prefix}${++counter}`;
 const BUSINESS_ADMINS: Actor[] = ["ownerInA", "ADMIN"];
 const EVERYONE_IN_A: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER", "STOREKEEPER"];
 const PRODUCT_MANAGERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER"];
+const RECEIVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
+const DELIVERY_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "STOREKEEPER"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -121,6 +141,66 @@ const OPERATIONS: Operation[] = [
     name: "settings.setTaxRate",
     allowed: BUSINESS_ADMINS,
     run: (context) => settings.setTaxRate(context, { ratePercent: "7.5" }),
+  },
+  {
+    name: "settings.setExpiringSoonMonths",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => settings.setExpiringSoonMonths(context, { months: "6" }),
+  },
+  // --- Suppliers and receiving goods (SPEC §5: "Stock") ---
+  {
+    name: "suppliers.listSuppliers",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => suppliers.listSuppliers(context),
+  },
+  {
+    name: "suppliers.createSupplier",
+    allowed: RECEIVERS,
+    run: (context) => suppliers.createSupplier(context, { name: unique("Supplier "), phone: "", note: "" }),
+  },
+  {
+    name: "suppliers.updateSupplier",
+    allowed: RECEIVERS,
+    run: (context) => suppliers.updateSupplier(context, { supplierId: world.a.supplierId, name: "Renamed Supplier", phone: "0800", note: "" }),
+    runAgainstB: (context) =>
+      suppliers.updateSupplier(context, { supplierId: world.b.supplierId, name: "Renamed Supplier", phone: "0800", note: "" }),
+  },
+  {
+    name: "suppliers.setSupplierActive",
+    allowed: RECEIVERS,
+    run: (context) => suppliers.setSupplierActive(context, { supplierId: world.a.supplierId, active: false }),
+    runAgainstB: (context) => suppliers.setSupplierActive(context, { supplierId: world.b.supplierId, active: false }),
+  },
+  {
+    name: "stock.getReceivingOptions",
+    allowed: RECEIVERS,
+    run: (context) => stock.getReceivingOptions(context),
+  },
+  {
+    name: "stock.receiveGoods",
+    allowed: RECEIVERS,
+    run: (context) => stock.receiveGoods(context, delivery(world.a)),
+  },
+  {
+    name: "stock.listReceipts",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => stock.listReceipts(context),
+  },
+  {
+    name: "stock.getReceipt",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => stock.getReceipt(context, { receiptId: receiptInA }),
+    runAgainstB: (context) => stock.getReceipt(context, { receiptId: receiptInB }),
+  },
+  {
+    name: "stock.listStockOnHand",
+    allowed: EVERYONE_IN_A,
+    run: (context) => stock.listStockOnHand(context),
+  },
+  {
+    name: "stock.listExpiringSoon",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => stock.listExpiringSoon(context),
   },
   {
     name: "settings.setReceiptText",
@@ -362,6 +442,8 @@ describe("every server operation is listed here", () => {
       ...Object.keys(catalog).map((name) => `catalog.${name}`),
       ...Object.keys(setup).map((name) => `setup.${name}`),
       ...Object.keys(dashboard).map((name) => `dashboard.${name}`),
+      ...Object.keys(stock).map((name) => `stock.${name}`),
+      ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),
       ...Object.keys(system).map((name) => `system.${name}`),
@@ -422,6 +504,10 @@ async function snapshotOfB() {
     users: await db.user.findMany({ where, orderBy: { id: "asc" }, include: { accounts: true } }),
     products: await db.product.findMany({ where, orderBy: { id: "asc" }, include: { units: { orderBy: { id: "asc" } } } }),
     categories: await db.category.findMany({ where, orderBy: { id: "asc" } }),
+    suppliers: await db.supplier.findMany({ where, orderBy: { id: "asc" } }),
+    balances: await db.stockBalance.findMany({ where, orderBy: { id: "asc" } }),
+    movements: await db.stockMovement.count({ where }),
+    receipts: await db.goodsReceipt.count({ where }),
     priceChanges: await db.priceChange.count({ where }),
     locations: await db.location.findMany({ where, orderBy: { id: "asc" } }),
     terminals: await db.terminal.findMany({ where, orderBy: { id: "asc" } }),

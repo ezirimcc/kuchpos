@@ -25,6 +25,33 @@ export type SystemCheck = {
 
 class RollBack extends Error {}
 
+/** Tables whose rows may never be changed or deleted; each has a "no update" and a "no delete" trigger. */
+const ADD_ONLY_TABLES = [
+  "activity_log",
+  "price_change",
+  "tax_rate_change",
+  "stock_movement",
+  "goods_receipt",
+  "goods_receipt_line",
+];
+
+/** Limits written into the database itself (CHECK constraints). */
+const REQUIRED_CHECKS = [
+  "user_owner_has_no_business_check",
+  "user_username_lowercase_check",
+  "business_idle_sign_out_minutes_check",
+  "business_tax_rate_percent_check",
+  "business_expiring_soon_months_check",
+  "terminal_code_format_check",
+  "product_unit_factor_check",
+  "product_unit_price_check",
+  "product_average_cost_check",
+  "stock_balance_not_negative_check",
+  "stock_movement_not_zero_check",
+  "goods_receipt_backdate_note_check",
+  "goods_receipt_line_amounts_check",
+];
+
 function readAppVersion(): string {
   // Set by the start-up file on the hosting server (hosting/app.js) from VERSION.txt.
   // Deliberately not read from disk here: file access in app code makes the build copy
@@ -91,6 +118,23 @@ export async function getSystemCheck(
   } catch (error) {
     if (!(error instanceof RollBack)) throw error;
   }
+
+  // The remaining rules are confirmed to be installed (trying each one for real would need sample stock).
+  const triggers = await db.$queryRaw<{ name: string }[]>`
+    SELECT TRIGGER_NAME AS name FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE()`;
+  const checks = await db.$queryRaw<{ name: string }[]>`
+    SELECT CONSTRAINT_NAME AS name FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE()`;
+  const installedTriggers = new Set(triggers.map((row) => row.name));
+  const installedChecks = new Set(checks.map((row) => row.name));
+  const expectedTriggers = ADD_ONLY_TABLES.flatMap((table) => [`${table}_no_update`, `${table}_no_delete`]);
+  rules.push({
+    name: `Stock, price and delivery history cannot be changed or deleted (${expectedTriggers.length} protections installed)`,
+    enforced: expectedTriggers.every((name) => installedTriggers.has(name)),
+  });
+  rules.push({
+    name: `Stock cannot go below zero, and the other limits on amounts (${REQUIRED_CHECKS.length} limits installed)`,
+    enforced: REQUIRED_CHECKS.every((name) => installedChecks.has(name)),
+  });
 
   return {
     appVersion: readAppVersion(),

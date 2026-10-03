@@ -59,6 +59,10 @@ How to read this document:
 | C32 | **Modern dashboard look**, following the reference design the owner supplied on 2026-10-03: soft grey background, large rounded panels, lime and deep-green gradients, pill-shaped buttons — without slowing the app down. Includes: a **light / dark mode switch**; a **side menu that collapses** to icons only and expands to icons with titles; a **user menu** (drop-down under the person's name) holding Profile, Change password and Sign out; the menu item is named **"Products & Categories"**. |
 | C33 | **Home dashboard**: a greeting by time of day ("Good morning, Name") with snapshot figures. It shows only figures the person's role may see. Sales, collections and debt figures appear on it as those features are built. |
 | C34 | **Profile page**: basic information about the signed-in person (name, username, role, business, when the account was created), with the change-password form. **Each person can edit their own full name and username** (they must type their current password; the change is recorded in the activity log). Role and business can only be changed by an admin or owner. |
+| C35 | **Backdating a delivery.** Admins and managers (and owners) may record a delivery with an earlier date, but only with a written note explaining why. Storekeepers cannot. Every backdated delivery is marked as such and recorded in the activity log. Future dates are never allowed. |
+| C36 | **Cost prices on deliveries** are visible to storekeepers, managers and admins. |
+| C37 | **Batch number and expiry date are per product.** When a product is created (or edited), two tick-boxes say whether it uses a batch number and whether it uses an expiry date. Deliveries of such a product must give them; other products are never asked. |
+| C38 | **"Expiring soon" is a setting.** Each business's admin sets how many months ahead counts as expiring soon (default 3). |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -98,7 +102,7 @@ How to read this document:
 - Each product has one stock balance **per location**, in base units.
 - Stock only ever changes through a recorded **stock movement**. Each movement stores: product, location, quantity change in base units, the unit and conversion the user picked, type, the document it belongs to, who did it, and when. Movements are never edited or deleted — a mistake is fixed by a new, opposite movement.
 - Movement types:
-  - **Goods received** — stock arrives from a supplier into a chosen location (usually Storeroom). Records supplier, unit, quantity, cost price.
+  - **Goods received** — stock arrives from a supplier into a chosen location (usually Storeroom). Records supplier, unit, quantity, cost price, and — for products that use them — batch number and expiry date. A delivery normally carries today's date; an admin or manager may give an earlier date with a note (C35). The stock itself changes at the moment the delivery is saved, whatever date it carries.
   - **Transfer** — moves stock between Storeroom and Shelf. One document, two movements (out of one, into the other), saved together.
   - **Sale** — takes stock out of the selling location.
   - **Stock count** — staff enter what they physically counted; the system shows the difference from what it expected.
@@ -257,6 +261,9 @@ The table below applies **inside one business**.
 | **Stock** | | | | | |
 | View stock quantities | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Receive goods from a supplier | ✅ | ✅ | — | — | ✅ |
+| Add and edit suppliers | ✅ | ✅ | — | — | ✅ |
+| View deliveries, including their cost prices | ✅ | ✅ | ✅ | — | ✅ |
+| Give a delivery an earlier date (with a note) | ✅ | ✅ | — | — | — |
 | Transfer between Storeroom and Shelf | ✅ | ✅ | — | — | ✅ |
 | Enter a stock count | ✅ | ✅ | — | — | ✅ |
 | Record a stock adjustment | ✅ | ✅ | — | — | 📝 |
@@ -277,7 +284,7 @@ How this table fits with businesses:
 Points accepted as part of the approval (say if you want any changed later — permissions are defined in one place so this is cheap):
 
 - The **accountant can record debt repayments** but cannot sell or change stock.
-- The **storekeeper enters cost** when receiving goods but cannot see cost or margin reports.
+- The **storekeeper enters and sees cost prices on deliveries** (C36) but cannot see profit or margin reports. The accountant, who already sees costs in reports, can view deliveries too.
 - **Cashiers cannot move stock** from Storeroom to Shelf.
 - A **manager who is also selling** can approve their own discount. It is recorded and shown on the approvals report.
 - Only **managers, admins and owners** may sell a line directly from the Storeroom (P7).
@@ -345,7 +352,7 @@ Things you should know:
 
 | # | Topic | Proposal | Why |
 |---|---|---|---|
-| P1 | **Batch and expiry tracking** | Version 1: when receiving goods, staff may *optionally* record a batch number and expiry date; an "expiring soon" list is built from those receipts. Stock balances are **not** split per batch. Full per-batch tracking (sell oldest-expiry first, per-batch balances) is a later phase. | Seeds, feeds and agro-chemicals expire, so the dates matter. But full batch tracking makes every sale, transfer and count more complicated. This gives the warning without the complexity. |
+| P1 | **Batch and expiry tracking** | *Refined by the owner on 2026-10-03 (C37, C38):* each product says whether it uses a batch number and/or an expiry date; deliveries of such products must give them; an "expiring soon" list is built from those deliveries, looking ahead the number of months the admin sets. Stock balances are **not** split per batch. Full per-batch tracking (sell oldest-expiry first, per-batch balances) is a later phase. | Seeds, feeds and agro-chemicals expire, so the dates matter. But full batch tracking makes every sale, transfer and count more complicated. This gives the warning without the complexity. |
 | P2 | **Returns and refunds** | Include a simple version: a return must refer to an original sale; needs manager approval; returned stock goes either back to a chosen location or is written off as damaged; refund is paid out in cash/transfer or deducted from the customer's debt. A **void** (cancel the whole sale, same day, before till close) follows the same approval rule. The original sale is never altered. | Mistakes at the till are certain to happen. Without a proper return, staff will "fix" them with stock adjustments, which hides the truth. |
 | P3 | **Credit limits** | Each customer may have an optional credit limit. A credit sale that would take the balance over the limit needs manager approval (same mechanism as discounts). No limit set = manager approval for every credit sale above an amount you choose, or no restriction — your choice. | Protects against debts growing unnoticed while keeping the cashier fast for trusted customers. |
 | P4 | **Costing method** | **Moving weighted average cost** per product. Each time goods are received, the average cost is recalculated. Each sale line stores the average cost at that moment, so profit reports stay stable even if costs change later. | Simple, standard, works without batch tracking, and good enough for margin reporting. (The alternative, first-in-first-out, needs batch-level tracking.) Your accountant should confirm. |
@@ -430,6 +437,7 @@ Proposed offline behaviour (to be confirmed before that milestone):
 | Q13 | Selling from the Storeroom | Managers, admins and owners only (accepted as P7). |
 | Q23 | Automatic sign-out | 8 hours is too long; make it an admin setting per business. → C24. *Details chosen by me, say if you want them changed:* a new business starts at **30 minutes**; the admin may choose between **5 minutes and 8 hours**; **owners** are always signed out after **30 minutes** unused, whichever business they have open. |
 | Q24 | Changing your own password | Yes. → C25. Changing it signs that person out on any other computer. |
+| Q17 | Backdated entries | Admins and managers may backdate a delivery with a note; tracked in the activity log. → C35 |
 | Q15 | Special customer prices | No. → C27. Instead: a cart discount as % or value, approved by a manager or above. → C28 |
 
 ### Still open — each will be asked when its milestone is reached
@@ -440,7 +448,6 @@ Nothing below blocks the first milestones (M1–M3).
 |---|---|---|
 | Q14 | What must appear on the receipt (business name, address, phone, tax number, return policy)? | M8 Checkout |
 | Q16 | May a customer pay in advance (hold a deposit with the shop)? *Default if unanswered: no.* | M10 Customers and credit |
-| Q17 | Should the system allow backdated entries (e.g. entering yesterday's delivery today)? *Default if unanswered: no; everything is dated when entered.* | M5 Receiving goods |
 | Q18 | What format does the accountant need for exports? *Default: CSV, which opens in Excel.* | M14 Reports |
 | Q19 | Who will be the owners, who will be the admin of each business, and who holds the hosting and domain accounts? | M3 First online deployment |
 | Q20 | What do your Excel files look like today (which columns; one file per shop)? A sample with made-up or non-sensitive rows is enough. | M15 Excel import |

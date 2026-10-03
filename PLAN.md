@@ -97,6 +97,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - Business settings: **tax rate (default 0%)** with a history of changes; receipt text. Money in Naira and kobo.
 - Products with base unit, extra units and conversions, per-unit selling prices (tax-inclusive), whole-number vs fractional flag, optional barcode, "taxable" tick-box.
 - Price history. Units that have been used are retired, not edited.
+- *(Added 2026-10-03)* Product categories; list screens with paging, filters and search-as-you-type; the dashboard look used by every later screen.
 - Sample catalogue: a single/pack/carton product, a kg/50 kg-bag product, a litre product.
 
 **Accept when:**

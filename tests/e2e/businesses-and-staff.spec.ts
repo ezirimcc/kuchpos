@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSignedInAs, SAMPLE_PASSWORD, signIn } from "./helpers";
+import { SAMPLE_PASSWORD, expectSignedInAs, openFromMenu, signIn } from "./helpers";
 
 // These tests change data, so they run one after another.
 test.describe.configure({ mode: "serial" });
@@ -102,7 +102,7 @@ test("the cashier changes their own password; the old one stops working", async 
 test("the admin sets the automatic sign-out time; a cashier cannot reach the setting", async ({ page }) => {
   await signIn(page, adminUsername);
   await expectSignedInAs(page, "Admin");
-  await page.getByRole("link", { name: "Settings" }).click();
+  await openFromMenu(page, "Settings");
   await expect(page.getByLabel("Minutes without use")).toHaveValue("30");
 
   await page.getByLabel("Minutes without use").fill("3");

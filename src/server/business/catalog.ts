@@ -8,6 +8,7 @@ import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { factorText, moneyText, optionalText, yesNo } from "@/server/input";
+import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize } from "@/server/permissions";
 import { formatNaira } from "@/lib/money";
 
@@ -22,7 +23,7 @@ import { formatNaira } from "@/lib/money";
 const PRODUCT_NOT_FOUND = "That product could not be found.";
 const UNIT_NOT_FOUND = "That unit could not be found.";
 const FIX_FIELDS = "Please correct the highlighted fields.";
-const LIST_LIMIT = 200;
+const CATEGORY_NOT_FOUND = "That category could not be found.";
 
 export type UnitView = {
   id: string;
@@ -45,9 +46,12 @@ export type ProductView = {
   allowsFraction: boolean;
   taxable: boolean;
   active: boolean;
+  category: { id: string; name: string } | null;
   baseUnitName: string;
   units: UnitView[];
 };
+
+export type CategoryView = { id: string; name: string; productCount: number };
 
 export type PriceChangeView = {
   id: string;
@@ -90,6 +94,7 @@ type ProductRow = {
   allowsFraction: boolean;
   taxable: boolean;
   deactivatedAt: Date | null;
+  category: { id: string; name: string } | null;
   units: UnitRow[];
 };
 
@@ -106,6 +111,7 @@ function productView(row: ProductRow): ProductView {
     allowsFraction: row.allowsFraction,
     taxable: row.taxable,
     active: row.deactivatedAt === null,
+    category: row.category,
     baseUnitName: units.find((unit) => unit.isBase)?.name ?? "",
     units: units.map(unitView),
   };
@@ -130,6 +136,7 @@ const PRODUCT_SELECT = {
   allowsFraction: true,
   taxable: true,
   deactivatedAt: true,
+  category: { select: { id: true, name: true } },
 } as const;
 
 function isUniqueViolation(error: unknown): boolean {
@@ -142,29 +149,42 @@ function isUniqueViolation(error: unknown): boolean {
 
 const listSchema = z.object({
   search: z.string().trim().max(120).optional().default(""),
+  /** A category id, or "none" for products without a category. Empty means every category. */
+  category: z.string().trim().max(40).optional().default(""),
   includeInactive: z.boolean().optional().default(false),
+  page: pageNumber,
 });
 
-/** Products with their in-use units and prices. Everyone in the business may look prices up. */
+/**
+ * One page of products with their in-use units and prices, in name order.
+ * Everyone in the business may look prices up.
+ */
 export async function listProducts(
   context: AppContext,
   input: unknown = {},
-): Promise<{ products: ProductView[]; limited: boolean }> {
+): Promise<{ products: ProductView[] } & Paged> {
   authorize(context, "price.view");
-  const { search, includeInactive } = parseInput(listSchema, input);
+  const { search, category, includeInactive, page } = parseInput(listSchema, input);
 
-  const rows = await businessDb(context).product.findMany({
-    where: {
-      ...(includeInactive ? {} : { deactivatedAt: null }),
-      ...(search
-        ? { OR: [{ name: { contains: search } }, { code: { contains: search } }, { barcode: search }] }
-        : {}),
-    },
-    orderBy: { name: "asc" },
-    take: LIST_LIMIT + 1,
-    select: { ...PRODUCT_SELECT, units: { where: { retiredAt: null }, select: UNIT_SELECT } },
-  });
-  return { products: rows.slice(0, LIST_LIMIT).map(productView), limited: rows.length > LIST_LIMIT };
+  const where: Prisma.ProductWhereInput = {
+    ...(includeInactive ? {} : { deactivatedAt: null }),
+    ...(category === "none" ? { categoryId: null } : category ? { categoryId: category } : {}),
+    ...(search
+      ? { OR: [{ name: { contains: search } }, { code: { contains: search } }, { barcode: search }] }
+      : {}),
+  };
+  const db = businessDb(context);
+  const [total, rows] = await Promise.all([
+    db.product.count({ where }),
+    db.product.findMany({
+      where,
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+      select: { ...PRODUCT_SELECT, units: { where: { retiredAt: null }, select: UNIT_SELECT } },
+    }),
+  ]);
+  return { products: rows.map(productView), ...paged(total, page) };
 }
 
 const productIdSchema = z.object({ productId: z.string().uuid(PRODUCT_NOT_FOUND) });
@@ -205,6 +225,136 @@ export async function getProduct(
 }
 
 // ---------------------------------------------------------------------------
+// Categories
+// ---------------------------------------------------------------------------
+
+const categoryNameSchema = z
+  .string()
+  .trim()
+  .min(2, "Enter the category name (at least 2 characters).")
+  .max(60, "The category name is too long (60 characters at most).");
+const categoryIdSchema = z.string().uuid(CATEGORY_NOT_FOUND);
+
+/** The business's categories in name order, with how many products each holds. */
+export async function listCategories(context: AppContext): Promise<CategoryView[]> {
+  authorize(context, "price.view");
+  const rows = await businessDb(context).category.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true, _count: { select: { products: true } } },
+  });
+  return rows.map((row) => ({ id: row.id, name: row.name, productCount: row._count.products }));
+}
+
+const createCategorySchema = z.object({ name: categoryNameSchema });
+
+export async function createCategory(context: AppContext, input: unknown): Promise<{ id: string }> {
+  authorize(context, "product.manage");
+  const businessId = businessIdOf(context);
+  const data = parseInput(createCategorySchema, input);
+
+  try {
+    return await businessDb(context).$transaction(async (tx) => {
+      const category = await tx.category.create({ data: { businessId, name: data.name } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "category.created",
+          summary: `${context.actor.name} created the product category "${category.name}".`,
+          targetType: "category",
+          targetId: category.id,
+        }),
+      });
+      return { id: category.id };
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ValidationError(FIX_FIELDS, { name: "There is already a category with this name." });
+    }
+    throw error;
+  }
+}
+
+const renameCategorySchema = z.object({ categoryId: categoryIdSchema, name: categoryNameSchema });
+
+export async function renameCategory(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "product.manage");
+  const data = parseInput(renameCategorySchema, input);
+  const db = businessDb(context);
+
+  const category = await db.category.findFirst({ where: { id: data.categoryId } });
+  if (!category) throw new NotFoundError(CATEGORY_NOT_FOUND);
+  if (category.name === data.name) return;
+
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.category.update({ where: { id: category.id }, data: { name: data.name } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "category.renamed",
+          summary: `${context.actor.name} renamed the product category "${category.name}" to "${data.name}".`,
+          targetType: "category",
+          targetId: category.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ValidationError(FIX_FIELDS, { name: "There is already a category with this name." });
+    }
+    throw error;
+  }
+}
+
+const removeCategorySchema = z.object({ categoryId: categoryIdSchema });
+
+/** Removes a category that has no products in it. One that is still in use must be emptied or renamed instead. */
+export async function removeCategory(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "product.manage");
+  const data = parseInput(removeCategorySchema, input);
+
+  await businessDb(context).$transaction(async (tx) => {
+    const category = await tx.category.findFirst({
+      where: { id: data.categoryId },
+      select: { id: true, name: true, _count: { select: { products: true } } },
+    });
+    if (!category) throw new NotFoundError(CATEGORY_NOT_FOUND);
+    if (category._count.products > 0) {
+      throw new ValidationError(
+        `"${category.name}" still has ${category._count.products} product(s) in it. Move them to another category first, or rename this one.`,
+      );
+    }
+    // The database also refuses this if a product still points at the category.
+    await tx.category.delete({ where: { id: category.id } });
+    await tx.activityLog.create({
+      data: activityRow(context, {
+        action: "category.removed",
+        summary: `${context.actor.name} removed the empty product category "${category.name}".`,
+        targetType: "category",
+        targetId: category.id,
+      }),
+    });
+  });
+}
+
+/** Checks that a chosen category belongs to the business in use. Blank means "no category". */
+async function resolveCategory(
+  db: ReturnType<typeof businessDb>,
+  categoryId: string | null,
+): Promise<{ id: string; name: string } | null> {
+  if (categoryId === null) return null;
+  const category = await db.category.findFirst({ where: { id: categoryId }, select: { id: true, name: true } });
+  if (!category) throw new ValidationError(FIX_FIELDS, { categoryId: "Choose a category from the list." });
+  return category;
+}
+
+const optionalCategoryId = z
+  .string()
+  .trim()
+  .max(40)
+  .optional()
+  .default("")
+  .transform((value) => (value === "" ? null : value));
+
+// ---------------------------------------------------------------------------
 // Products
 // ---------------------------------------------------------------------------
 
@@ -230,6 +380,7 @@ const createProductSchema = z.object({
   name: productNameSchema,
   code: codeSchema,
   barcode: barcodeSchema,
+  categoryId: optionalCategoryId,
   baseUnitName: unitNameSchema,
   allowsFraction: yesNo,
   taxable: yesNo,
@@ -277,6 +428,7 @@ export async function createProduct(context: AppContext, input: unknown): Promis
   const price = data.baseForSale ? data.basePrice : null;
   const db = businessDb(context);
   await assertProductDetailsFree(db, data);
+  const category = await resolveCategory(db, data.categoryId);
 
   try {
     return await db.$transaction(async (tx) => {
@@ -286,6 +438,7 @@ export async function createProduct(context: AppContext, input: unknown): Promis
           name: data.name,
           code: data.code,
           barcode: data.barcode,
+          categoryId: category?.id ?? null,
           allowsFraction: data.allowsFraction,
           taxable: data.taxable,
         },
@@ -341,10 +494,11 @@ const updateProductSchema = z.object({
   name: productNameSchema,
   code: codeSchema,
   barcode: barcodeSchema,
+  categoryId: optionalCategoryId,
   taxable: yesNo,
 });
 
-/** Changes a product's name, code, barcode or taxable tick. The base unit and "sold by" never change. */
+/** Changes a product's name, code, barcode, category or taxable tick. The base unit and "sold by" never change. */
 export async function updateProduct(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "product.manage");
   const data = parseInput(updateProductSchema, input);
@@ -353,11 +507,15 @@ export async function updateProduct(context: AppContext, input: unknown): Promis
   const product = await db.product.findFirst({ where: { id: data.productId } });
   if (!product) throw new NotFoundError(PRODUCT_NOT_FOUND);
   await assertProductDetailsFree(db, data, product.id);
+  const category = await resolveCategory(db, data.categoryId);
 
   const changes: string[] = [];
   if (product.name !== data.name) changes.push(`name to "${data.name}"`);
   if (product.code !== data.code) changes.push(`code to ${data.code ? `"${data.code}"` : "none"}`);
   if (product.barcode !== data.barcode) changes.push(`barcode to ${data.barcode ? `"${data.barcode}"` : "none"}`);
+  if (product.categoryId !== (category?.id ?? null)) {
+    changes.push(category ? `category to "${category.name}"` : "category to none");
+  }
   if (product.taxable !== data.taxable) changes.push(data.taxable ? "marked as taxable" : "marked as not taxable");
   if (changes.length === 0) return;
 
@@ -365,7 +523,13 @@ export async function updateProduct(context: AppContext, input: unknown): Promis
     await db.$transaction(async (tx) => {
       await tx.product.update({
         where: { id: product.id },
-        data: { name: data.name, code: data.code, barcode: data.barcode, taxable: data.taxable },
+        data: {
+          name: data.name,
+          code: data.code,
+          barcode: data.barcode,
+          categoryId: category?.id ?? null,
+          taxable: data.taxable,
+        },
       });
       await tx.activityLog.create({
         data: activityRow(context, {

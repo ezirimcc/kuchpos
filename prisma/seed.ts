@@ -23,13 +23,21 @@ const ROLES: { role: Exclude<Role, "OWNER">; label: string }[] = [
 ];
 
 type SampleUnit = { name: string; factor: string; price: string | null; forSale?: boolean };
-type SampleProduct = { name: string; code: string; allowsFraction: boolean; taxable?: boolean; units: SampleUnit[] };
+type SampleProduct = {
+  name: string;
+  code: string;
+  category: string;
+  allowsFraction: boolean;
+  taxable?: boolean;
+  units: SampleUnit[];
+};
 
 // The first unit of each product is its base unit. Prices are invented.
 const GREEN_VALLEY_PRODUCTS: SampleProduct[] = [
   {
     name: "Tomato Seed Sachet",
     code: "GV-SEED-01",
+    category: "Seeds",
     allowsFraction: false,
     units: [
       { name: "sachet", factor: "1", price: "500.00" },
@@ -40,6 +48,7 @@ const GREEN_VALLEY_PRODUCTS: SampleProduct[] = [
   {
     name: "NPK 15-15-15 Fertilizer",
     code: "GV-FERT-01",
+    category: "Fertilizers",
     allowsFraction: true,
     units: [
       { name: "kg", factor: "1", price: "1250.50" },
@@ -49,6 +58,7 @@ const GREEN_VALLEY_PRODUCTS: SampleProduct[] = [
   {
     name: "Liquid Herbicide",
     code: "GV-HERB-01",
+    category: "Crop protection",
     allowsFraction: true,
     units: [
       { name: "litre", factor: "1", price: "6500.00" },
@@ -59,6 +69,7 @@ const GREEN_VALLEY_PRODUCTS: SampleProduct[] = [
   {
     name: "Maize Grain (untaxed sample)",
     code: "GV-GRAIN-01",
+    category: "Grains",
     allowsFraction: true,
     taxable: false,
     units: [
@@ -72,6 +83,7 @@ const SUNRISE_PRODUCTS: SampleProduct[] = [
   {
     name: "Layer Mash Poultry Feed",
     code: "SF-FEED-01",
+    category: "Feeds",
     allowsFraction: true,
     units: [
       { name: "kg", factor: "1", price: "780.00" },
@@ -81,6 +93,7 @@ const SUNRISE_PRODUCTS: SampleProduct[] = [
   {
     name: "Poultry Vaccine Vial",
     code: "SF-VAC-01",
+    category: "Animal health",
     allowsFraction: false,
     units: [
       { name: "vial", factor: "1", price: "2200.00" },
@@ -149,6 +162,7 @@ async function main() {
   await db.$executeRawUnsafe("TRUNCATE TABLE `tax_rate_change`");
   await db.productUnit.deleteMany();
   await db.product.deleteMany();
+  await db.category.deleteMany();
   await db.terminal.deleteMany();
   await db.location.deleteMany();
   await db.rateLimit.deleteMany();
@@ -179,10 +193,17 @@ async function main() {
     });
     await db.terminal.create({ data: { businessId: created.id, code: "T1", name: "Checkout 1", paperWidth: "MM80" } });
 
+    const categoryIds = new Map<string, string>();
+    for (const name of new Set(business.products.map((sample) => sample.category))) {
+      const category = await db.category.create({ data: { businessId: created.id, name } });
+      categoryIds.set(name, category.id);
+    }
+
     for (const sample of business.products) {
       const product = await db.product.create({
         data: {
           businessId: created.id,
+          categoryId: categoryIds.get(sample.category),
           name: sample.name,
           code: sample.code,
           allowsFraction: sample.allowsFraction,

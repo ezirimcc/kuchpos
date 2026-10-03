@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectSignedInAs, signIn } from "./helpers";
+import { expectSignedInAs, openFromMenu, signIn } from "./helpers";
 
 // These tests build on each other, so they run one after another.
 test.describe.configure({ mode: "serial" });
@@ -12,7 +12,7 @@ let sachetUrl = "";
 test("a manager creates a product sold as single, pack and carton, each with its own price", async ({ page }) => {
   await signIn(page, "gv.manager");
   await expectSignedInAs(page, "Manager");
-  await page.getByRole("link", { name: "Products & prices" }).click();
+  await openFromMenu(page, "Products & prices");
   await page.getByRole("link", { name: "Add a product" }).click();
 
   await page.getByLabel("Product name").fill(sachetName);
@@ -130,7 +130,7 @@ test("the other business sees none of these products, even with the exact addres
 test("the admin changes the tax rate and adds a checkout terminal", async ({ page }) => {
   await signIn(page, "gv.admin");
   await expectSignedInAs(page, "Admin");
-  await page.getByRole("link", { name: "Settings" }).click();
+  await openFromMenu(page, "Settings");
 
   await expect(page.getByLabel("Tax rate (%)")).toHaveValue("0");
   await page.getByLabel("Tax rate (%)").fill("7.5");
@@ -151,5 +151,82 @@ test("the admin changes the tax rate and adds a checkout terminal", async ({ pag
   // Put the rate back so other test runs start from the same place.
   await page.getByLabel("Tax rate (%)").fill("0");
   await page.getByRole("button", { name: "Save tax rate" }).click();
-  await expect(page.getByTestId("tax-history-row")).toHaveCount(2);
+  const back = page.getByTestId("tax-history-row").first();
+  await expect(back).toContainText("7.5%");
+  await expect(back.locator("td").nth(2)).toHaveText("0%");
+});
+
+test("the product list filters as you type, and by category, without reloading the page", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await page.goto("/products");
+  await expect(page.getByTestId("product-row-Tomato Seed Sachet")).toBeVisible();
+  await expect(page.getByTestId("product-row-Liquid Herbicide")).toBeVisible();
+
+  // Mark the page: if it were reloaded, this mark would disappear.
+  await page.evaluate(() => ((window as unknown as { stillHere: boolean }).stillHere = true));
+
+  await page.getByLabel("Search products").pressSequentially("herb");
+  await expect(page.getByTestId("product-row-Liquid Herbicide")).toBeVisible();
+  await expect(page.getByTestId("product-row-Tomato Seed Sachet")).toHaveCount(0);
+  await expect(page).toHaveURL(/q=herb/);
+
+  await page.getByRole("button", { name: "Clear search" }).click();
+  await expect(page.getByTestId("product-row-Tomato Seed Sachet")).toBeVisible();
+
+  await page.getByLabel("Filter by category").selectOption({ label: "Seeds" });
+  await expect(page.getByTestId("product-row-Tomato Seed Sachet")).toBeVisible();
+  await expect(page.getByTestId("product-row-Liquid Herbicide")).toHaveCount(0);
+  await expect(page.getByTestId("pagination")).toContainText("Showing 1–1 of 1 products");
+
+  expect(await page.evaluate(() => (window as unknown as { stillHere?: boolean }).stillHere)).toBe(true);
+});
+
+test("a manager adds a category, renames a product into it, and cannot remove a category in use", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  const category = `Vegetables ${stamp}`;
+  const renamed = `${sachetName} (renamed)`;
+
+  await page.goto("/products/categories");
+  await page.getByLabel("Category name").fill(category);
+  await page.getByRole("button", { name: "Add category" }).click();
+  await expect(page.getByTestId(`category-row-${category}`)).toBeVisible();
+
+  await page.goto(sachetUrl);
+  await page.getByLabel("Product name").fill(renamed);
+  await page.getByLabel("Category", { exact: true }).selectOption({ label: category });
+  await page.getByRole("button", { name: "Save details" }).click();
+  await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
+  // Its units, prices and history are untouched by the rename.
+  await expect(page.getByLabel("Price per carton")).toHaveValue("42000.00");
+  await expect(page.getByTestId("price-history-row").first()).toBeVisible();
+
+  await page.goto("/products/categories");
+  const row = page.getByTestId(`category-row-${category}`);
+  await expect(row).toContainText("1");
+  await expect(row.getByRole("button", { name: "Remove" })).toBeDisabled();
+
+  await page.goto("/products");
+  await page.getByLabel("Filter by category").selectOption({ label: category });
+  await expect(page.getByTestId(`product-row-${renamed}`)).toBeVisible();
+});
+
+test("the activity log can be searched as you type and narrowed to a date range", async ({ page }) => {
+  await signIn(page, "gv.admin");
+  await expectSignedInAs(page, "Admin");
+  await page.goto("/activity");
+
+  await page.getByLabel("Search the activity log").pressSequentially("carton");
+  await expect(page.getByText(/added the unit "carton"/).first()).toBeVisible();
+  await expect(page.getByText(/signed in/)).toHaveCount(0);
+
+  await page.getByLabel("Search the activity log").fill("");
+  await page.getByLabel("From").fill("2000-01-01");
+  await page.getByLabel("To", { exact: true }).fill("2000-01-02");
+  await expect(page.getByText("Nothing matches these filters.")).toBeVisible();
+
+  await page.getByRole("link", { name: "Clear filters" }).click();
+  await expect(page.getByText(/signed in/).first()).toBeVisible();
+  await expect(page.getByTestId("pagination")).toContainText(/Showing 1–\d+ of \d+ entries/);
 });

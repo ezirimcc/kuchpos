@@ -1,36 +1,13 @@
+import { Building2, KeyRound, Sprout } from "lucide-react";
 import Link from "next/link";
 import { ActionForm, SubmitButton } from "@/components/action-form";
+import { SideNav } from "@/components/side-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Badge } from "@/components/ui/badge";
 import { requirePageContext } from "@/server/auth/request";
-import { menuFor, type NavItem } from "@/server/navigation";
+import { menuFor } from "@/server/navigation";
 import { ROLE_LABELS } from "@/server/permissions";
 import { closeBusinessAction } from "./owner/businesses/actions";
-
-function MenuList({ title, items }: { title: string; items: NavItem[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      <p className="px-3 pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">{title}</p>
-      <ul className="flex flex-col gap-0.5">
-        {items.map((item) => (
-          <li key={item.label}>
-            {item.href ? (
-              <Link href={item.href} className="block rounded-lg px-3 py-2 text-sm font-medium hover:bg-muted">
-                {item.label}
-              </Link>
-            ) : (
-              <span className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-muted-foreground">
-                {item.label}
-                <span className="text-xs">coming soon</span>
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   const context = await requirePageContext();
@@ -38,55 +15,64 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const isOwner = context.actor.role === "OWNER";
 
   return (
-    <div className="flex min-h-screen flex-1 flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3">
-        <Link href="/" className="text-lg font-semibold tracking-tight">
-          KuchPos
+    <div className="flex min-h-0 flex-1">
+      <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground">
+        <Link href="/" className="flex items-center gap-2.5 border-b border-sidebar-border px-5 py-4">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+            <Sprout className="size-5" aria-hidden />
+          </span>
+          <span className="text-lg font-semibold tracking-tight text-white">KuchPos</span>
         </Link>
+        <SideNav businessTitle={context.business?.name ?? "Business"} business={menu.business} owner={menu.owner} />
+      </aside>
 
-        <div data-testid="business-banner" className="flex items-center gap-2">
-          {context.business ? (
-            <>
-              <span className="rounded-lg bg-primary px-3 py-1 text-sm font-semibold text-primary-foreground">
-                {context.business.name}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-card/95 px-6 py-3 backdrop-blur">
+          <div data-testid="business-banner" className="flex items-center gap-2">
+            {context.business ? (
+              <>
+                <span className="flex items-center gap-2 rounded-lg bg-accent px-3 py-1.5 text-sm font-semibold text-accent-foreground">
+                  <Building2 className="size-4" aria-hidden />
+                  {context.business.name}
+                </span>
+                {isOwner && (
+                  <ActionForm action={closeBusinessAction} showSuccess={false}>
+                    <SubmitButton variant="outline" size="sm" pendingLabel="Leaving…">
+                      Leave this business
+                    </SubmitButton>
+                  </ActionForm>
+                )}
+              </>
+            ) : (
+              <span className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-1.5 text-sm text-muted-foreground">
+                <Building2 className="size-4" aria-hidden />
+                No business open
               </span>
-              {isOwner && (
-                <ActionForm action={closeBusinessAction} showSuccess={false}>
-                  <SubmitButton variant="outline" size="sm" pendingLabel="Leaving…">
-                    Leave this business
-                  </SubmitButton>
-                </ActionForm>
-              )}
-            </>
-          ) : (
-            <span className="rounded-lg border border-dashed px-3 py-1 text-sm text-muted-foreground">
-              No business open
-            </span>
-          )}
-        </div>
+            )}
+          </div>
 
-        <div className="ml-auto flex items-center gap-3">
-          <Link href="/account" className="text-sm underline-offset-4 hover:underline" data-testid="signed-in-as">
-            {context.actor.name}
-          </Link>
-          <Badge variant="secondary" data-testid="role-badge">
-            {ROLE_LABELS[context.actor.role]}
-          </Badge>
-          <Link href="/account" className="text-sm text-muted-foreground underline-offset-4 hover:underline">
-            Change password
-          </Link>
-          <SignOutButton />
-        </div>
-      </header>
+          <div className="ml-auto flex items-center gap-3">
+            <Link
+              href="/account"
+              className="text-sm font-medium underline-offset-4 hover:underline"
+              data-testid="signed-in-as"
+            >
+              {context.actor.name}
+            </Link>
+            <Badge variant="secondary" data-testid="role-badge">
+              {ROLE_LABELS[context.actor.role]}
+            </Badge>
+            <Link
+              href="/account"
+              className="flex items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              <KeyRound className="size-3.5" aria-hidden />
+              Change password
+            </Link>
+            <SignOutButton />
+          </div>
+        </header>
 
-      <div className="flex flex-1">
-        <nav aria-label="Main menu" className="flex w-56 shrink-0 flex-col gap-5 border-r p-3">
-          <Link href="/" className="block rounded-lg px-3 py-2 text-sm font-medium hover:bg-muted">
-            Home
-          </Link>
-          <MenuList title={context.business?.name ?? "Business"} items={menu.business} />
-          <MenuList title="All businesses" items={menu.owner} />
-        </nav>
         <main className="flex-1 p-6">{children}</main>
       </div>
     </div>

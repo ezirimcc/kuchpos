@@ -28,3 +28,18 @@ export function nairaFromText(amount: string): string {
 export function plainNumber(value: string): string {
   return new Decimal(value).toString();
 }
+
+/** Nigeria keeps the same clock all year: one hour ahead of universal time. */
+const SHOP_UTC_OFFSET = "+01:00";
+
+/** The first moment of a shop day given as "YYYY-MM-DD", or null if that is not a real date. */
+export function shopDayStart(day: string): Date | null {
+  const moment = new Date(`${day}T00:00:00.000${SHOP_UTC_OFFSET}`);
+  return Number.isNaN(moment.getTime()) ? null : moment;
+}
+
+/** The first moment of the day AFTER the given shop day (so "before this" covers the whole day). */
+export function shopDayEnd(day: string): Date | null {
+  const start = shopDayStart(day);
+  return start ? new Date(start.getTime() + 24 * 60 * 60 * 1000) : null;
+}

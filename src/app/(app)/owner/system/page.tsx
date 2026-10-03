@@ -1,8 +1,10 @@
+import { ServerCog } from "lucide-react";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { getSystemCheck } from "@/server/platform/system";
 
@@ -29,12 +31,7 @@ export default async function SystemCheckPage() {
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">System check</h1>
-        <p className="text-sm text-muted-foreground">
-          A report on the server this app is running on. Look at it after each upload of a new version.
-        </p>
-      </div>
+      <PageHeader icon={ServerCog} title="System check" description="A report on the server this app is running on. Look at it after each upload of a new version." />
 
       <Card>
         <CardHeader>

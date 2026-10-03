@@ -5,7 +5,10 @@ import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
 import {
   addUnit,
+  createCategory,
   createProduct,
+  removeCategory,
+  renameCategory,
   retireUnit,
   setProductActive,
   setUnitPrice,
@@ -20,6 +23,7 @@ export async function createProductAction(_previous: FormState, formData: FormDa
       name: field(formData, "name"),
       code: field(formData, "code"),
       barcode: field(formData, "barcode"),
+      categoryId: field(formData, "categoryId"),
       baseUnitName: field(formData, "baseUnitName"),
       allowsFraction: field(formData, "soldBy") === "measure",
       taxable: field(formData, "taxable"),
@@ -39,6 +43,7 @@ export async function updateProductAction(_previous: FormState, formData: FormDa
       name: field(formData, "name"),
       code: field(formData, "code"),
       barcode: field(formData, "barcode"),
+      categoryId: field(formData, "categoryId"),
       taxable: field(formData, "taxable"),
     }),
   );
@@ -84,5 +89,23 @@ export async function setUnitUsageAction(_previous: FormState, formData: FormDat
 export async function retireUnitAction(_previous: FormState, formData: FormData): Promise<FormState> {
   return runAction({ success: "Unit retired." }, (context) =>
     retireUnit(context, { unitId: field(formData, "unitId") }),
+  );
+}
+
+export async function createCategoryAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Category added." }, (context) =>
+    createCategory(context, { name: field(formData, "name") }),
+  );
+}
+
+export async function renameCategoryAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Category renamed." }, (context) =>
+    renameCategory(context, { categoryId: field(formData, "categoryId"), name: field(formData, "name") }),
+  );
+}
+
+export async function removeCategoryAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Category removed." }, (context) =>
+    removeCategory(context, { categoryId: field(formData, "categoryId") }),
   );
 }

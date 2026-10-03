@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ActionForm, CheckboxField, SubmitButton, TextField } from "@/components/action-form";
+import { ActionForm, CheckboxField, SelectField, SubmitButton, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, nairaFromText, plainNumber } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
-import { getProduct } from "@/server/business/catalog";
+import { getProduct, listCategories } from "@/server/business/catalog";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { can } from "@/server/permissions";
 import {
@@ -35,6 +35,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
     throw error;
   }
   const { product, priceHistory } = data;
+  const categories = await listCategories(context);
   const canManage = can(context, "product.manage");
   const canPrice = can(context, "price.manage");
   const base = product.baseUnitName;
@@ -50,11 +51,42 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
           {!product.active && <Badge variant="destructive">Out of use</Badge>}
         </h1>
         <p className="text-sm text-muted-foreground">
+          {product.category ? `${product.category.name} · ` : ""}
           Stock is counted in <span className="font-medium text-foreground">{base}</span> ·{" "}
           {product.allowsFraction ? "sold by weight or volume" : "sold in whole units only"} ·{" "}
           {product.taxable ? "taxable" : "not taxable"}
         </p>
       </div>
+
+      {canManage && (
+        <Card id="details">
+          <CardHeader>
+            <CardTitle>Name and details</CardTitle>
+            <CardDescription>
+              The name, code, barcode, category and taxable tick can be changed whenever you like.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ActionForm action={updateProductAction}>
+              <input type="hidden" name="productId" value={product.id} />
+              <div className="grid gap-x-4 gap-y-1 md:grid-cols-2">
+                <TextField name="name" label="Product name" defaultValue={product.name} autoComplete="off" required />
+                <SelectField
+                  name="categoryId"
+                  label="Category"
+                  defaultValue={product.category?.id ?? ""}
+                  key={product.category?.id ?? "none"}
+                  options={[{ value: "", label: "No category" }, ...categories.map((c) => ({ value: c.id, label: c.name }))]}
+                />
+                <TextField name="code" label="Code (optional)" defaultValue={product.code ?? ""} autoComplete="off" />
+                <TextField name="barcode" label="Barcode (optional)" defaultValue={product.barcode ?? ""} autoComplete="off" />
+              </div>
+              <CheckboxField name="taxable" label="Taxable" defaultChecked={product.taxable} />
+              <SubmitButton className="mt-4">Save details</SubmitButton>
+            </ActionForm>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -192,20 +224,10 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
       {canManage && (
         <Card>
           <CardHeader>
-            <CardTitle>Product details</CardTitle>
+            <CardTitle>{product.active ? "Stop selling this product" : "This product is out of use"}</CardTitle>
           </CardHeader>
           <CardContent>
-            <ActionForm action={updateProductAction}>
-              <input type="hidden" name="productId" value={product.id} />
-              <div className="grid gap-x-4 gap-y-1 md:grid-cols-3">
-                <TextField name="name" label="Product name" defaultValue={product.name} autoComplete="off" required />
-                <TextField name="code" label="Code (optional)" defaultValue={product.code ?? ""} autoComplete="off" />
-                <TextField name="barcode" label="Barcode (optional)" defaultValue={product.barcode ?? ""} autoComplete="off" />
-              </div>
-              <CheckboxField name="taxable" label="Taxable" defaultChecked={product.taxable} />
-              <SubmitButton className="mt-4">Save details</SubmitButton>
-            </ActionForm>
-            <div className="mt-6 border-t pt-4">
+            <div>
               <ActionForm action={setProductActiveAction} showSuccess={false}>
                 <input type="hidden" name="productId" value={product.id} />
                 <input type="hidden" name="active" value={product.active ? "false" : "true"} />

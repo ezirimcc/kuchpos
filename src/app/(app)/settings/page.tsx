@@ -1,3 +1,4 @@
+import { Settings } from "lucide-react";
 import type { Metadata } from "next";
 import { ActionForm, SelectField, SubmitButton, TextAreaField, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, plainNumber } from "@/lib/format";
 import { MAX_IDLE_SIGN_OUT_MINUTES, MIN_IDLE_SIGN_OUT_MINUTES } from "@/server/auth/config";
+import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { getBusinessSettings } from "@/server/business/settings";
 import { getSetup } from "@/server/business/setup";
@@ -33,10 +35,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">Settings for {settings.name}.</p>
-      </div>
+      <PageHeader icon={Settings} title="Settings" description={<>Settings for {settings.name}.</>} />
 
       <Card>
         <CardHeader>

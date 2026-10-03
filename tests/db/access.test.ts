@@ -170,6 +170,28 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => catalog.getProduct(context, { productId: world.b.product.id }),
   },
   {
+    name: "catalog.listCategories",
+    allowed: EVERYONE_IN_A,
+    run: (context) => catalog.listCategories(context),
+  },
+  {
+    name: "catalog.createCategory",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => catalog.createCategory(context, { name: unique("Category ") }),
+  },
+  {
+    name: "catalog.renameCategory",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => catalog.renameCategory(context, { categoryId: world.a.categoryId, name: "Renamed" }),
+    runAgainstB: (context) => catalog.renameCategory(context, { categoryId: world.b.categoryId, name: "Renamed" }),
+  },
+  {
+    name: "catalog.removeCategory",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => catalog.removeCategory(context, { categoryId: world.a.emptyCategoryId }),
+    runAgainstB: (context) => catalog.removeCategory(context, { categoryId: world.b.emptyCategoryId }),
+  },
+  {
     name: "catalog.createProduct",
     allowed: PRODUCT_MANAGERS,
     run: (context) =>
@@ -392,6 +414,7 @@ async function snapshotOfB() {
   return {
     users: await db.user.findMany({ where, orderBy: { id: "asc" }, include: { accounts: true } }),
     products: await db.product.findMany({ where, orderBy: { id: "asc" }, include: { units: { orderBy: { id: "asc" } } } }),
+    categories: await db.category.findMany({ where, orderBy: { id: "asc" } }),
     priceChanges: await db.priceChange.count({ where }),
     locations: await db.location.findMany({ where, orderBy: { id: "asc" } }),
     terminals: await db.terminal.findMany({ where, orderBy: { id: "asc" } }),
@@ -428,7 +451,7 @@ describe("business A cannot reach business B's records", () => {
       password: "a-good-password",
       role: "CASHIER",
     });
-    const list = await activityLog.listActivity(world.a.as.ADMIN);
+    const list = (await activityLog.listActivity(world.a.as.ADMIN)).entries;
     expect(list.some((entry) => entry.summary.includes("b.newperson"))).toBe(false);
   });
 

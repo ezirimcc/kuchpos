@@ -29,6 +29,7 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   Location: { filter: (businessId) => ({ businessId }), stamp: true },
   Terminal: { filter: (businessId) => ({ businessId }), stamp: true },
   Product: { filter: (businessId) => ({ businessId }), stamp: true },
+  Category: { filter: (businessId) => ({ businessId }), stamp: true },
   ProductUnit: { filter: (businessId) => ({ businessId }), stamp: true },
   PriceChange: { filter: (businessId) => ({ businessId }), stamp: true },
   TaxRateChange: { filter: (businessId) => ({ businessId }), stamp: true },

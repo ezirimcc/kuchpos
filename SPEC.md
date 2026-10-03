@@ -54,6 +54,9 @@ How to read this document:
 | C27 | **No special prices per customer.** Every customer pays the same preset unit prices. |
 | C28 | **Cart discount as a percentage or an amount.** At the cart, a discount can be entered either as a percentage or as a Naira value. It is allowed only when approved by a manager or someone above (admin, owner). The system always stores the resulting Naira amount. |
 | C29 | **No product images.** The app does not store pictures of products, to keep it fast and light. |
+| C30 | **Product categories.** Each business keeps its own list of categories; a product can be placed in one. Lists can be filtered by category. |
+| C31 | **Long lists are split into pages and can be filtered.** Every screen with a table shows a page at a time, with search that updates as you type and filters suited to the list (products: category; activity log: date range and text). |
+| C32 | **Modern dashboard look**: a side menu with icons, clear colours and readable tables — without slowing the app down. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -83,6 +86,8 @@ How to read this document:
 - **Changing settings never rewrites history.** Every sale line, receipt line and transfer line stores a copy of the unit name, the conversion and the price *as they were at that moment*. If you later change "carton" from 100 to 96, old sales still say 100.
 - A unit that has already been used in a transaction cannot be deleted or have its conversion edited in place. It is retired and a new unit is created. A product's base unit cannot be changed once it has any stock history.
 - Price changes are kept in a price history (old price, new price, who, when).
+- A product's **name, code, barcode, category and taxable tick can be changed at any time**. What cannot change is its base unit and whether it is sold in whole units or by weight/volume.
+- **Categories** (for example Seeds, Fertilizers, Feeds) belong to one business. A category that still has products in it cannot be removed; rename it or move the products first.
 
 ### 4.2 Stock locations and stock movements
 
@@ -228,6 +233,7 @@ The table below applies **inside one business**.
 | View activity log | ✅ | 👁 | 👁 | — | — |
 | **Products & prices** | | | | | |
 | Create / edit products and units | ✅ | ✅ | — | — | — |
+| Create / rename / remove product categories | ✅ | ✅ | — | — | — |
 | Change selling prices | ✅ | ✅ | — | — | — |
 | View selling prices | ✅ | ✅ | ✅ | ✅ | ✅ |
 | View cost prices and profit margins | ✅ | ✅ | ✅ | — | — |

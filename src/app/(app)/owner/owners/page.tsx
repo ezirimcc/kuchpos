@@ -1,3 +1,4 @@
+import { ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 import { ActionForm, SubmitButton, TextField } from "@/components/action-form";
 import { ActivityTable } from "@/components/activity-table";
@@ -5,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { listOwners, listPlatformActivity } from "@/server/platform/owners";
 import { createOwnerAction, resetOwnerPasswordAction, setOwnerDisabledAction } from "./actions";
@@ -17,12 +19,7 @@ export default async function OwnersPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Owners</h1>
-        <p className="text-sm text-muted-foreground">
-          Owners can open every business with full admin rights. Give this role only to people you trust completely.
-        </p>
-      </div>
+      <PageHeader icon={ShieldCheck} title="Owners" description="Owners can open every business with full admin rights. Give this role only to people you trust completely." />
 
       <Table>
         <TableHeader>

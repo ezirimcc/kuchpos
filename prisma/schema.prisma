@@ -45,6 +45,7 @@ model Business {
   locations     Location[]
   terminals     Terminal[]
   products      Product[]
+  categories    Category[]
   productUnits  ProductUnit[]
   priceChanges  PriceChange[]
   taxRateChanges TaxRateChange[]
@@ -229,6 +230,9 @@ model Product {
   code           String?   @db.VarChar(40)
   /// Optional barcode. Unique within the business when present.
   barcode        String?   @db.VarChar(64)
+  /// Optional category (Seeds, Fertilizers…), from the business's own list.
+  categoryId     String?   @db.Char(36)
+  category       Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// True for goods sold by weight or volume (2.5 kg); false for goods sold only in whole units.
   /// Fixed when the product is created.
   allowsFraction Boolean
@@ -245,7 +249,23 @@ model Product {
   @@unique([businessId, name])
   @@unique([businessId, code])
   @@unique([businessId, barcode])
+  @@index([businessId, categoryId])
   @@map("product")
+}
+
+/// A grouping of products chosen by the business, for example Seeds or Fertilizers.
+model Category {
+  id         String   @id @default(uuid()) @db.Char(36)
+  businessId String   @db.Char(36)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  name       String   @db.VarChar(60)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+  updatedAt  DateTime @updatedAt @db.DateTime(3)
+
+  products   Product[]
+
+  @@unique([businessId, name])
+  @@map("category")
 }
 
 /// A unit a product is bought or sold in (single, pack, carton, kg, 50 kg bag…), with its own price.

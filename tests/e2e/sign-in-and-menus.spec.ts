@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { expectSignedInAs, menuLabels, signIn } from "./helpers";
+import { expectSignedInAs, menuLabels, openFromMenu, signIn } from "./helpers";
 
 test.describe("signed out", () => {
-  for (const path of ["/", "/staff", "/activity", "/settings", "/account", "/products", "/products/new", "/owner/businesses", "/owner/owners"]) {
+  for (const path of ["/", "/staff", "/activity", "/settings", "/account", "/products", "/products/new", "/products/categories", "/owner/businesses", "/owner/owners"]) {
     test(`visiting ${path} sends you to the sign-in page`, async ({ page }) => {
       await page.goto(path);
       await expect(page).toHaveURL(/\/sign-in$/);
@@ -63,7 +63,7 @@ test.describe("each role sees its own menu", () => {
     await expect(page.getByTestId("business-banner")).toContainText("No business open");
     expect(await menuLabels(page)).toEqual(["Businesses", "Owners", "System check"]);
 
-    await page.getByRole("link", { name: "System check" }).click();
+    await openFromMenu(page, "System check");
     const rules = page.getByTestId("system-rule");
     await expect(rules).toHaveCount(4);
     await expect(page.getByText("NOT enforced")).toHaveCount(0);

@@ -29,6 +29,7 @@ export async function resetDatabase(): Promise<void> {
   await db.$executeRawUnsafe("TRUNCATE TABLE `tax_rate_change`");
   await db.productUnit.deleteMany();
   await db.product.deleteMany();
+  await db.category.deleteMany();
   await db.terminal.deleteMany();
   await db.location.deleteMany();
   await db.rateLimit.deleteMany();
@@ -104,6 +105,9 @@ export type TestBusiness = {
   product: TestProduct;
   shelfId: string;
   terminalId: string;
+  /** The category the sample product is in, and a second one with no products. */
+  categoryId: string;
+  emptyCategoryId: string;
   staff: Record<BusinessRole, TestUser>;
   /** A signed-in context for each role in this business. */
   as: Record<BusinessRole, AppContext>;
@@ -114,9 +118,12 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
   await getDb().location.createMany({ data: defaultLocations(business.id) });
   const terminal = await getDb().terminal.create({ data: defaultTerminal(business.id) });
   const shelf = await getDb().location.findFirstOrThrow({ where: { businessId: business.id, kind: "SHELF" } });
+  const category = await getDb().category.create({ data: { businessId: business.id, name: "Seeds" } });
+  const emptyCategory = await getDb().category.create({ data: { businessId: business.id, name: "Empty" } });
   const product = await getDb().product.create({
     data: {
       businessId: business.id,
+      categoryId: category.id,
       name: `${prefix.toUpperCase()} Seed Sachet`,
       code: `${prefix.toUpperCase()}-001`,
       allowsFraction: false,
@@ -146,6 +153,8 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
     as,
     shelfId: shelf.id,
     terminalId: terminal.id,
+    categoryId: category.id,
+    emptyCategoryId: emptyCategory.id,
     product: {
       id: product.id,
       baseUnitId: product.units.find((unit) => unit.isBase)!.id,

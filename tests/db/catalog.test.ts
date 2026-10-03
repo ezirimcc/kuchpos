@@ -179,7 +179,7 @@ describe("names, codes and barcodes", () => {
     await updateProduct(admin, { productId: id, name: "Tomato Seed (sachet)", code: "TS-01", barcode: "999", taxable: false });
     const { product } = await getProduct(admin, { productId: id });
     expect(product).toMatchObject({ name: "Tomato Seed (sachet)", barcode: "999", taxable: false });
-    const [latest] = await listActivity(admin);
+    const [latest] = (await listActivity(admin)).entries;
     expect(latest.summary).toMatch(/marked as not taxable/);
   });
 });
@@ -347,7 +347,7 @@ describe("tax rate", () => {
       ["0.00", "7.50", world.a.as.ADMIN.actor.name],
     ]);
     expect((await getBusinessSettings(world.b.as.ADMIN)).taxRatePercent).toBe("0.00");
-    expect((await listActivity(world.a.as.ADMIN))[0].summary).toMatch(/from 0.00% to 7.50%/);
+    expect((await listActivity(world.a.as.ADMIN)).entries[0].summary).toMatch(/from 0.00% to 7.50%/);
   });
 
   it("refuses rates below 0, above 100, or not a number", async () => {
@@ -411,5 +411,182 @@ describe("business setup", () => {
     expect(settings.receiptHeader).toBe("12 Market Road\n0800 000 0000");
     expect(settings.receiptFooter).toBe("Thank you!");
     expect((await getBusinessSettings(world.b.as.ADMIN)).receiptHeader).toBe("");
+  });
+});
+
+describe("categories", () => {
+  it("are created, renamed and listed with their product counts, per business", async () => {
+    const admin = world.a.as.ADMIN;
+    const catalog = await import("@/server/business/catalog");
+    const { id } = await catalog.createCategory(admin, { name: "Fertilizers" });
+    await catalog.renameCategory(admin, { categoryId: id, name: "Fertilisers" });
+
+    expect((await catalog.listCategories(admin)).map((c) => [c.name, c.productCount])).toEqual([
+      ["Empty", 0],
+      ["Fertilisers", 0],
+      ["Seeds", 1],
+    ]);
+    // Business B has its own list, untouched.
+    expect((await catalog.listCategories(world.b.as.ADMIN)).map((c) => c.name)).toEqual(["Empty", "Seeds"]);
+  });
+
+  it("refuses two categories with the same name in one business, but allows it across businesses", async () => {
+    const catalog = await import("@/server/business/catalog");
+    const errors = await fieldErrorsOf(catalog.createCategory(world.a.as.ADMIN, { name: "seeds" }));
+    expect(errors.name).toMatch(/already a category/);
+    await expect(catalog.createCategory(world.b.as.ADMIN, { name: "Tools" })).resolves.toBeTruthy();
+    await expect(catalog.createCategory(world.a.as.ADMIN, { name: "Tools" })).resolves.toBeTruthy();
+  });
+
+  it("removes an empty category, but not one that still has products", async () => {
+    const catalog = await import("@/server/business/catalog");
+    await catalog.removeCategory(world.a.as.ADMIN, { categoryId: world.a.emptyCategoryId });
+    await expect(catalog.removeCategory(world.a.as.ADMIN, { categoryId: world.a.categoryId })).rejects.toThrow(
+      /still has 1 product/,
+    );
+    expect((await catalog.listCategories(world.a.as.ADMIN)).map((c) => c.name)).toEqual(["Seeds"]);
+    // The database itself also refuses to drop a category a product points at.
+    await expect(getDb().category.delete({ where: { id: world.a.categoryId } })).rejects.toThrow();
+  });
+
+  it("puts a product in a category, moves it, and takes it out again", async () => {
+    const admin = world.a.as.ADMIN;
+    const { id } = await createProduct(admin, { ...sachet, categoryId: world.a.categoryId });
+    expect((await getProduct(admin, { productId: id })).product.category?.name).toBe("Seeds");
+
+    const details = { productId: id, name: sachet.name, code: sachet.code, barcode: "", taxable: true };
+    await updateProduct(admin, { ...details, categoryId: world.a.emptyCategoryId });
+    expect((await getProduct(admin, { productId: id })).product.category?.name).toBe("Empty");
+    expect((await listActivity(admin)).entries[0].summary).toMatch(/category to "Empty"/);
+
+    await updateProduct(admin, { ...details, categoryId: "" });
+    expect((await getProduct(admin, { productId: id })).product.category).toBeNull();
+  });
+
+  it("refuses to put a product into another business's category", async () => {
+    const errors = await fieldErrorsOf(createProduct(world.a.as.ADMIN, { ...sachet, categoryId: world.b.categoryId }));
+    expect(errors.categoryId).toBeTruthy();
+    const errorsOnUpdate = await fieldErrorsOf(
+      updateProduct(world.a.as.ADMIN, {
+        productId: world.a.product.id,
+        name: "A Seed Sachet",
+        code: "A-001",
+        barcode: "",
+        taxable: true,
+        categoryId: world.b.categoryId,
+      }),
+    );
+    expect(errorsOnUpdate.categoryId).toBeTruthy();
+    expect((await getDb().product.findUniqueOrThrow({ where: { id: world.a.product.id } })).categoryId).toBe(
+      world.a.categoryId,
+    );
+  });
+
+  it("filters the product list by category, and by 'no category'", async () => {
+    const admin = world.a.as.ADMIN;
+    await createProduct(admin, sachet);
+    await createProduct(admin, { ...fertilizer, categoryId: world.a.emptyCategoryId });
+    const names = async (category: string) => (await listProducts(admin, { category })).products.map((p) => p.name);
+    expect(await names(world.a.categoryId)).toEqual(["A Seed Sachet"]);
+    expect(await names(world.a.emptyCategoryId)).toEqual(["NPK Fertilizer"]);
+    expect(await names("none")).toEqual(["Tomato Seed Sachet"]);
+    expect(await names("")).toHaveLength(3);
+    // Another business's category id simply matches nothing.
+    expect(await names(world.b.categoryId)).toEqual([]);
+  });
+});
+
+describe("a product's name can be changed at any time", () => {
+  it("renames a product and keeps its units, prices and history", async () => {
+    const admin = world.a.as.ADMIN;
+    await setUnitPrice(admin, { unitId: world.a.product.packUnitId, price: "950" });
+    await updateProduct(admin, {
+      productId: world.a.product.id,
+      name: "Premium Seed Sachet",
+      code: "A-001",
+      barcode: "",
+      categoryId: world.a.categoryId,
+      taxable: true,
+    });
+    const { product, priceHistory } = await getProduct(admin, { productId: world.a.product.id });
+    expect(product.name).toBe("Premium Seed Sachet");
+    expect(product.units.map((unit) => unit.name)).toEqual(["single", "pack"]);
+    expect(priceHistory).toHaveLength(1);
+  });
+});
+
+describe("long lists come a page at a time", () => {
+  it("returns 50 products per page with the total, in name order, without repeats or gaps", async () => {
+    const rows = Array.from({ length: 120 }, (_, index) => ({
+      businessId: world.a.id,
+      name: `Bulk Product ${String(index + 1).padStart(3, "0")}`,
+      allowsFraction: false,
+    }));
+    await getDb().product.createMany({ data: rows });
+
+    const admin = world.a.as.ADMIN;
+    const first = await listProducts(admin, { search: "Bulk" });
+    expect(first).toMatchObject({ total: 120, page: 1, pageCount: 3, pageSize: 50 });
+    const second = await listProducts(admin, { search: "Bulk", page: 2 });
+    const third = await listProducts(admin, { search: "Bulk", page: "3" });
+    const all = [...first.products, ...second.products, ...third.products].map((product) => product.name);
+    expect(all).toHaveLength(120);
+    expect(new Set(all).size).toBe(120);
+    expect(all).toEqual([...all].sort());
+    expect(third.products).toHaveLength(20);
+
+    // A page past the end is simply empty; nonsense page numbers fall back to page 1.
+    expect((await listProducts(admin, { search: "Bulk", page: 9 })).products).toEqual([]);
+    expect((await listProducts(admin, { search: "Bulk", page: "abc" })).page).toBe(1);
+    expect((await listProducts(admin, { search: "Bulk", page: -3 })).page).toBe(1);
+  });
+
+  it("pages the activity log and filters it by words and by shop-time date range", async () => {
+    const db = getDb();
+    const at = (iso: string, summary: string, actorName = "Ada Admin") => ({
+      businessId: world.a.id,
+      actorName,
+      action: "test.event",
+      summary,
+      createdAt: new Date(iso),
+    });
+    await db.activityLog.createMany({
+      data: [
+        // 23:30 UTC on 9 March is already 00:30 on 10 March in Nigeria.
+        at("2026-03-09T23:30:00.000Z", "Late-night stock count of maize"),
+        at("2026-03-10T12:00:00.000Z", "Changed the price of maize per bag"),
+        at("2026-03-10T22:59:59.000Z", "Evening sale of fertilizer", "Musa Manager"),
+        // 23:00 UTC on 10 March is 00:00 on 11 March in Nigeria.
+        at("2026-03-10T23:00:00.000Z", "First entry of the next day"),
+        ...Array.from({ length: 60 }, (_, index) => at(`2026-02-01T10:${String(index).padStart(2, "0")}:00.000Z`, `Filler ${index}`)),
+      ],
+    });
+    const admin = world.a.as.ADMIN;
+
+    const day = await listActivity(admin, { from: "2026-03-10", to: "2026-03-10" });
+    expect(day.entries.map((entry) => entry.summary)).toEqual([
+      "Evening sale of fertilizer",
+      "Changed the price of maize per bag",
+      "Late-night stock count of maize",
+    ]);
+
+    expect((await listActivity(admin, { search: "maize" })).total).toBe(2);
+    expect((await listActivity(admin, { search: "musa" })).entries.map((entry) => entry.summary)).toEqual([
+      "Evening sale of fertilizer",
+    ]);
+    expect((await listActivity(admin, { search: "maize", from: "2026-03-10", to: "2026-03-10" })).total).toBe(2);
+    expect((await listActivity(admin, { from: "2026-03-11" })).entries.map((entry) => entry.summary)).toContain(
+      "First entry of the next day",
+    );
+
+    const february = await listActivity(admin, { from: "2026-02-01", to: "2026-02-01" });
+    expect(february).toMatchObject({ total: 60, pageCount: 2 });
+    expect(february.entries).toHaveLength(50);
+    expect((await listActivity(admin, { from: "2026-02-01", to: "2026-02-01", page: 2 })).entries).toHaveLength(10);
+
+    // Bad dates are ignored rather than causing an error.
+    await expect(listActivity(admin, { from: "not-a-date", to: "2026-13-45" })).resolves.toBeTruthy();
+    // Business B sees none of it.
+    expect((await listActivity(world.b.as.ADMIN, { search: "maize" })).total).toBe(0);
   });
 });

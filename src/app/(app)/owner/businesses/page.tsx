@@ -1,9 +1,11 @@
+import { Store } from "lucide-react";
 import type { Metadata } from "next";
 import { ActionForm, SubmitButton, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { listBusinesses } from "@/server/platform/businesses";
 import {
@@ -21,12 +23,7 @@ export default async function BusinessesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Businesses</h1>
-        <p className="text-sm text-muted-foreground">
-          Each business is completely separate. Open one to work inside it with full admin rights.
-        </p>
-      </div>
+      <PageHeader icon={Store} title="Businesses" description="Each business is completely separate. Open one to work inside it with full admin rights." />
 
       <Table>
         <TableHeader>

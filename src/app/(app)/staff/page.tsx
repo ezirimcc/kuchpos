@@ -1,3 +1,4 @@
+import { UserCog } from "lucide-react";
 import type { Metadata } from "next";
 import { ActionForm, SelectField, SubmitButton, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
@@ -5,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect } from "@/components/ui/native-select";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { listStaff } from "@/server/business/staff";
 import { BUSINESS_ROLES, ROLE_LABELS } from "@/server/permissions";
@@ -25,10 +27,7 @@ export default async function StaffPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Staff</h1>
-        <p className="text-sm text-muted-foreground">People who can sign in to {context.business?.name}.</p>
-      </div>
+      <PageHeader icon={UserCog} title="Staff" description={<>People who can sign in to {context.business?.name}.</>} />
 
       <Card>
         <CardHeader>

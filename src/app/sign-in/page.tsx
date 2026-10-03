@@ -1,3 +1,4 @@
+import { Sprout } from "lucide-react";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Alert } from "@/components/ui/alert";
@@ -19,10 +20,15 @@ export default async function SignInPage({ searchParams }: PageProps<"/sign-in">
   if (alreadySignedIn) redirect("/");
 
   return (
-    <main className="flex flex-1 flex-col items-center justify-center gap-6 p-6">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">KuchPos</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Sign in with the username your admin gave you.</p>
+    <main className="flex flex-1 flex-col items-center justify-center gap-6 bg-gradient-to-b from-accent/60 to-background p-6">
+      <div className="flex flex-col items-center gap-3 text-center">
+        <span className="flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+          <Sprout className="size-8" aria-hidden />
+        </span>
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">KuchPos</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in with the username your admin gave you.</p>
+        </div>
       </div>
       {reason === "idle" && (
         <Alert className="w-full max-w-sm">

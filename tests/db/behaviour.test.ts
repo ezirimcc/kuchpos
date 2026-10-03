@@ -206,7 +206,7 @@ describe("an owner opening a business", () => {
       role: "CASHIER",
     });
 
-    const log = await listActivity(world.a.as.ADMIN);
+    const log = (await listActivity(world.a.as.ADMIN)).entries;
     const opened = log.find((entry) => entry.action === "owner.opened_business");
     const created = log.find((entry) => entry.action === "staff.created");
     expect(opened?.actorName).toBe(world.owner.name);
@@ -302,7 +302,7 @@ describe("staff accounts", () => {
   it("changes a role and records the old and new role", async () => {
     await setStaffRole(world.a.as.ADMIN, { userId: world.a.staff.CASHIER.id, role: "STOREKEEPER" });
     expect((await getDb().user.findUnique({ where: { id: world.a.staff.CASHIER.id } }))?.role).toBe("STOREKEEPER");
-    const log = await listActivity(world.a.as.ADMIN);
+    const log = (await listActivity(world.a.as.ADMIN)).entries;
     expect(log[0].summary).toMatch(/from Cashier to Storekeeper/);
   });
 

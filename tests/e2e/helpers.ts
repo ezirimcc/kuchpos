@@ -23,3 +23,8 @@ export async function menuLabels(page: Page): Promise<string[]> {
   const texts = await items.allInnerTexts();
   return texts.map((text) => text.replace(/coming soon/i, "").trim());
 }
+
+/** Clicks an item in the left-hand menu (the home page also has shortcut cards with the same names). */
+export async function openFromMenu(page: Page, label: string) {
+  await page.getByRole("navigation", { name: "Main menu" }).getByRole("link", { name: label, exact: true }).click();
+}

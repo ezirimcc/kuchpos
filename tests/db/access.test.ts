@@ -10,6 +10,7 @@ import * as staff from "@/server/business/staff";
 import * as corrections from "@/server/business/receipt-corrections";
 import * as stock from "@/server/business/stock";
 import * as suppliers from "@/server/business/suppliers";
+import * as transfers from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
@@ -26,6 +27,18 @@ let world: World;
 /** A delivery already recorded in each business, for operations that look one up by id. */
 let receiptInA = "";
 let receiptInB = "";
+/** And a transfer in each. */
+let transferInA = "";
+let transferInB = "";
+
+function transfer(business: World["a"]) {
+  return {
+    requestId: randomUUID(),
+    fromLocationId: business.storeroomId,
+    toLocationId: business.shelfId,
+    lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "1" }],
+  };
+}
 
 function delivery(business: World["a"]) {
   return {
@@ -55,6 +68,8 @@ beforeEach(async () => {
   world = await createWorld();
   receiptInA = (await stock.receiveGoods(world.a.as.ADMIN, delivery(world.a))).id;
   receiptInB = (await stock.receiveGoods(world.b.as.ADMIN, delivery(world.b))).id;
+  transferInA = (await transfers.transferStock(world.a.as.ADMIN, transfer(world.a))).id;
+  transferInB = (await transfers.transferStock(world.b.as.ADMIN, transfer(world.b))).id;
 });
 
 type Actor =
@@ -100,6 +115,7 @@ const EVERYONE_IN_A: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "C
 const PRODUCT_MANAGERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER"];
 const RECEIVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
 const DELIVERY_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "STOREKEEPER"];
+const STOCK_MOVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -225,6 +241,27 @@ const OPERATIONS: Operation[] = [
     allowed: DELIVERY_VIEWERS,
     run: (context) => corrections.getReceiptHistory(context, { receiptId: receiptInA }),
     runAgainstB: (context) => corrections.getReceiptHistory(context, { receiptId: receiptInB }),
+  },
+  {
+    name: "transfers.getTransferOptions",
+    allowed: STOCK_MOVERS,
+    run: (context) => transfers.getTransferOptions(context),
+  },
+  {
+    name: "transfers.transferStock",
+    allowed: STOCK_MOVERS,
+    run: (context) => transfers.transferStock(context, transfer(world.a)),
+  },
+  {
+    name: "transfers.listTransfers",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => transfers.listTransfers(context),
+  },
+  {
+    name: "transfers.getTransfer",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => transfers.getTransfer(context, { transferId: transferInA }),
+    runAgainstB: (context) => transfers.getTransfer(context, { transferId: transferInB }),
   },
   {
     name: "stock.listStockOnHand",
@@ -478,6 +515,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(dashboard).map((name) => `dashboard.${name}`),
       ...Object.keys(stock).map((name) => `stock.${name}`),
       ...Object.keys(corrections).map((name) => `corrections.${name}`),
+      ...Object.keys(transfers).map((name) => `transfers.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

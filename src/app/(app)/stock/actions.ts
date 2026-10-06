@@ -5,6 +5,7 @@ import { field, runAction } from "@/server/action";
 import { correctReceipt } from "@/server/business/receipt-corrections";
 import { receiveGoods } from "@/server/business/stock";
 import { createSupplier, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
+import { transferStock } from "@/server/business/transfers";
 
 /** Saves a delivery. On success the answer carries the new delivery's id so the screen can open it. */
 export async function receiveGoodsAction(input: unknown): Promise<FormState & { receiptId?: string }> {
@@ -22,6 +23,15 @@ export async function correctReceiptAction(input: unknown): Promise<FormState & 
     receiptId = (await correctReceipt(context, input)).id;
   });
   return result.status === "success" ? { ...result, receiptId } : result;
+}
+
+/** Saves a transfer between locations. On success the answer carries the new transfer's id. */
+export async function transferStockAction(input: unknown): Promise<FormState & { transferId?: string }> {
+  let transferId: string | undefined;
+  const result = await runAction({ success: "Stock moved." }, async (context) => {
+    transferId = (await transferStock(context, input)).id;
+  });
+  return result.status === "success" ? { ...result, transferId } : result;
 }
 
 /** Adds a supplier from inside the delivery form and reports its id. */

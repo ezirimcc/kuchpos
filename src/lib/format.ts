@@ -101,6 +101,11 @@ export function receiptNumber(number: number): string {
   return `GR-${String(number).padStart(6, "0")}`;
 }
 
+/** Transfer numbers are shown as TR-000012. */
+export function transferNumber(number: number): string {
+  return `TR-${String(number).padStart(6, "0")}`;
+}
+
 /**
  * A quantity in base units, also broken into the product's larger units for reading:
  * 215 singles with pack = 10 and carton = 100 → "2 carton + 1 pack + 5 single".

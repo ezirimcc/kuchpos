@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { expectSignedInAs, gotoReady, openFromMenu, signIn } from "./helpers";
+import { expectSignedInAs, gotoReady, openFromMenu, signIn, signOut } from "./helpers";
 
 // These tests build on each other, so they run one after another.
 test.describe.configure({ mode: "serial" });
@@ -260,4 +260,75 @@ test("a manager corrects a delivery with a reason; stock follows and the origina
 
   await page.goto("/stock");
   await expect(sachet.getByTestId("stock-Storeroom")).toHaveText(String(before + 100));
+});
+
+test("a storekeeper moves 1 carton from the Storeroom to the Shelf, and too much is refused", async ({ page }) => {
+  await signIn(page, "gv.storekeeper");
+  await expectSignedInAs(page, "Storekeeper");
+
+  await page.goto("/stock");
+  const sachet = page.getByTestId("stock-row-Tomato Seed Sachet");
+  const storeroom = Number.parseInt(await sachet.getByTestId("stock-Storeroom").innerText(), 10);
+  const shelf = Number.parseInt(await sachet.getByTestId("stock-Shelf").innerText(), 10);
+
+  await page.getByRole("link", { name: "Transfers" }).click();
+  await expect(page.getByText("No stock has been moved between locations yet.")).toBeVisible();
+  await page.getByRole("link", { name: "New transfer" }).click();
+  await expect(page.getByRole("heading", { name: "New transfer" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+
+  await expect(page.getByLabel("Move from").locator("option:checked")).toHaveText("Storeroom");
+  await expect(page.getByLabel("Move to").locator("option:checked")).toHaveText("Shelf");
+  const line = page.getByTestId("transfer-line-1");
+  await line.getByLabel("Product").fill("Tomato Seed Sachet");
+  await expect(page.getByTestId("available-1")).toContainText(`In Storeroom now: ${storeroom}`);
+
+  // More than is there: refused, with the amount that is there, and what was typed is kept.
+  await line.getByLabel("Unit").selectOption({ label: await unitLabel(line, /^carton/) });
+  await line.getByLabel("How many to move").fill("50");
+  await page.getByRole("button", { name: "Move to Shelf" }).click();
+  await expect(page.getByText("Nothing was moved: there is not enough in Storeroom.")).toBeVisible();
+  await expect(page.getByText(new RegExp(`Only ${storeroom} .* is in Storeroom`))).toBeVisible();
+  await expect(line.getByLabel("How many to move")).toHaveValue("50");
+
+  await line.getByLabel("How many to move").fill("1");
+  await page.getByLabel("Note (optional)").fill("Restocking the front shelf");
+  await page.getByRole("button", { name: "Move to Shelf" }).click();
+
+  await expect(page.getByRole("heading", { name: "Transfer TR-000001" })).toBeVisible();
+  await expect(page.getByTestId("transfer-line-1")).toContainText("1 carton");
+  await expect(page.getByTestId("transfer-line-1")).toContainText("100");
+  await expect(page.getByText("Note: Restocking the front shelf")).toBeVisible();
+
+  await page.goto("/stock");
+  await expect(sachet.getByTestId("stock-Storeroom")).toHaveText(String(storeroom - 100));
+  await expect(sachet.getByTestId("stock-Shelf")).toHaveText(String(shelf + 100));
+
+  await page.goto("/stock/transfers");
+  await expect(page.getByTestId("transfer-row-1")).toContainText("Tomato Seed Sachet");
+  await expect(page.getByTestId("transfer-row-1")).toContainText("Green Valley Storekeeper");
+});
+
+test("an accountant can read transfers but not make one; a cashier sees neither; the other business sees none", async ({ page }) => {
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  await page.goto("/stock/transfers");
+  await expect(page.getByTestId("transfer-row-1")).toBeVisible();
+  await expect(page.getByRole("link", { name: "New transfer" })).toHaveCount(0);
+  await page.goto("/stock/transfers/new");
+  await expect(page).toHaveURL(/\/$/);
+  await signOut(page);
+
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openFromMenu(page, "Stock");
+  await expect(page.getByRole("link", { name: "Transfers" })).toHaveCount(0);
+  await page.goto("/stock/transfers");
+  await expect(page).toHaveURL(/\/$/);
+  await signOut(page);
+
+  await signIn(page, "sf.manager");
+  await expectSignedInAs(page, "Manager");
+  await page.goto("/stock/transfers");
+  await expect(page.getByText("No stock has been moved between locations yet.")).toBeVisible();
 });

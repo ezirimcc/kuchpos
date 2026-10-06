@@ -41,6 +41,8 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   GoodsReceiptVersion: { filter: (businessId) => ({ businessId }), stamp: true },
   GoodsReceiptVersionLine: { filter: (businessId) => ({ businessId }), stamp: true },
   GoodsReceiptChange: { filter: (businessId) => ({ businessId }), stamp: true },
+  StockTransfer: { filter: (businessId) => ({ businessId }), stamp: true },
+  StockTransferLine: { filter: (businessId) => ({ businessId }), stamp: true },
 };
 
 const WHERE_OPERATIONS = new Set([

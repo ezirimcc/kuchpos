@@ -66,6 +66,8 @@ describe("database update tool for the hosting server", () => {
       "goods_receipt_version",
       "goods_receipt_version_line",
       "goods_receipt_change",
+      "stock_transfer",
+      "stock_transfer_line",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -95,6 +97,8 @@ describe("database update tool for the hosting server", () => {
         "goods_receipt_backdate_note_check",
         "goods_receipt_line_amounts_check",
         "goods_receipt_version_reason_check",
+        "stock_transfer_two_locations_check",
+        "stock_transfer_line_amounts_check",
       ]),
     );
   });

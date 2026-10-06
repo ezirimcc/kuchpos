@@ -145,15 +145,18 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 Storekeeper, cashier and accountant cannot correct; business B cannot correct or read business A's delivery.
 - 🤖 Deliveries saved before this feature get their original snapshot from the database update and can then be corrected.
 
-### M6 · Transfers
+### M6 · Transfers — built 2026-10-07, awaiting owner's check
 **Goal:** Stock moves between Storeroom and Shelf with a paper trail.
 - Transfer document with unit selection; out-movement and in-movement saved together.
+- Transfers list (search, date range) and detail, readable by admin, manager, accountant, storekeeper; the form shows how much is in the "from" location.
 
 **Accept when:**
 - 🧑 Transferring 1 carton to Shelf gives Storeroom 100, Shelf 100.
 - 🧑 Transferring more than is available is refused with a clear message.
 - 🤖 Two transfers at the same instant that together exceed stock: exactly one succeeds.
 - 🤖 Total stock across locations is unchanged by any transfer.
+- 🤖 The same transfer sent twice is saved once; a failure at the last step leaves nothing behind; if one product of several is short, nothing moves.
+- 🤖 A cashier and an accountant cannot transfer; business A cannot use business B's locations or products, and B sees none of A's transfers.
 
 ### M7 · Stock counts and adjustments
 **Goal:** Physical reality can be compared with the system and corrected, with reasons.

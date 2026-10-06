@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { correctReceipt, getCorrectionOptions, getReceiptHistory } from "@/server/business/receipt-corrections";
 import { getReceipt, receiveGoods } from "@/server/business/stock";
+import { transferStock } from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
 
@@ -149,6 +150,50 @@ describe("a failure halfway through saving a correction", () => {
     // 4 packs + 3 singles = 43 in the Storeroom became 9 packs + 7 singles = 97 on the Shelf.
     const balances = await getDb().stockBalance.findMany({ where: { productId: world.a.product.id } });
     expect(balances.map((balance) => balance.quantity.toFixed(3)).sort()).toEqual(["0.000", "97.000"]);
+    await expectBalancesMatchMovements();
+  });
+});
+
+/** And for a transfer: the failure comes after the document, both balances and all movements are written. */
+describe("a failure halfway through saving a transfer", () => {
+  const transfer = () => ({
+    requestId: randomUUID(),
+    fromLocationId: world.a.storeroomId,
+    toLocationId: world.a.shelfId,
+    lines: [
+      { productId: world.a.product.id, unitId: world.a.product.packUnitId, quantity: "2" },
+      { productId: world.a.product.id, unitId: world.a.product.baseUnitId, quantity: "3" },
+    ],
+  });
+
+  it("leaves no transfer, no movements, and all the stock where it was", async () => {
+    await receiveGoods(world.a.as.ADMIN, delivery());
+    const db = getDb();
+    const balances = async () => JSON.stringify(await db.stockBalance.findMany({ orderBy: { id: "asc" } }));
+    const before = await balances();
+
+    failure.on = true;
+    await expect(transferStock(world.a.as.ADMIN, transfer())).rejects.toThrow("Simulated failure while saving");
+
+    expect(await db.stockTransfer.count()).toBe(0);
+    expect(await db.stockTransferLine.count()).toBe(0);
+    expect(await db.stockMovement.count({ where: { type: { in: ["TRANSFER_OUT", "TRANSFER_IN"] } } })).toBe(0);
+    expect(await balances()).toBe(before);
+    expect((await db.business.findUniqueOrThrow({ where: { id: world.a.id } })).nextStockTransferNumber).toBe(1);
+    await expectBalancesMatchMovements();
+  });
+
+  it("can be sent again with the same request and is then saved exactly once, as number 1", async () => {
+    await receiveGoods(world.a.as.ADMIN, delivery());
+    const request = transfer();
+    failure.on = true;
+    await expect(transferStock(world.a.as.ADMIN, request)).rejects.toThrow();
+    failure.on = false;
+
+    expect(await transferStock(world.a.as.ADMIN, request)).toMatchObject({ number: 1, alreadySaved: false });
+    expect(await transferStock(world.a.as.ADMIN, request)).toMatchObject({ number: 1, alreadySaved: true });
+    const shelf = await getDb().stockBalance.findFirstOrThrow({ where: { productId: world.a.product.id, locationId: world.a.shelfId } });
+    expect(shelf.quantity.toFixed(3)).toBe("23.000");
     await expectBalancesMatchMovements();
   });
 });

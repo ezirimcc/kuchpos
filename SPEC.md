@@ -63,6 +63,7 @@ How to read this document:
 | C36 | **Cost prices on deliveries** are visible to storekeepers, managers and admins. |
 | C37 | **Batch number and expiry date are per product.** When a product is created (or edited), two tick-boxes say whether it uses a batch number and whether it uses an expiry date. Deliveries of such a product must give them; other products are never asked. |
 | C38 | **"Expiring soon" is a setting.** Each business's admin sets how many months ahead counts as expiring soon (default 3). |
+| C39 | **Deliveries can be corrected after saving, without losing history** (owner's requirement, 2026-10-06). A correction never overwrites: every version of the delivery is kept as an unchangeable snapshot (the original is version 1), and every changed field is recorded with its previous value, new value, who, when and a required reason. Stock is corrected by a new, compensating stock movement — past movements are never edited. A correction that would leave less than zero in a location is refused. The corrected delivery, its history, the stock movements, the balances and the average cost are saved together or not at all. Only admins, managers and owners may correct. Corrected deliveries are marked, and their full history is shown. Nothing in the history can be deleted. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -102,7 +103,7 @@ How to read this document:
 - Each product has one stock balance **per location**, in base units.
 - Stock only ever changes through a recorded **stock movement**. Each movement stores: product, location, quantity change in base units, the unit and conversion the user picked, type, the document it belongs to, who did it, and when. Movements are never edited or deleted — a mistake is fixed by a new, opposite movement.
 - Movement types:
-  - **Goods received** — stock arrives from a supplier into a chosen location (usually Storeroom). Records supplier, unit, quantity, cost price, and — for products that use them — batch number and expiry date. A delivery normally carries today's date; an admin or manager may give an earlier date with a note (C35). The stock itself changes at the moment the delivery is saved, whatever date it carries.
+  - **Goods received** — stock arrives from a supplier into a chosen location (usually Storeroom). Records supplier, unit, quantity, cost price, and — for products that use them — batch number and expiry date. A delivery normally carries today's date; an admin or manager may give an earlier date with a note (C35). The stock itself changes at the moment the delivery is saved, whatever date it carries. A saved delivery can later be **corrected** by an admin or manager with a reason (C39): the supplier, date, invoice number, note, location, and each line's unit, quantity, cost, batch and expiry can be changed, and lines added or removed. The original and every later version stay on record.
   - **Transfer** — moves stock between Storeroom and Shelf. One document, two movements (out of one, into the other), saved together.
   - **Sale** — takes stock out of the selling location.
   - **Stock count** — staff enter what they physically counted; the system shows the difference from what it expected.
@@ -264,6 +265,7 @@ The table below applies **inside one business**.
 | Add and edit suppliers | ✅ | ✅ | — | — | ✅ |
 | View deliveries, including their cost prices | ✅ | ✅ | ✅ | — | ✅ |
 | Give a delivery an earlier date (with a note) | ✅ | ✅ | — | — | — |
+| Correct a saved delivery (with a reason) | ✅ | ✅ | — | — | — |
 | Transfer between Storeroom and Shelf | ✅ | ✅ | — | — | ✅ |
 | Enter a stock count | ✅ | ✅ | — | — | ✅ |
 | Record a stock adjustment | ✅ | ✅ | — | — | 📝 |

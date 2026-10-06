@@ -3,8 +3,8 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
 import { addMonths, dateToDay, dayToDate, formatDay, receiptNumber, shopToday } from "@/lib/format";
-import { formatNaira, lineTotal, moneyToString, movingAverageCost, parseMoney, sumMoney } from "@/lib/money";
-import { parseQuantity, quantityToString, toBaseQuantity } from "@/lib/quantity";
+import { formatNaira, moneyToString, movingAverageCost, sumMoney } from "@/lib/money";
+import { quantityToString } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
@@ -13,20 +13,17 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize, can } from "@/server/permissions";
+import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 
 /**
  * Stock for the business in use: receiving goods, the add-only movement ledger,
  * balances per location, and what is expiring soon.
  *
  * Stock changes ONLY by writing a movement together with the matching balance change,
- * inside one database transaction. Quantities and money travel as exact decimal text.
+ * inside one database transaction. Correcting a saved delivery is in receipt-corrections.ts. Quantities and money travel as exact decimal text.
  */
 
-const MAX_LINES = 200;
 const MAX_BACKDATE_DAYS = 366;
-const MAX_UNIT_QUANTITY = new Decimal("9999999.999");
-const MAX_BASE_QUANTITY = new Decimal("999999999.999");
-const MAX_UNIT_COST = new Decimal("999999999.99");
 
 // ---------------------------------------------------------------------------
 // What the "receive goods" screen needs
@@ -110,15 +107,6 @@ export async function getReceivingOptions(context: AppContext): Promise<Receivin
 // Receiving goods
 // ---------------------------------------------------------------------------
 
-const lineSchema = z.object({
-  productId: z.string().trim(),
-  unitId: z.string().trim(),
-  quantity: z.string().trim(),
-  unitCost: z.string().trim(),
-  batchNumber: optionalText(60, "The batch number is too long (60 characters at most).").optional().default(""),
-  expiryDate: z.string().trim().optional().default(""),
-});
-
 const receiveSchema = z.object({
   requestId: z.string().uuid("This form has expired. Reload the page and enter the delivery again."),
   supplierId: z.string().uuid("Choose the supplier."),
@@ -135,20 +123,6 @@ const receiveSchema = z.object({
 });
 
 export type ReceiveResult = { id: string; number: number; alreadySaved: boolean };
-
-type CheckedLine = {
-  productId: string;
-  productUnitId: string;
-  productName: string;
-  unitName: string;
-  unitFactor: string;
-  quantity: string;
-  baseQuantity: Decimal;
-  unitCost: string;
-  lineCost: Decimal;
-  batchNumber: string | null;
-  expiryDate: Date | null;
-};
 
 function daysBetween(earlier: string, later: string): number {
   return Math.round((dayToDate(later)!.getTime() - dayToDate(earlier)!.getTime()) / 86_400_000);
@@ -205,96 +179,8 @@ export async function receiveGoods(context: AppContext, input: unknown): Promise
   if (!location) fieldErrors.locationId = "Choose where the goods are going.";
 
   // --- The lines -------------------------------------------------------------------
-  const productIds = [...new Set(data.lines.map((line) => line.productId).filter(Boolean))];
-  const products = await db.product.findMany({
-    where: { id: { in: productIds } },
-    select: {
-      id: true,
-      name: true,
-      allowsFraction: true,
-      tracksBatch: true,
-      tracksExpiry: true,
-      deactivatedAt: true,
-      units: { select: { id: true, name: true, factor: true, forPurchase: true, retiredAt: true } },
-    },
-  });
-  const productById = new Map(products.map((product) => [product.id, product]));
-
-  const checked: CheckedLine[] = [];
-  data.lines.forEach((line, index) => {
-    const at = (field: string) => `lines.${index}.${field}`;
-    const product = productById.get(line.productId);
-    if (!product) {
-      fieldErrors[at("productId")] = "Choose a product.";
-      return;
-    }
-    if (product.deactivatedAt) {
-      fieldErrors[at("productId")] = `"${product.name}" is out of use and cannot be received.`;
-      return;
-    }
-    const unit = product.units.find((candidate) => candidate.id === line.unitId);
-    if (!unit || unit.retiredAt || !unit.forPurchase) {
-      fieldErrors[at("unitId")] = "Choose a unit this product is bought in.";
-      return;
-    }
-
-    let quantity: Decimal | null = null;
-    let baseQuantity: Decimal | null = null;
-    try {
-      quantity = parseQuantity(line.quantity);
-      if (!quantity.greaterThan(0) || quantity.greaterThan(MAX_UNIT_QUANTITY)) throw new Error("out of range");
-      if (!product.allowsFraction && !quantity.isInteger()) {
-        fieldErrors[at("quantity")] = `"${product.name}" comes in whole units only. Enter a whole number.`;
-        quantity = null;
-      } else {
-        baseQuantity = toBaseQuantity(quantity, new Decimal(unit.factor.toFixed(3)));
-        if (baseQuantity.greaterThan(MAX_BASE_QUANTITY)) throw new Error("too large");
-      }
-    } catch {
-      fieldErrors[at("quantity")] ??= "Enter how many arrived, as a number greater than zero (up to 3 decimal places).";
-      quantity = null;
-    }
-
-    let unitCost: Decimal | null = null;
-    try {
-      unitCost = parseMoney(line.unitCost);
-      if (unitCost.isNegative() || unitCost.greaterThan(MAX_UNIT_COST)) throw new Error("out of range");
-    } catch {
-      fieldErrors[at("unitCost")] = "Enter the cost of one unit as a plain amount, for example 4200 or 4200.50 (no commas).";
-      unitCost = null;
-    }
-
-    const batchNumber = line.batchNumber || null;
-    if (product.tracksBatch && !batchNumber) {
-      fieldErrors[at("batchNumber")] = `"${product.name}" needs a batch number.`;
-    } else if (!product.tracksBatch && batchNumber) {
-      fieldErrors[at("batchNumber")] = `"${product.name}" is not set up to use batch numbers.`;
-    }
-
-    let expiryDate: Date | null = null;
-    if (product.tracksExpiry) {
-      expiryDate = dayToDate(line.expiryDate);
-      if (!expiryDate) fieldErrors[at("expiryDate")] = `"${product.name}" needs an expiry date.`;
-    } else if (line.expiryDate !== "") {
-      fieldErrors[at("expiryDate")] = `"${product.name}" is not set up to use expiry dates.`;
-    }
-
-    if (quantity && baseQuantity && unitCost) {
-      checked.push({
-        productId: product.id,
-        productUnitId: unit.id,
-        productName: product.name,
-        unitName: unit.name,
-        unitFactor: unit.factor.toFixed(3),
-        quantity: quantityToString(quantity),
-        baseQuantity,
-        unitCost: moneyToString(unitCost),
-        lineCost: lineTotal(quantity, unitCost),
-        batchNumber,
-        expiryDate,
-      });
-    }
-  });
+  const results = await checkLines(db, data.lines, fieldErrors);
+  const checked = results.filter((line): line is CheckedLine => line !== null);
 
   if (Object.keys(fieldErrors).length > 0 || !supplier || !location || !receivedDate) {
     throw new ValidationError("Nothing was saved. Please correct the highlighted fields.", fieldErrors);
@@ -344,23 +230,47 @@ export async function receiveGoods(context: AppContext, input: unknown): Promise
           },
         });
 
+        const lineRows = checked.map((line, index) => ({
+          businessId,
+          lineNumber: index + 1,
+          productId: line.productId,
+          productUnitId: line.productUnitId,
+          productName: line.productName,
+          unitName: line.unitName,
+          unitFactor: line.unitFactor,
+          quantity: line.quantity,
+          baseQuantity: quantityToString(line.baseQuantity),
+          unitCost: line.unitCost,
+          lineCost: moneyToString(line.lineCost),
+          batchNumber: line.batchNumber,
+          expiryDate: line.expiryDate,
+        }));
         await tx.goodsReceiptLine.createMany({
-          data: checked.map((line, index) => ({
+          data: lineRows.map((line) => ({ ...line, receiptId: receipt.id })),
+        });
+
+        // The delivery exactly as first saved is kept as version 1, which can never be changed.
+        const original = await tx.goodsReceiptVersion.create({
+          data: {
             businessId,
             receiptId: receipt.id,
-            lineNumber: index + 1,
-            productId: line.productId,
-            productUnitId: line.productUnitId,
-            productName: line.productName,
-            unitName: line.unitName,
-            unitFactor: line.unitFactor,
-            quantity: line.quantity,
-            baseQuantity: quantityToString(line.baseQuantity),
-            unitCost: line.unitCost,
-            lineCost: moneyToString(line.lineCost),
-            batchNumber: line.batchNumber,
-            expiryDate: line.expiryDate,
-          })),
+            version: 1,
+            supplierId: supplier.id,
+            supplierName: supplier.name,
+            locationId: location.id,
+            locationName: location.name,
+            receivedOn: receivedDate,
+            invoiceNumber: data.invoiceNumber || null,
+            note: data.note || null,
+            totalCost: moneyToString(totalCost),
+            createdByUserId: context.actor.userId,
+            createdByName: context.actor.name,
+            createdAt: receipt.createdAt,
+          },
+          select: { id: true },
+        });
+        await tx.goodsReceiptVersionLine.createMany({
+          data: lineRows.map((line) => ({ ...line, versionId: original.id })),
         });
 
         for (const productId of productOrder) {
@@ -455,6 +365,8 @@ export type ReceiptSummary = {
   lineCount: number;
   totalCost: string;
   backdated: boolean;
+  /** 1 for a delivery as first saved; higher once it has been corrected. */
+  version: number;
   createdByName: string;
   createdAt: Date;
 };
@@ -512,6 +424,7 @@ export async function listReceipts(context: AppContext, input: unknown = {}): Pr
         locationName: true,
         totalCost: true,
         backdated: true,
+        version: true,
         createdByName: true,
         createdAt: true,
         _count: { select: { lines: true } },
@@ -528,6 +441,7 @@ export async function listReceipts(context: AppContext, input: unknown = {}): Pr
       lineCount: row._count.lines,
       totalCost: row.totalCost.toFixed(2),
       backdated: row.backdated,
+      version: row.version,
       createdByName: row.createdByName,
       createdAt: row.createdAt,
     })),
@@ -572,6 +486,7 @@ export async function getReceipt(context: AppContext, input: unknown): Promise<R
     lineCount: row.lines.length,
     totalCost: row.totalCost.toFixed(2),
     backdated: row.backdated,
+    version: row.version,
     backdateNote: row.backdateNote,
     invoiceNumber: row.invoiceNumber,
     note: row.note,

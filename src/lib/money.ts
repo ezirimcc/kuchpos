@@ -74,3 +74,34 @@ export function movingAverageCost(input: {
     quantityBefore.times(averageBefore).plus(costAdded).dividedBy(quantityBefore.plus(quantityAdded)),
   );
 }
+
+/**
+ * Average cost of one base unit after a saved delivery is corrected.
+ *
+ * The delivery used to bring in `oldQuantity` costing `oldCost`; it should have brought in
+ * `newQuantity` costing `newCost`. Units added or taken away change the stock's value at the
+ * delivery's own cost per unit. A change of price re-values only the part of the delivery
+ * that can still be in stock: goods that have already left went out at the old cost, and
+ * that history is not rewritten. With nothing left in stock the average stays as it is.
+ */
+export function correctedAverageCost(input: {
+  quantityNow: Decimal;
+  averageNow: Decimal;
+  oldQuantity: Decimal;
+  oldCost: Decimal;
+  newQuantity: Decimal;
+  newCost: Decimal;
+}): Decimal {
+  const { quantityNow, averageNow, oldQuantity, oldCost, newQuantity, newCost } = input;
+  const quantityAfter = quantityNow.plus(newQuantity).minus(oldQuantity);
+  if (!quantityAfter.greaterThan(0)) return roundCost(averageNow);
+
+  const zero = new Decimal(0);
+  const oldEach = oldQuantity.greaterThan(0) ? oldCost.dividedBy(oldQuantity) : zero;
+  const newEach = newQuantity.greaterThan(0) ? newCost.dividedBy(newQuantity) : zero;
+  const quantityPart = newQuantity.minus(oldQuantity).times(newQuantity.greaterThan(oldQuantity) ? newEach : oldEach);
+  const stillInStock = Decimal.min(oldQuantity, newQuantity, quantityAfter);
+  const pricePart = stillInStock.times(newEach.minus(oldEach));
+  const value = quantityNow.times(averageNow).plus(quantityPart).plus(pricePart);
+  return roundCost(Decimal.max(value, zero).dividedBy(quantityAfter));
+}

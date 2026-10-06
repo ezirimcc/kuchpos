@@ -122,6 +122,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - Stock on hand screen: per product, per location, shown in base units and broken into larger units.
 - Deliveries list and detail, with cost prices, for storekeeper, manager, admin (and accountant) (C36).
 - "Expiring soon" list, looking ahead the number of months set by the admin (C38, default 3).
+- Correcting a saved delivery (C39, added 2026-10-06): admins, managers and owners, with a reason. Every version is kept unchangeable (version 1 is the original), every changed field is recorded with its old and new value, and stock is corrected by new compensating movements only.
 
 **Accept when:**
 - 🧑 Receiving 2 cartons (100 each) into Storeroom shows 200 singles there and 0 on Shelf.
@@ -135,6 +136,14 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 Receiving 100 at ₦50 then 100 at ₦70 gives an average cost of exactly ₦60.00.
 - 🤖 Two deliveries of the same product saved at the same instant both count, in stock and in average cost.
 - 🤖 A cashier cannot record or view a delivery; business A cannot see or receive into business B.
+- 🧑 As manager, correcting a delivery from 2 cartons to 3 asks for a reason, adds 100 to stock, marks the delivery "Corrected", and shows what it was and what it became, with the original underneath. As storekeeper there is no "Correct this delivery" button.
+- 🤖 A correction adds stock movements and never alters an earlier one; quantity up, quantity down, a change of unit, of location, of cost, of batch/expiry, added and removed lines all leave the balance equal to the sum of the movements.
+- 🤖 Several corrections of one delivery keep every version, with who, when, why, and each old and new value; none of it can be changed or deleted, even directly in the database.
+- 🤖 A correction that would take more out of a location than is there is refused and saves nothing; so are invalid values, a missing reason, and a correction that changes nothing.
+- 🤖 A failure at the last step of a correction leaves the delivery, its history, the stock and the average cost exactly as they were.
+- 🤖 The same correction sent twice is applied once; two people correcting the same delivery at once: one is saved, the other is told to reload; two corrections cannot together take out more than is there.
+- 🤖 Storekeeper, cashier and accountant cannot correct; business B cannot correct or read business A's delivery.
+- 🤖 Deliveries saved before this feature get their original snapshot from the database update and can then be corrected.
 
 ### M6 · Transfers
 **Goal:** Stock moves between Storeroom and Shelf with a paper trail.

@@ -7,6 +7,7 @@ import * as dashboard from "@/server/business/dashboard";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
 import * as staff from "@/server/business/staff";
+import * as corrections from "@/server/business/receipt-corrections";
 import * as stock from "@/server/business/stock";
 import * as suppliers from "@/server/business/suppliers";
 import { getDb } from "@/server/db/client";
@@ -32,6 +33,21 @@ function delivery(business: World["a"]) {
     supplierId: business.supplierId,
     locationId: business.storeroomId,
     lines: [{ productId: business.product.id, unitId: business.product.packUnitId, quantity: "2", unitCost: "700" }],
+  };
+}
+
+/** A correction of that delivery (3 packs instead of 2), written with business A's own records. */
+async function correction(receiptId: string) {
+  const receipt = await getDb().goodsReceipt.findUniqueOrThrow({ where: { id: receiptId } });
+  return {
+    receiptId,
+    requestId: randomUUID(),
+    expectedVersion: receipt.version,
+    reason: "Counted again: one more pack",
+    supplierId: world.a.supplierId,
+    locationId: world.a.storeroomId,
+    receivedOn: receipt.receivedOn.toISOString().slice(0, 10),
+    lines: [{ lineNumber: 1, productId: world.a.product.id, unitId: world.a.product.packUnitId, quantity: String(receipt.version + 2), unitCost: "700" }],
   };
 }
 
@@ -191,6 +207,24 @@ const OPERATIONS: Operation[] = [
     allowed: DELIVERY_VIEWERS,
     run: (context) => stock.getReceipt(context, { receiptId: receiptInA }),
     runAgainstB: (context) => stock.getReceipt(context, { receiptId: receiptInB }),
+  },
+  {
+    name: "corrections.getCorrectionOptions",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => corrections.getCorrectionOptions(context, { receiptId: receiptInA }),
+    runAgainstB: (context) => corrections.getCorrectionOptions(context, { receiptId: receiptInB }),
+  },
+  {
+    name: "corrections.correctReceipt",
+    allowed: PRODUCT_MANAGERS,
+    run: async (context) => corrections.correctReceipt(context, await correction(receiptInA)),
+    runAgainstB: async (context) => corrections.correctReceipt(context, await correction(receiptInB)),
+  },
+  {
+    name: "corrections.getReceiptHistory",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => corrections.getReceiptHistory(context, { receiptId: receiptInA }),
+    runAgainstB: (context) => corrections.getReceiptHistory(context, { receiptId: receiptInB }),
   },
   {
     name: "stock.listStockOnHand",
@@ -443,6 +477,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(setup).map((name) => `setup.${name}`),
       ...Object.keys(dashboard).map((name) => `dashboard.${name}`),
       ...Object.keys(stock).map((name) => `stock.${name}`),
+      ...Object.keys(corrections).map((name) => `corrections.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

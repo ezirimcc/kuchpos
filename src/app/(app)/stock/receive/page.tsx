@@ -17,7 +17,7 @@ export default async function ReceivePage() {
       <PageHeader
         icon={PackagePlus}
         title="Receive goods"
-        description="Record a delivery from a supplier. Stock goes up the moment you save, and a saved delivery cannot be changed."
+        description="Record a delivery from a supplier. Stock goes up the moment you save. A mistake found later can be corrected by a manager or admin, and the original stays on record."
       />
       <StockTabs context={context} current="receive" />
       <ReceiveForm options={options} />

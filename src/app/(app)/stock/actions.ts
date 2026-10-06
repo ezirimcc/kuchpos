@@ -2,6 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
+import { correctReceipt } from "@/server/business/receipt-corrections";
 import { receiveGoods } from "@/server/business/stock";
 import { createSupplier, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
 
@@ -10,6 +11,15 @@ export async function receiveGoodsAction(input: unknown): Promise<FormState & { 
   let receiptId: string | undefined;
   const result = await runAction({ success: "Delivery saved." }, async (context) => {
     receiptId = (await receiveGoods(context, input)).id;
+  });
+  return result.status === "success" ? { ...result, receiptId } : result;
+}
+
+/** Saves a correction of a saved delivery. On success the answer carries the delivery's id. */
+export async function correctReceiptAction(input: unknown): Promise<FormState & { receiptId?: string }> {
+  let receiptId: string | undefined;
+  const result = await runAction({ success: "Correction saved." }, async (context) => {
+    receiptId = (await correctReceipt(context, input)).id;
   });
   return result.status === "success" ? { ...result, receiptId } : result;
 }

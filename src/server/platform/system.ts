@@ -31,9 +31,16 @@ const ADD_ONLY_TABLES = [
   "price_change",
   "tax_rate_change",
   "stock_movement",
-  "goods_receipt",
-  "goods_receipt_line",
+  "goods_receipt_version",
+  "goods_receipt_version_line",
+  "goods_receipt_change",
 ];
+
+/**
+ * Other protections. A delivery can never be deleted, and can only be changed by a
+ * correction that raises its version (its history is in the add-only tables above).
+ */
+const OTHER_TRIGGERS = ["goods_receipt_no_delete", "goods_receipt_guard_update"];
 
 /** Limits written into the database itself (CHECK constraints). */
 const REQUIRED_CHECKS = [
@@ -50,6 +57,7 @@ const REQUIRED_CHECKS = [
   "stock_movement_not_zero_check",
   "goods_receipt_backdate_note_check",
   "goods_receipt_line_amounts_check",
+  "goods_receipt_version_reason_check",
 ];
 
 function readAppVersion(): string {
@@ -126,7 +134,10 @@ export async function getSystemCheck(
     SELECT CONSTRAINT_NAME AS name FROM information_schema.CHECK_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE()`;
   const installedTriggers = new Set(triggers.map((row) => row.name));
   const installedChecks = new Set(checks.map((row) => row.name));
-  const expectedTriggers = ADD_ONLY_TABLES.flatMap((table) => [`${table}_no_update`, `${table}_no_delete`]);
+  const expectedTriggers = [
+    ...ADD_ONLY_TABLES.flatMap((table) => [`${table}_no_update`, `${table}_no_delete`]),
+    ...OTHER_TRIGGERS,
+  ];
   rules.push({
     name: `Stock, price and delivery history cannot be changed or deleted (${expectedTriggers.length} protections installed)`,
     enforced: expectedTriggers.every((name) => installedTriggers.has(name)),

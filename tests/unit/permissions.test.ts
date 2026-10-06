@@ -54,6 +54,7 @@ const SPEC_TABLE: Array<{ row: string; permission: Permission; allowed: Business
   { row: "Add and edit suppliers", permission: "supplier.manage", allowed: [A, M, S] },
   { row: "View deliveries, including their cost prices", permission: "stock.receipts.view", allowed: [A, M, AC, S] },
   { row: "Give a delivery an earlier date (with a note)", permission: "stock.receive.backdate", allowed: [A, M] },
+  { row: "Correct a saved delivery (with a reason)", permission: "stock.receipt.correct", allowed: [A, M] },
   { row: "Transfer between Storeroom and Shelf", permission: "stock.transfer", allowed: [A, M, S] },
   { row: "Enter a stock count", permission: "stock.count", allowed: [A, M, S] },
   { row: "Record a stock adjustment (storekeeper: needs approval)", permission: "stock.adjust.request", allowed: [A, M, S] },

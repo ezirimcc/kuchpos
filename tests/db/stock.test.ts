@@ -525,14 +525,12 @@ describe("history is preserved", () => {
     const { id } = await receiveGoods(world.a.as.ADMIN, delivery([{ productId: world.a.product.id, unitId: world.a.product.packUnitId, quantity: "1", unitCost: "700" }]));
     const db = getDb();
     const movement = await db.stockMovement.findFirstOrThrow({ where: { documentId: id } });
-    const line = await db.goodsReceiptLine.findFirstOrThrow({ where: { receiptId: id } });
 
     await expect(db.stockMovement.update({ where: { id: movement.id }, data: { quantityDelta: "999" } })).rejects.toThrow();
     await expect(db.stockMovement.delete({ where: { id: movement.id } })).rejects.toThrow();
     await expect(db.goodsReceipt.update({ where: { id }, data: { totalCost: "1" } })).rejects.toThrow();
     await expect(db.goodsReceipt.delete({ where: { id } })).rejects.toThrow();
-    await expect(db.goodsReceiptLine.update({ where: { id: line.id }, data: { unitCost: "1" } })).rejects.toThrow();
-    await expect(db.goodsReceiptLine.delete({ where: { id: line.id } })).rejects.toThrow();
+    // (A delivery changes only through a correction — see receipt-corrections.test.ts.)
     await expect(
       db.stockBalance.updateMany({ where: { productId: world.a.product.id }, data: { quantity: { decrement: "10.001" } } }),
     ).rejects.toThrow();

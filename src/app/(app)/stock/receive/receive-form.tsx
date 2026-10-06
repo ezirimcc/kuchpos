@@ -12,11 +12,17 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Decimal } from "@/lib/decimal";
 import { plainNumber } from "@/lib/format";
 import { formatNaira, roundMoney } from "@/lib/money";
+import type { CorrectionOptions } from "@/server/business/receipt-corrections";
 import type { ReceivingOptions, ReceivingProduct } from "@/server/business/stock";
-import { quickCreateSupplierAction, receiveGoodsAction } from "../actions";
+import { correctReceiptAction, quickCreateSupplierAction, receiveGoodsAction } from "../actions";
 
 type Line = {
   key: string;
+  /** Set for a line already on the delivery being corrected: its number there, and its product (which stays). */
+  lineNumber: number | null;
+  productId: string;
+  hadBatch: boolean;
+  hadExpiry: boolean;
   productName: string;
   unitId: string;
   quantity: string;
@@ -29,6 +35,10 @@ type Line = {
 // lines added later get a random one.
 const newLine = (key: string = crypto.randomUUID()): Line => ({
   key,
+  lineNumber: null,
+  productId: "",
+  hadBatch: false,
+  hadExpiry: false,
   productName: "",
   unitId: "",
   quantity: "",
@@ -43,19 +53,42 @@ function lineTotalOrNull(quantity: string, unitCost: string): Decimal | null {
   return roundMoney(new Decimal(quantity.trim()).times(unitCost.trim()));
 }
 
-export function ReceiveForm({ options }: { options: ReceivingOptions }) {
+/**
+ * The delivery form. With `correction` it is filled with a saved delivery and saves a
+ * correction of it (a reason is then required); without, it records a new delivery.
+ */
+export function ReceiveForm({ options, correction }: { options: ReceivingOptions; correction?: CorrectionOptions["receipt"] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // Made up once per delivery, so pressing Save twice can never record it twice.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
   const [suppliers, setSuppliers] = useState(options.suppliers);
-  const [supplierId, setSupplierId] = useState(options.suppliers.length === 1 ? options.suppliers[0].id : "");
-  const [locationId, setLocationId] = useState(options.locations[0]?.id ?? "");
-  const [receivedOn, setReceivedOn] = useState(options.today);
+  const [supplierId, setSupplierId] = useState(
+    correction?.supplierId ?? (options.suppliers.length === 1 ? options.suppliers[0].id : ""),
+  );
+  const [locationId, setLocationId] = useState(correction?.locationId ?? options.locations[0]?.id ?? "");
+  const [receivedOn, setReceivedOn] = useState(correction?.receivedOn ?? options.today);
   const [backdateNote, setBackdateNote] = useState("");
-  const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [note, setNote] = useState("");
-  const [lines, setLines] = useState<Line[]>(() => [newLine("first")]);
+  const [invoiceNumber, setInvoiceNumber] = useState(correction?.invoiceNumber ?? "");
+  const [note, setNote] = useState(correction?.note ?? "");
+  const [reason, setReason] = useState("");
+  const [lines, setLines] = useState<Line[]>(() =>
+    correction
+      ? correction.lines.map((line) => ({
+          key: `saved-${line.lineNumber}`,
+          lineNumber: line.lineNumber,
+          productId: line.productId,
+          hadBatch: line.batchNumber !== "",
+          hadExpiry: line.expiryDate !== "",
+          productName: line.productName,
+          unitId: line.unitId,
+          quantity: line.quantity,
+          unitCost: line.unitCost,
+          batchNumber: line.batchNumber,
+          expiryDate: line.expiryDate,
+        }))
+      : [newLine("first")],
+  );
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [newSupplier, setNewSupplier] = useState<string | null>(null);
@@ -65,9 +98,14 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
     () => new Map(options.products.map((product) => [product.name.toLowerCase(), product])),
     [options.products],
   );
-  const find = (name: string): ReceivingProduct | undefined => productByName.get(name.trim().toLowerCase());
+  const productById = useMemo(() => new Map(options.products.map((product) => [product.id, product])), [options.products]);
+  // A saved line keeps its product whatever it is called today; a new line is found by the name typed.
+  const find = (line: Pick<Line, "productId" | "productName">): ReceivingProduct | undefined =>
+    line.productId ? productById.get(line.productId) : productByName.get(line.productName.trim().toLowerCase());
+  const usesBatch = (line: Line, product: ReceivingProduct | undefined) => !!product?.tracksBatch || line.hadBatch;
+  const usesExpiry = (line: Line, product: ReceivingProduct | undefined) => !!product?.tracksExpiry || line.hadExpiry;
 
-  const backdated = receivedOn !== "" && receivedOn < options.today;
+  const backdated = !correction && receivedOn !== "" && receivedOn < options.today;
   const total = lines.reduce<Decimal | null>((sum, line) => {
     const amount = lineTotalOrNull(line.quantity, line.unitCost);
     return amount ? (sum ?? new Decimal(0)).plus(amount) : sum;
@@ -78,7 +116,7 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
   }
 
   function chooseProduct(key: string, productName: string) {
-    const product = find(productName);
+    const product = find({ productId: "", productName });
     // Default to the largest unit the product is bought in (deliveries usually come in cartons or bags).
     change(key, { productName, unitId: product ? (product.units.at(-1)?.id ?? "") : "", batchNumber: "", expiryDate: "" });
   }
@@ -104,26 +142,29 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
     setMessage(null);
     setErrors({});
     startTransition(async () => {
-      const result = await receiveGoodsAction({
+      const filled = {
         requestId,
         supplierId,
         locationId,
         receivedOn,
-        backdateNote: backdated ? backdateNote : "",
         invoiceNumber,
         note,
         lines: lines.map((line) => {
-          const product = find(line.productName);
+          const product = find(line);
           return {
+            lineNumber: line.lineNumber,
             productId: product?.id ?? "",
             unitId: line.unitId,
             quantity: line.quantity,
             unitCost: line.unitCost,
-            batchNumber: product?.tracksBatch ? line.batchNumber : "",
-            expiryDate: product?.tracksExpiry ? line.expiryDate : "",
+            batchNumber: usesBatch(line, product) ? line.batchNumber : "",
+            expiryDate: usesExpiry(line, product) ? line.expiryDate : "",
           };
         }),
-      });
+      };
+      const result = correction
+        ? await correctReceiptAction({ ...filled, receiptId: correction.id, expectedVersion: correction.version, reason })
+        : await receiveGoodsAction({ ...filled, backdateNote: backdated ? backdateNote : "" });
       if (result.status === "success" && result.receiptId) {
         setRequestId(crypto.randomUUID());
         router.push(`/stock/receipts/${result.receiptId}`);
@@ -196,12 +237,12 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
               value={receivedOn}
               max={options.today}
               onChange={(event) => setReceivedOn(event.target.value)}
-              disabled={!options.canBackdate}
+              disabled={!options.canBackdate && !correction}
               aria-invalid={!!errors.receivedOn}
               required
             />
             {problem("receivedOn")}
-            {!options.canBackdate && <p className="text-xs text-muted-foreground">Only a manager or admin can enter an earlier date.</p>}
+            {!options.canBackdate && !correction && <p className="text-xs text-muted-foreground">Only a manager or admin can enter an earlier date.</p>}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -233,7 +274,8 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
       <Card>
         <CardContent className="flex flex-col gap-4">
           {lines.map((line, index) => {
-            const product = find(line.productName);
+            const product = find(line);
+            const saved = line.lineNumber !== null;
             const amount = lineTotalOrNull(line.quantity, line.unitCost);
             const unit = product?.units.find((candidate) => candidate.id === line.unitId);
             return (
@@ -249,10 +291,14 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
                       placeholder="Start typing a product name"
                       autoComplete="off"
                       aria-invalid={!!errors[`lines.${index}.productId`]}
+                      readOnly={saved}
                       required
                     />
                     {problem(`lines.${index}.productId`)}
-                    {line.productName && !product && <p className="text-xs text-muted-foreground">Choose a product from the list.</p>}
+                    {saved && (
+                      <p className="text-xs text-muted-foreground">Wrong product? Remove this line and add the right one.</p>
+                    )}
+                    {!saved && line.productName && !product && <p className="text-xs text-muted-foreground">Choose a product from the list.</p>}
                   </div>
                   <div className="flex flex-col gap-1.5 md:col-span-2">
                     <Label htmlFor={`unit-${line.key}`}>Unit</Label>
@@ -312,16 +358,16 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
                       size="icon"
                       onClick={() => setLines((current) => (current.length === 1 ? [newLine()] : current.filter((other) => other.key !== line.key)))}
                       aria-label={`Remove line ${index + 1}`}
-                      title="Remove this line"
+                      title={saved ? "Remove this line: it did not arrive" : "Remove this line"}
                     >
                       <Trash2 className="size-4" aria-hidden />
                     </Button>
                   </div>
                 </div>
 
-                {(product?.tracksBatch || product?.tracksExpiry) && (
+                {(usesBatch(line, product) || usesExpiry(line, product)) && (
                   <div className="grid gap-3 md:grid-cols-12">
-                    {product.tracksBatch && (
+                    {usesBatch(line, product) && (
                       <div className="flex flex-col gap-1.5 md:col-span-4">
                         <Label htmlFor={`batch-${line.key}`}>Batch number</Label>
                         <Input
@@ -330,12 +376,12 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
                           onChange={(event) => change(line.key, { batchNumber: event.target.value })}
                           autoComplete="off"
                           aria-invalid={!!errors[`lines.${index}.batchNumber`]}
-                          required
+                          required={!!product?.tracksBatch}
                         />
                         {problem(`lines.${index}.batchNumber`)}
                       </div>
                     )}
-                    {product.tracksExpiry && (
+                    {usesExpiry(line, product) && (
                       <div className="flex flex-col gap-1.5 md:col-span-3">
                         <Label htmlFor={`expiry-${line.key}`}>Expiry date</Label>
                         <Input
@@ -344,7 +390,7 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
                           value={line.expiryDate}
                           onChange={(event) => change(line.key, { expiryDate: event.target.value })}
                           aria-invalid={!!errors[`lines.${index}.expiryDate`]}
-                          required
+                          required={!!product?.tracksExpiry}
                         />
                         {problem(`lines.${index}.expiryDate`)}
                       </div>
@@ -376,11 +422,31 @@ export function ReceiveForm({ options }: { options: ReceivingOptions }) {
             <Input id="note" value={note} onChange={(event) => setNote(event.target.value)} autoComplete="off" />
             {problem("note")}
           </div>
+          {correction && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="reason">Why is this delivery being corrected?</Label>
+              <Input
+                id="reason"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                aria-invalid={!!errors.reason}
+                placeholder="For example: counted again, one carton fewer than the waybill"
+                autoComplete="off"
+                maxLength={300}
+                required
+              />
+              {problem("reason")}
+              <p className="text-xs text-muted-foreground">
+                The delivery as it is now stays on record. Your name, the time, this reason and every value you
+                changed are kept with it, and stock is adjusted by the difference.
+              </p>
+            </div>
+          )}
           {message && <Alert variant="destructive">{message}</Alert>}
           {errors.lines && <Alert variant="destructive">{errors.lines}</Alert>}
           <div>
             <Button type="submit" size="lg" disabled={pending}>
-              {pending ? "Saving…" : "Save delivery"}
+              {pending ? "Saving…" : correction ? "Save correction" : "Save delivery"}
             </Button>
           </div>
         </CardContent>

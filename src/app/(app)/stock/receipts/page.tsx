@@ -27,7 +27,7 @@ export default async function ReceiptsPage({ searchParams }: PageProps<"/stock/r
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader icon={ClipboardList} title="Deliveries" description="Every delivery recorded, newest first. A saved delivery can never be changed." />
+      <PageHeader icon={ClipboardList} title="Deliveries" description="Every delivery recorded, newest first. A corrected delivery is marked, and keeps its full history." />
       <StockTabs context={context} current="receipts" />
 
       <Suspense>
@@ -67,6 +67,11 @@ export default async function ReceiptsPage({ searchParams }: PageProps<"/stock/r
                   <Link href={`/stock/receipts/${receipt.id}`} className="text-link underline-offset-4 hover:underline">
                     {receiptNumber(receipt.number)}
                   </Link>
+                  {receipt.version > 1 && (
+                    <Badge variant="secondary" className="ml-2">
+                      Corrected
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatDay(receipt.receivedOn)}

@@ -134,3 +134,44 @@ describe("movingAverageCost", () => {
     expect(average.toFixed(4)).toBe("385.0000");
   });
 });
+
+describe("correctedAverageCost", () => {
+  const d = (value: string) => new Decimal(value);
+  const corrected = async (input: Record<"quantityNow" | "averageNow" | "oldQuantity" | "oldCost" | "newQuantity" | "newCost", string>) => {
+    const { correctedAverageCost } = await import("./money");
+    return correctedAverageCost({
+      quantityNow: d(input.quantityNow),
+      averageNow: d(input.averageNow),
+      oldQuantity: d(input.oldQuantity),
+      oldCost: d(input.oldCost),
+      newQuantity: d(input.newQuantity),
+      newCost: d(input.newCost),
+    }).toFixed(4);
+  };
+
+  it("gives the average the right delivery would have given, when nothing has left yet", async () => {
+    // 100 at 50 already there, then 100 entered at 70 (average 60) that should have been 100 at 90.
+    expect(await corrected({ quantityNow: "200", averageNow: "60", oldQuantity: "100", oldCost: "7000", newQuantity: "100", newCost: "9000" })).toBe("70.0000");
+  });
+
+  it("keeps the average when only the quantity was wrong", async () => {
+    expect(await corrected({ quantityNow: "100", averageNow: "50", oldQuantity: "100", oldCost: "5000", newQuantity: "80", newCost: "4000" })).toBe("50.0000");
+    expect(await corrected({ quantityNow: "100", averageNow: "50", oldQuantity: "100", oldCost: "5000", newQuantity: "130", newCost: "6500" })).toBe("50.0000");
+  });
+
+  it("re-prices only what can still be in stock when most of the delivery has gone", async () => {
+    // 100 entered at 50, 90 since left, cost should have been 60: the 10 left are worth 60 each, not 150.
+    expect(await corrected({ quantityNow: "10", averageNow: "50", oldQuantity: "100", oldCost: "5000", newQuantity: "100", newCost: "6000" })).toBe("60.0000");
+  });
+
+  it("works for a product added by the correction and for one removed by it", async () => {
+    expect(await corrected({ quantityNow: "0", averageNow: "0", oldQuantity: "0", oldCost: "0", newQuantity: "10", newCost: "500" })).toBe("50.0000");
+    // 100 at 50 plus a wrong line of 100 at 70 (average 60); removing the wrong line gives 50 again.
+    expect(await corrected({ quantityNow: "200", averageNow: "60", oldQuantity: "100", oldCost: "7000", newQuantity: "0", newCost: "0" })).toBe("50.0000");
+  });
+
+  it("leaves the average alone when no stock is left, and never goes below zero", async () => {
+    expect(await corrected({ quantityNow: "10", averageNow: "50", oldQuantity: "10", oldCost: "500", newQuantity: "0", newCost: "0" })).toBe("50.0000");
+    expect(await corrected({ quantityNow: "20", averageNow: "1", oldQuantity: "10", oldCost: "5000", newQuantity: "0", newCost: "0" })).toBe("0.0000");
+  });
+});

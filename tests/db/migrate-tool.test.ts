@@ -63,11 +63,17 @@ describe("database update tool for the hosting server", () => {
       "price_change",
       "tax_rate_change",
       "stock_movement",
-      "goods_receipt",
-      "goods_receipt_line",
+      "goods_receipt_version",
+      "goods_receipt_version_line",
+      "goods_receipt_change",
     ];
+    // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
-      addOnlyTables.flatMap((table) => [`${table}_no_delete`, `${table}_no_update`]).sort(),
+      [
+        ...addOnlyTables.flatMap((table) => [`${table}_no_delete`, `${table}_no_update`]),
+        "goods_receipt_no_delete",
+        "goods_receipt_guard_update",
+      ].sort(),
     );
 
     const checks = await scratchQuery<{ name: string }>(
@@ -88,6 +94,7 @@ describe("database update tool for the hosting server", () => {
         "stock_movement_not_zero_check",
         "goods_receipt_backdate_note_check",
         "goods_receipt_line_amounts_check",
+        "goods_receipt_version_reason_check",
       ]),
     );
   });

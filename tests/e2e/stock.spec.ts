@@ -193,3 +193,71 @@ test("the other business sees none of these deliveries or this stock", async ({ 
   await expect(page.getByText("Tomato Seed Sachet")).toHaveCount(0);
   await expect(page.getByTestId("stock-row-Layer Mash Poultry Feed").getByTestId("stock-total")).toContainText("0 kg");
 });
+
+test("a storekeeper can read a delivery but is not offered, and cannot open, the correction screen", async ({ page }) => {
+  await signIn(page, "gv.storekeeper");
+  await expectSignedInAs(page, "Storekeeper");
+  await page.goto("/stock/receipts");
+  await page.getByTestId("receipt-row-1").getByRole("link", { name: "GR-000001" }).click();
+  await expect(page.getByRole("heading", { name: /Delivery GR-000001/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Correct this delivery" })).toHaveCount(0);
+
+  await page.goto(`${page.url()}/correct`);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole("button", { name: "Save correction" })).toHaveCount(0);
+});
+
+test("a manager corrects a delivery with a reason; stock follows and the original stays on record", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+
+  await page.goto("/stock");
+  const sachet = page.getByTestId("stock-row-Tomato Seed Sachet");
+  const before = Number.parseInt(await sachet.getByTestId("stock-Storeroom").innerText(), 10);
+
+  await page.goto("/stock/receipts");
+  await page.getByTestId("receipt-row-1").getByRole("link", { name: "GR-000001" }).click();
+  await page.getByRole("link", { name: "Correct this delivery" }).click();
+  await expect(page.getByRole("heading", { name: "Correct delivery GR-000001" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+
+  // The form opens filled with the delivery as it stands.
+  const line = page.getByTestId("delivery-line-1");
+  await expect(line.getByLabel("Product")).toHaveValue("Tomato Seed Sachet");
+  await expect(line.getByLabel("How many arrived")).toHaveValue("2");
+  await expect(page.getByTestId("delivery-total")).toHaveText("₦180,001.50");
+
+  // Three cartons arrived, not two, at ₦29,000 each. Without a good reason nothing is saved.
+  await line.getByLabel("How many arrived").fill("3");
+  await line.getByLabel(/Cost of one/).fill("29000");
+  await page.getByLabel("Why is this delivery being corrected?").fill("oops");
+  await page.getByRole("button", { name: "Save correction" }).click();
+  await expect(page.getByText("Explain why this delivery is being corrected.")).toBeVisible();
+  await expect(line.getByLabel("How many arrived")).toHaveValue("3");
+
+  await page.getByLabel("Why is this delivery being corrected?").fill("Counted again against the waybill");
+  await page.getByRole("button", { name: "Save correction" }).click();
+
+  await expect(page.getByRole("heading", { name: /Delivery GR-000001/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Delivery GR-000001/ })).toContainText("Corrected");
+  await expect(page.getByTestId("corrected-notice")).toContainText("Counted again against the waybill");
+  await expect(page.getByTestId("receipt-line-1")).toContainText("3 carton");
+  await expect(page.getByTestId("receipt-total")).toHaveText("₦207,001.50");
+
+  const correction = page.getByTestId("correction-1");
+  await expect(correction).toContainText("Reason: Counted again against the waybill");
+  await expect(correction.getByRole("row", { name: /Arrived/ })).toContainText("2 carton");
+  await expect(correction.getByRole("row", { name: /Arrived/ })).toContainText("3 carton");
+  await expect(correction.getByRole("row", { name: /Cost each/ })).toContainText("₦30,000.00 per carton");
+  await expect(correction.getByRole("row", { name: /Total cost/ })).toContainText("₦207,001.50");
+  await expect(page.getByTestId("correction-1-stock")).toContainText("+100");
+  // The delivery exactly as the storekeeper first entered it.
+  await expect(page.getByTestId("original-delivery")).toContainText("2 carton");
+  await expect(page.getByTestId("original-delivery")).toContainText("₦180,001.50");
+
+  await page.goto("/stock/receipts");
+  await expect(page.getByTestId("receipt-row-1")).toContainText("Corrected");
+
+  await page.goto("/stock");
+  await expect(sachet.getByTestId("stock-Storeroom")).toHaveText(String(before + 100));
+});

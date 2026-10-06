@@ -18,6 +18,7 @@ const SCREENS = [
   "/stock/receive",
   "/stock/receipts",
   "/stock/receipts/00000000-0000-4000-8000-000000000000",
+  "/stock/receipts/00000000-0000-4000-8000-000000000000/correct",
   "/stock/expiring",
   "/stock/suppliers",
   "/products/00000000-0000-4000-8000-000000000000",

@@ -112,7 +112,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 *(Q15 answered 2026-10-02: no special customer prices.)*
 
-### M5 · Stock ledger and receiving goods — built 2026-10-04, awaiting owner's check
+### M5 · Stock ledger and receiving goods ✅ (verified 2026-10-07, tag `m5`)
 **Goal:** Stock exists, and every unit of it has a recorded origin.
 - Add-only stock movement ledger and per-location balances in base units; the database itself refuses a negative balance.
 - Suppliers (simple list).

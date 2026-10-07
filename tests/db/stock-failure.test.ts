@@ -6,7 +6,7 @@ import { transferStock } from "@/server/business/transfers";
 import { adjustFromCount, decideAdjustment, getAdjustment, recordAdjustment } from "@/server/business/adjustments";
 import { submitCount } from "@/server/business/counts";
 import { getDb } from "@/server/db/client";
-import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
+import { createWorld, expectBalancesMatchMovements, nextDocumentNumber, type World } from "../support/world";
 
 /**
  * Forces a failure at the very last step of saving a delivery — after the document, its
@@ -55,7 +55,7 @@ describe("a failure halfway through saving a delivery", () => {
     expect(await db.stockMovement.count()).toBe(0);
     expect(await db.stockBalance.count()).toBe(0);
     expect((await db.product.findUniqueOrThrow({ where: { id: world.a.product.id } })).averageCost.toFixed(4)).toBe("0.0000");
-    expect((await db.business.findUniqueOrThrow({ where: { id: world.a.id } })).nextGoodsReceiptNumber).toBe(1);
+    expect(await nextDocumentNumber(world.a.id, "GOODS_RECEIPT")).toBe(1);
     await expectBalancesMatchMovements();
   });
 
@@ -181,7 +181,7 @@ describe("a failure halfway through saving a transfer", () => {
     expect(await db.stockTransferLine.count()).toBe(0);
     expect(await db.stockMovement.count({ where: { type: { in: ["TRANSFER_OUT", "TRANSFER_IN"] } } })).toBe(0);
     expect(await balances()).toBe(before);
-    expect((await db.business.findUniqueOrThrow({ where: { id: world.a.id } })).nextStockTransferNumber).toBe(1);
+    expect(await nextDocumentNumber(world.a.id, "STOCK_TRANSFER")).toBe(1);
     await expectBalancesMatchMovements();
   });
 
@@ -212,7 +212,7 @@ describe("a failure halfway through a count, an adjustment or an approval", () =
       decisions: await db.stockAdjustmentDecision.count(),
       movements: await db.stockMovement.count(),
       balances: await db.stockBalance.findMany({ orderBy: { id: "asc" } }),
-      numbers: await db.business.findUniqueOrThrow({ where: { id: world.a.id }, select: { nextStockCountNumber: true, nextStockAdjustmentNumber: true } }),
+      numbers: [await nextDocumentNumber(world.a.id, "STOCK_COUNT"), await nextDocumentNumber(world.a.id, "STOCK_ADJUSTMENT")],
     });
   };
   const line = () => ({ productId: world.a.product.id, unitId: world.a.product.baseUnitId, direction: "remove", quantity: "3", reason: "DAMAGED" });

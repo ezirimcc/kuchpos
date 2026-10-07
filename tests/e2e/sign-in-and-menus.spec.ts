@@ -34,15 +34,15 @@ const MENUS: Array<{ username: string; role: string; menu: string[] }> = [
   {
     username: "gv.admin",
     role: "Admin",
-    menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports", "Staff", "Activity log", "Settings"],
+    menu: ["Sell", "Sales", "Customers", "Stock", "Products & Categories", "Reports", "Staff", "Activity log", "Settings"],
   },
   {
     username: "gv.manager",
     role: "Manager",
-    menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"],
+    menu: ["Sell", "Sales", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"],
   },
-  { username: "gv.accountant", role: "Accountant", menu: ["Customers", "Stock", "Products & Categories", "Reports", "Activity log"] },
-  { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Customers", "Stock", "Products & Categories", "Reports"] },
+  { username: "gv.accountant", role: "Accountant", menu: ["Sales", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"] },
+  { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Sales", "Customers", "Stock", "Products & Categories", "Reports"] },
   { username: "gv.storekeeper", role: "Storekeeper", menu: ["Stock", "Products & Categories", "Reports"] },
 ];
 

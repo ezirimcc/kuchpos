@@ -14,7 +14,7 @@ import { receiveGoods } from "@/server/business/stock";
 import { transferStock } from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
-import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
+import { createWorld, expectBalancesMatchMovements, nextDocumentNumber, type World } from "../support/world";
 
 /** Stock counts, adjustments with reasons, and approval of a storekeeper's adjustments. */
 
@@ -93,7 +93,7 @@ async function everything() {
     decisions: await db.stockAdjustmentDecision.count(),
     movements: await db.stockMovement.findMany({ orderBy: { id: "asc" } }),
     balances: await db.stockBalance.findMany({ orderBy: { id: "asc" } }),
-    business: await db.business.findUniqueOrThrow({ where: { id: world.a.id }, select: { nextStockCountNumber: true, nextStockAdjustmentNumber: true } }),
+    numbers: [await nextDocumentNumber(world.a.id, "STOCK_COUNT"), await nextDocumentNumber(world.a.id, "STOCK_ADJUSTMENT")],
     activity: await db.activityLog.count(),
   });
 }

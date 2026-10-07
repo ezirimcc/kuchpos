@@ -41,13 +41,23 @@ const ADD_ONLY_TABLES = [
   "stock_adjustment",
   "stock_adjustment_line",
   "stock_adjustment_decision",
+  "sale",
+  "sale_line",
+  "payment",
+  "sale_receipt_print",
 ];
 
 /**
  * Other protections. A delivery can never be deleted, and can only be changed by a
  * correction that raises its version (its history is in the add-only tables above).
  */
-const OTHER_TRIGGERS = ["goods_receipt_no_delete", "goods_receipt_guard_update"];
+const OTHER_TRIGGERS = [
+  "goods_receipt_no_delete",
+  "goods_receipt_guard_update",
+  // Document numbers only ever go up by one, and are never removed.
+  "document_counter_no_delete",
+  "document_counter_only_up",
+];
 
 /** Limits written into the database itself (CHECK constraints). */
 const REQUIRED_CHECKS = [
@@ -70,6 +80,10 @@ const REQUIRED_CHECKS = [
   "stock_count_line_amounts_check",
   "stock_adjustment_line_amounts_check",
   "stock_adjustment_decision_note_check",
+  "sale_amounts_check",
+  "sale_line_amounts_check",
+  "payment_amounts_check",
+  "document_counter_next_check",
 ];
 
 function readAppVersion(): string {

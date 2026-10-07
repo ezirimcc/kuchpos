@@ -317,6 +317,11 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
           },
         });
         if (claimed.count !== 1) throw new MovedOn();
+        // Each product's "turn" is taken before any line that refers to the product is written
+        // (see receiveGoods for why).
+        for (const productId of [...perProduct.keys()].sort()) {
+          await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
+        }
 
         // Line numbers are never reused, so "line 2" means the same line in every version.
         const highest = await tx.goodsReceiptVersionLine.aggregate({

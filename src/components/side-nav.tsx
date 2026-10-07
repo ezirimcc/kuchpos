@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   type LucideIcon,
   Package,
+  ReceiptText,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -24,6 +25,7 @@ export type SideNavItem = { label: string; icon: string; href: string | null };
 const ICONS: Record<string, LucideIcon> = {
   home: LayoutDashboard,
   cart: ShoppingCart,
+  sales: ReceiptText,
   customers: Users,
   stock: Warehouse,
   products: Package,

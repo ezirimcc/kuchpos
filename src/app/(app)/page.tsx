@@ -8,18 +8,20 @@ import {
   Package,
   Percent,
   Settings,
+  ShoppingCart,
   Tags,
   UserCog,
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { formatDateTime, plainNumber, shopGreeting } from "@/lib/format";
+import { formatDateTime, nairaFromText, plainNumber, shopGreeting } from "@/lib/format";
 import { requirePageContext } from "@/server/auth/request";
 import { getDashboard } from "@/server/business/dashboard";
 import { can, type Permission, ROLE_LABELS } from "@/server/permissions";
 
 const SHORTCUTS: { href: string; title: string; text: string; icon: LucideIcon; needs: Permission }[] = [
+  { href: "/sell", title: "Sell", text: "Start a sale at the checkout.", icon: ShoppingCart, needs: "sale.create" },
   { href: "/products", title: "Products & Categories", text: "Look up a price, or add and change products.", icon: Package, needs: "price.view" },
   { href: "/staff", title: "Staff", text: "Add people and set what they can do.", icon: UserCog, needs: "staff.manage" },
   { href: "/activity", title: "Activity log", text: "See who did what, and when.", icon: History, needs: "activityLog.view" },
@@ -28,7 +30,6 @@ const SHORTCUTS: { href: string; title: string; text: string; icon: LucideIcon; 
 
 // Figures that will appear here as each part of KuchPos is built.
 const COMING: { title: string; icon: LucideIcon; needs: Permission }[] = [
-  { title: "Sales today", icon: ChartColumn, needs: "report.sales.view" },
   { title: "Collected today", icon: Wallet, needs: "report.collections.view" },
   { title: "Owed by customers", icon: HandCoins, needs: "report.customerDebt.view" },
 ];
@@ -120,6 +121,15 @@ export default async function HomePage() {
         <Stat testId="stat-products" highlight title="Products" value={snapshot.products.toLocaleString("en-NG")} note="In use and on sale" icon={Boxes} />
         <Stat testId="stat-categories" title="Categories" value={snapshot.categories.toLocaleString("en-NG")} note="Groups of products" icon={Tags} />
         <Stat testId="stat-tax" title="Tax rate" value={`${plainNumber(snapshot.taxRatePercent)}%`} note="Included in prices" icon={Percent} />
+        {snapshot.salesToday !== null && (
+          <Stat
+            testId="stat-sales-today"
+            title={snapshot.salesToday.ownOnly ? "Your sales today" : "Sales today"}
+            value={nairaFromText(snapshot.salesToday.total)}
+            note={`${snapshot.salesToday.count.toLocaleString("en-NG")} sale${snapshot.salesToday.count === 1 ? "" : "s"} since midnight`}
+            icon={ChartColumn}
+          />
+        )}
         {snapshot.staff !== null && (
           <Stat testId="stat-staff" title="Staff" value={snapshot.staff.toLocaleString("en-NG")} note="Active accounts" icon={UserCog} />
         )}

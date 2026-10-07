@@ -204,3 +204,12 @@ export async function expectBalancesMatchMovements(): Promise<void> {
     throw new Error(`Stock balances do not match their movements: ${JSON.stringify(mismatches)}`);
   }
 }
+
+/** The number the next document of a kind will get in a business (1 if none has been made yet). */
+export async function nextDocumentNumber(
+  businessId: string,
+  kind: "GOODS_RECEIPT" | "STOCK_TRANSFER" | "STOCK_COUNT" | "STOCK_ADJUSTMENT",
+): Promise<number> {
+  const counter = await getDb().documentCounter.findUnique({ where: { businessId_kind: { businessId, kind } } });
+  return counter?.next ?? 1;
+}

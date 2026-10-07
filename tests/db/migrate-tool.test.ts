@@ -73,6 +73,10 @@ describe("database update tool for the hosting server", () => {
       "stock_adjustment",
       "stock_adjustment_line",
       "stock_adjustment_decision",
+      "sale",
+      "sale_line",
+      "payment",
+      "sale_receipt_print",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -80,6 +84,8 @@ describe("database update tool for the hosting server", () => {
         ...addOnlyTables.flatMap((table) => [`${table}_no_delete`, `${table}_no_update`]),
         "goods_receipt_no_delete",
         "goods_receipt_guard_update",
+        "document_counter_no_delete",
+        "document_counter_only_up",
       ].sort(),
     );
 
@@ -107,6 +113,10 @@ describe("database update tool for the hosting server", () => {
         "stock_count_line_amounts_check",
         "stock_adjustment_line_amounts_check",
         "stock_adjustment_decision_note_check",
+        "sale_amounts_check",
+        "sale_line_amounts_check",
+        "payment_amounts_check",
+        "document_counter_next_check",
       ]),
     );
   });

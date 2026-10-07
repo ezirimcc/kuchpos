@@ -11,7 +11,8 @@ export type NavItem = {
 type NavEntry = { label: string; icon: string; href: string | null; anyOf: Permission[] };
 
 const BUSINESS_MENU: NavEntry[] = [
-  { label: "Sell", icon: "cart", href: null, anyOf: ["sale.create"] },
+  { label: "Sell", icon: "cart", href: "/sell", anyOf: ["sale.create"] },
+  { label: "Sales", icon: "sales", href: "/sales", anyOf: ["report.sales.view", "report.ownShift.view"] },
   { label: "Customers", icon: "customers", href: null, anyOf: ["customer.manage", "customer.balance.view"] },
   { label: "Stock", icon: "stock", href: "/stock", anyOf: ["stock.view"] },
   { label: "Products & Categories", icon: "products", href: "/products", anyOf: ["product.manage", "price.manage", "price.view"] },

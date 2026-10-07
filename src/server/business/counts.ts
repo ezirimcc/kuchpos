@@ -12,6 +12,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { takeDocumentNumber } from "@/server/document-number";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -240,12 +241,7 @@ export async function submitCount(context: AppContext, input: unknown): Promise<
   try {
     return await db.$transaction(
       async (tx) => {
-        const counter = await tx.business.update({
-          where: { id: businessId },
-          data: { nextStockCountNumber: { increment: 1 } },
-          select: { nextStockCountNumber: true },
-        });
-        const number = counter.nextStockCountNumber - 1;
+        const number = await takeDocumentNumber(tx, businessId, "STOCK_COUNT");
 
         const count = await tx.stockCount.create({
           data: {

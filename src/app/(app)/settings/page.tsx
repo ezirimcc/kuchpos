@@ -117,6 +117,16 @@ export default async function SettingsPage() {
                 maxLength={500}
               />
             </div>
+            <div className="max-w-sm">
+              <TextField
+                name="taxNumber"
+                label="Tax number (TIN), optional"
+                hint="Printed on receipts only if filled in"
+                defaultValue={settings.taxNumber}
+                maxLength={40}
+                autoComplete="off"
+              />
+            </div>
             <SubmitButton className="mt-2">Save receipt text</SubmitButton>
           </ActionForm>
         </CardContent>

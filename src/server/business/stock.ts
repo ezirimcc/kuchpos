@@ -12,6 +12,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { takeDocumentNumber } from "@/server/document-number";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 
@@ -24,6 +25,8 @@ import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/re
  */
 
 const MAX_BACKDATE_DAYS = 366;
+/** How many times to try again when the database reports that two savers got in each other's way. */
+const MAX_ATTEMPTS = 3;
 
 // ---------------------------------------------------------------------------
 // What the "receive goods" screen needs
@@ -200,15 +203,16 @@ export async function receiveGoods(context: AppContext, input: unknown): Promise
   // Always in the same order, so two deliveries saved at the same moment cannot block each other.
   const productOrder = [...perProduct.keys()].sort();
 
-  try {
-    return await db.$transaction(
+  const save = () =>
+    db.$transaction(
       async (tx) => {
-        const counter = await tx.business.update({
-          where: { id: businessId },
-          data: { nextGoodsReceiptNumber: { increment: 1 } },
-          select: { nextGoodsReceiptNumber: true },
-        });
-        const number = counter.nextGoodsReceiptNumber - 1;
+        const number = await takeDocumentNumber(tx, businessId, "GOODS_RECEIPT");
+        // Each product's "turn" is taken before anything that refers to the product is written.
+        // (Writing a line first would hold a weaker lock on the product, and asking for the
+        // stronger one afterwards can deadlock with a sale of the same product.)
+        for (const productId of productOrder) {
+          await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
+        }
 
         const receipt = await tx.goodsReceipt.create({
           data: {
@@ -339,16 +343,24 @@ export async function receiveGoods(context: AppContext, input: unknown): Promise
       // product's turn includes any delivery that finished a moment earlier.
       { isolationLevel: "ReadCommitted", timeout: 20_000 },
     );
-  } catch (error) {
-    // The same submission arrived twice at the same moment: return the one that was saved.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const saved = await db.goodsReceipt.findFirst({
-        where: { requestId: data.requestId },
-        select: { id: true, number: true },
-      });
-      if (saved) return { ...saved, alreadySaved: true };
+
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await save();
+    } catch (error) {
+      const known = error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null;
+      // The same submission arrived twice at the same moment: return the one that was saved.
+      if (known === "P2002") {
+        const saved = await db.goodsReceipt.findFirst({
+          where: { requestId: data.requestId },
+          select: { id: true, number: true },
+        });
+        if (saved) return { ...saved, alreadySaved: true };
+      }
+      // Two savers blocked each other and the database undid this one completely: try again.
+      if (known === "P2034" && attempt < MAX_ATTEMPTS) continue;
+      throw error;
     }
-    throw error;
   }
 }
 

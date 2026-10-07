@@ -6,6 +6,7 @@ import * as adjustments from "@/server/business/adjustments";
 import * as catalog from "@/server/business/catalog";
 import * as counts from "@/server/business/counts";
 import * as dashboard from "@/server/business/dashboard";
+import * as sales from "@/server/business/sales";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
 import * as staff from "@/server/business/staff";
@@ -48,6 +49,20 @@ function adjusting(business: World["a"]) {
     requestId: randomUUID(),
     locationId: business.shelfId,
     lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, direction: "add", quantity: "1", reason: "FOUND" }],
+  };
+}
+
+/** A sale by each business's cashier, of stock put on the Shelf for the purpose. */
+let saleInA = "";
+let saleInB = "";
+
+function selling(business: World["a"]) {
+  return {
+    requestId: randomUUID(),
+    terminalId: business.terminalId,
+    expectedTotal: "100.00",
+    tendered: "100",
+    lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "1", unitPrice: "100.00" }],
   };
 }
 
@@ -94,6 +109,11 @@ beforeEach(async () => {
   receiptInB = (await stock.receiveGoods(world.b.as.ADMIN, delivery(world.b))).id;
   transferInA = (await transfers.transferStock(world.a.as.ADMIN, transfer(world.a))).id;
   transferInB = (await transfers.transferStock(world.b.as.ADMIN, transfer(world.b))).id;
+  for (const business of [world.a, world.b]) {
+    await stock.receiveGoods(business.as.ADMIN, { ...delivery(business), locationId: business.shelfId });
+  }
+  saleInA = (await sales.postSale(world.a.as.CASHIER, selling(world.a))).id;
+  saleInB = (await sales.postSale(world.b.as.CASHIER, selling(world.b))).id;
   countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
   countInB = (await counts.submitCount(world.b.as.STOREKEEPER, counted(world.b))).id;
   waitingInA = (await adjustments.recordAdjustment(world.a.as.STOREKEEPER, adjusting(world.a))).id;
@@ -144,6 +164,8 @@ const PRODUCT_MANAGERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER"];
 const RECEIVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
 const DELIVERY_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "STOREKEEPER"];
 const STOCK_MOVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
+const SELLERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "CASHIER"];
+const SALES_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -351,6 +373,33 @@ const OPERATIONS: Operation[] = [
     allowed: DELIVERY_VIEWERS,
     run: (context) => adjustments.getAdjustment(context, { adjustmentId: waitingInA }),
     runAgainstB: (context) => adjustments.getAdjustment(context, { adjustmentId: waitingInB }),
+  },
+  {
+    name: "sales.getCheckoutCatalogue",
+    allowed: SELLERS,
+    run: (context) => sales.getCheckoutCatalogue(context),
+  },
+  {
+    name: "sales.postSale",
+    allowed: SELLERS,
+    run: (context) => sales.postSale(context, selling(world.a)),
+  },
+  {
+    name: "sales.listSales",
+    allowed: SALES_VIEWERS,
+    run: (context) => sales.listSales(context),
+  },
+  {
+    name: "sales.getSale",
+    allowed: SALES_VIEWERS,
+    run: (context) => sales.getSale(context, { saleId: saleInA }),
+    runAgainstB: (context) => sales.getSale(context, { saleId: saleInB }),
+  },
+  {
+    name: "sales.recordReceiptPrint",
+    allowed: SALES_VIEWERS,
+    run: (context) => sales.recordReceiptPrint(context, { saleId: saleInA }),
+    runAgainstB: (context) => sales.recordReceiptPrint(context, { saleId: saleInB }),
   },
   {
     name: "stock.listStockOnHand",
@@ -606,6 +655,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(corrections).map((name) => `corrections.${name}`),
       ...Object.keys(transfers).map((name) => `transfers.${name}`),
       ...Object.keys(counts).map((name) => `counts.${name}`),
+      ...Object.keys(sales).map((name) => `sales.${name}`),
       ...Object.keys(adjustments).map((name) => `adjustments.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),

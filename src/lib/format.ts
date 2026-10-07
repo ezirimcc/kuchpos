@@ -101,6 +101,11 @@ export function receiptNumber(number: number): string {
   return `GR-${String(number).padStart(6, "0")}`;
 }
 
+/** Sales receipt numbers start with the terminal's code: T1-000012. */
+export function saleReceiptNumber(terminalCode: string, sequence: number): string {
+  return `${terminalCode}-${String(sequence).padStart(6, "0")}`;
+}
+
 /** Transfer numbers are shown as TR-000012. */
 export function transferNumber(number: number): string {
   return `TR-${String(number).padStart(6, "0")}`;

@@ -5,7 +5,7 @@ import { listStockOnHand, receiveGoods } from "@/server/business/stock";
 import { getTransfer, getTransferOptions, listTransfers, transferStock } from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
-import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
+import { createWorld, expectBalancesMatchMovements, nextDocumentNumber, type World } from "../support/world";
 
 /** Moving stock between the Storeroom and the Shelf. */
 
@@ -90,7 +90,7 @@ async function everything() {
     lines: await db.stockTransferLine.count(),
     movements: await db.stockMovement.findMany({ orderBy: { id: "asc" } }),
     balances: await db.stockBalance.findMany({ orderBy: { id: "asc" } }),
-    counter: (await db.business.findUniqueOrThrow({ where: { id: world.a.id } })).nextStockTransferNumber,
+    counter: await nextDocumentNumber(world.a.id, "STOCK_TRANSFER"),
     activity: await db.activityLog.count(),
   });
 }
@@ -152,7 +152,7 @@ describe("moving stock", () => {
     const first = await transferStock(world.a.as.ADMIN, toShelf([sachets(world.a.product.baseUnitId, "1")]));
     const second = await transferStock(world.a.as.ADMIN, toShelf([sachets(world.a.product.baseUnitId, "1")]));
     expect([first.number, second.number]).toEqual([1, 2]);
-    expect((await getDb().business.findUniqueOrThrow({ where: { id: world.b.id } })).nextStockTransferNumber).toBe(1);
+    expect(await nextDocumentNumber(world.b.id, "STOCK_TRANSFER")).toBe(1);
 
     const log = await getDb().activityLog.findMany({ where: { action: "stock.transferred" }, orderBy: { createdAt: "asc" } });
     expect(log).toHaveLength(2);

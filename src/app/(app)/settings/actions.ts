@@ -19,7 +19,11 @@ export async function setTaxRateAction(_previous: FormState, formData: FormData)
 
 export async function setReceiptTextAction(_previous: FormState, formData: FormData): Promise<FormState> {
   return runAction({ success: "Receipt text saved." }, (context) =>
-    setReceiptText(context, { header: field(formData, "header"), footer: field(formData, "footer") }),
+    setReceiptText(context, {
+      header: field(formData, "header"),
+      footer: field(formData, "footer"),
+      taxNumber: field(formData, "taxNumber"),
+    }),
   );
 }
 

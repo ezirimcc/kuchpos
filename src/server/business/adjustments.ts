@@ -17,6 +17,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { takeDocumentNumber } from "@/server/document-number";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -181,12 +182,14 @@ async function saveAdjustment(
   const save = () =>
     db.$transaction(
       async (tx) => {
-        const counter = await tx.business.update({
-          where: { id: businessId },
-          data: { nextStockAdjustmentNumber: { increment: 1 } },
-          select: { nextStockAdjustmentNumber: true },
-        });
-        const number = counter.nextStockAdjustmentNumber - 1;
+        const number = await takeDocumentNumber(tx, businessId, "STOCK_ADJUSTMENT");
+        if (appliesAtOnce) {
+          // Each product's "turn" is taken before anything that refers to the product is
+          // written (see receiveGoods for why).
+          for (const productId of [...new Set(input.lines.map((line) => line.productId))].sort()) {
+            await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
+          }
+        }
 
         const adjustment = await tx.stockAdjustment.create({
           data: {

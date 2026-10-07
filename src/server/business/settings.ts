@@ -26,6 +26,8 @@ export type BusinessSettings = {
   taxRatePercent: string;
   receiptHeader: string;
   receiptFooter: string;
+  /** The business's tax number (TIN); printed on receipts only when filled in. */
+  taxNumber: string;
   /** How many months ahead an expiry date counts as "expiring soon". */
   expiringSoonMonths: number;
   taxRateHistory: TaxRateChangeView[];
@@ -41,6 +43,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
       taxRatePercent: true,
       receiptHeader: true,
       receiptFooter: true,
+      taxNumber: true,
       expiringSoonMonths: true,
     },
   });
@@ -56,6 +59,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
     taxRatePercent: business.taxRatePercent.toFixed(2),
     receiptHeader: business.receiptHeader ?? "",
     receiptFooter: business.receiptFooter ?? "",
+    taxNumber: business.taxNumber ?? "",
     expiringSoonMonths: business.expiringSoonMonths,
     taxRateHistory: history.map((entry) => ({
       id: entry.id,
@@ -151,21 +155,32 @@ export async function setTaxRate(context: AppContext, input: unknown): Promise<v
 const receiptTextSchema = z.object({
   header: z.string().trim().max(500, "The top text is too long (500 characters at most)."),
   footer: z.string().trim().max(500, "The bottom text is too long (500 characters at most)."),
+  /** Left out means "leave it as it is". */
+  taxNumber: z.string().trim().max(40, "The tax number is too long (40 characters at most).").optional(),
 });
 
-/** Sets the lines printed at the top and bottom of every receipt. */
+/** Sets the lines printed at the top and bottom of every receipt, and the tax number printed with them. */
 export async function setReceiptText(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "settings.manage");
   const data = parseInput(receiptTextSchema, input);
 
   await businessDb(context).$transaction(async (tx) => {
-    const business = await tx.business.findFirst({ select: { id: true, receiptHeader: true, receiptFooter: true } });
+    const business = await tx.business.findFirst({
+      select: { id: true, receiptHeader: true, receiptFooter: true, taxNumber: true },
+    });
     if (!business) throw new NotFoundError("That business could not be found.");
-    if ((business.receiptHeader ?? "") === data.header && (business.receiptFooter ?? "") === data.footer) return;
+    const taxNumber = data.taxNumber ?? business.taxNumber ?? "";
+    if (
+      (business.receiptHeader ?? "") === data.header &&
+      (business.receiptFooter ?? "") === data.footer &&
+      (business.taxNumber ?? "") === taxNumber
+    ) {
+      return;
+    }
 
     await tx.business.update({
       where: { id: business.id },
-      data: { receiptHeader: data.header || null, receiptFooter: data.footer || null },
+      data: { receiptHeader: data.header || null, receiptFooter: data.footer || null, taxNumber: taxNumber || null },
     });
     await tx.activityLog.create({
       data: activityRow(context, {

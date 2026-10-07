@@ -11,6 +11,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { takeDocumentNumber } from "@/server/document-number";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -223,12 +224,12 @@ export async function transferStock(context: AppContext, input: unknown): Promis
   const save = () =>
     db.$transaction(
       async (tx) => {
-        const counter = await tx.business.update({
-          where: { id: businessId },
-          data: { nextStockTransferNumber: { increment: 1 } },
-          select: { nextStockTransferNumber: true },
-        });
-        const number = counter.nextStockTransferNumber - 1;
+        const number = await takeDocumentNumber(tx, businessId, "STOCK_TRANSFER");
+        // Each product's "turn" is taken before anything that refers to the product is written
+        // (see receiveGoods for why).
+        for (const productId of productOrder) {
+          await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
+        }
 
         const transfer = await tx.stockTransfer.create({
           data: {

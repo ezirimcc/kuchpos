@@ -178,7 +178,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ## Phase C — Selling
 
-### M8 · Checkout: cash sale
+### M8 · Checkout: cash sale — built 2026-10-07, awaiting owner's check
 **Goal:** The core of the system — a correct, fast, safe cash sale.
 - Checkout screen: search by name/code/barcode, pick unit and quantity, running total, keyboard-friendly.
 - **Built offline-ready from the start:** the screen works from a copy of the product list and prices held in the browser, and sends a complete sale to the server in one message. (The offline queue itself comes in M12.)
@@ -186,7 +186,9 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - Sale + lines + stock movements + payment saved in one all-or-nothing step, with snapshots of unit name, conversion, price, tax rate and cost.
 - Unique sale ID created on the cashier's computer; receipt number = terminal code + running number.
 - Tax worked out from the tax-inclusive price at the business's rate at the moment of sale, for taxable products only, stored on each line (nothing shown while the rate is 0%).
-- Printable receipt in both 58 mm and 80 mm layouts, chosen by the terminal's setting.
+- Printable receipt in both 58 mm and 80 mm layouts, chosen by the terminal's setting. Contents per C44; prints by itself after a sale, later prints are marked REPRINT and logged (C45).
+- Sales list and sale page: a cashier sees their own sales, sales-report readers see all; cost and profit only for those who may see costs. "Sales today" on the home page.
+- Managers, admins and owners may take a line straight from the Storeroom (P7).
 
 **Accept when:**
 - 🧑 Selling 1 carton + 3 singles reduces Shelf by 103 singles and the receipt shows both lines at their own prices.
@@ -199,6 +201,9 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 At 7.5%, a taxable line of ₦1,075.00 records ₦75.00 tax; a non-taxable line records ₦0.00; the customer pays the shelf price either way.
 - 🤖 A sale whose price was tampered with in the browser is refused by the server.
 - 🤖 A cashier of Business A cannot sell Business B's products or stock.
+- 🤖 The same sale sent again, or five times at the same instant, is saved once; receipt numbers have no gaps.
+- 🤖 A total that is not the sum of the lines, too little cash, or more than the Shelf holds: refused, nothing saved.
+- 🤖 A cashier cannot open another cashier's sale; a storekeeper cannot sell or see sales.
 
 **You do:** Answer Q14 (receipt contents) before this starts. *(Answered 2026-10-07: C44, C45.)*
 

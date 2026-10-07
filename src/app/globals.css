@@ -149,3 +149,45 @@
     background-image: linear-gradient(160deg, var(--brand-from) 0%, var(--brand-to) 78%);
   }
 }
+
+/*
+ * Printing a receipt: only the receipt itself goes to the printer, at the top-left of the
+ * paper, with no page margins (a receipt printer has its own). Everything else on the
+ * screen — menu, buttons, the rest of the page — is left out.
+ */
+@media print {
+  @page {
+    margin: 0;
+  }
+  body:has(.receipt-paper) {
+    background: #fff !important;
+  }
+  body:has(.receipt-paper) * {
+    visibility: hidden !important;
+  }
+  body:has(.receipt-paper) .receipt-paper,
+  body:has(.receipt-paper) .receipt-paper * {
+    visibility: visible !important;
+  }
+  body:has(.receipt-paper) .receipt-paper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    margin: 0;
+    box-shadow: none;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    color: #000;
+  }
+}
+
+/* The printable width of the two paper sizes (the paper is a little wider than what the head can print). */
+.receipt-paper[data-width="MM58"] {
+  width: 48mm;
+  font-size: 10.5px;
+}
+.receipt-paper[data-width="MM80"] {
+  width: 72mm;
+  font-size: 12px;
+}

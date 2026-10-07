@@ -22,6 +22,11 @@ export type DashboardSnapshot = {
   recentActivity: ActivityItem[] | null;
   /** Stock adjustments waiting for a decision — those who may approve them. */
   adjustmentsWaiting: number | null;
+  /**
+   * Sales since the start of the shop's day: every sale for those who may see the sales
+   * report, the person's own for a cashier, nothing for anyone else.
+   */
+  salesToday: { count: number; total: string; ownOnly: boolean } | null;
 };
 
 export async function getDashboard(context: AppContext): Promise<DashboardSnapshot> {
@@ -31,7 +36,10 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
   const seesActivity = can(context, "activityLog.view");
   const startOfToday = shopDayStart(shopToday()) ?? new Date();
 
-  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting] = await Promise.all([
+  const seesAllSales = can(context, "report.sales.view");
+  const seesSales = seesAllSales || can(context, "report.ownShift.view");
+
+  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday] = await Promise.all([
     db.product.count({ where: { deactivatedAt: null } }),
     db.category.count(),
     db.business.findFirst({ select: { taxRatePercent: true } }),
@@ -45,6 +53,13 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
         })
       : null,
     can(context, "stock.adjust.approve") ? db.stockAdjustment.count({ where: { decision: null } }) : null,
+    seesSales
+      ? db.sale.aggregate({
+          where: { createdAt: { gte: startOfToday }, ...(seesAllSales ? {} : { cashierUserId: context.actor.userId }) },
+          _count: { _all: true },
+          _sum: { total: true },
+        })
+      : null,
   ]);
 
   return {
@@ -55,5 +70,8 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     activityToday,
     recentActivity,
     adjustmentsWaiting,
+    salesToday: salesToday
+      ? { count: salesToday._count._all, total: salesToday._sum.total?.toFixed(2) ?? "0.00", ownOnly: !seesAllSales }
+      : null,
   };
 }

@@ -1,8 +1,10 @@
 "use client";
 
-import { RefreshCw, Search, Trash2 } from "lucide-react";
+import { Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { rememberTerminal, useRememberedTerminal } from "@/components/terminal-choice";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,15 +19,13 @@ import { postSaleAction } from "../sales/actions";
 
 type CartLine = { key: string; productId: string; unitId: string; quantity: string; fromStoreroom: boolean };
 
-const TERMINAL_CHOICE = "kuchpos_terminal";
-const MAX_MATCHES = 8;
+/**
+ * One part of how the sale is paid. With a single part its amount is the whole total and is
+ * not typed; when the payment is split, each part's amount is typed.
+ */
+type PaymentPart = { key: string; methodId: string; amount: string; tendered: string; reference: string };
 
-/** Which terminal this computer said it is, kept in the browser. Empty while the server draws the page. */
-function onStorageChange(callback: () => void) {
-  window.addEventListener("storage", callback);
-  return () => window.removeEventListener("storage", callback);
-}
-const rememberedTerminal = () => window.localStorage.getItem(TERMINAL_CHOICE);
+const MAX_MATCHES = 8;
 
 const isQuantity = (text: string) => /^\d+(\.\d{1,3})?$/.test(text.trim()) && new Decimal(text.trim()).greaterThan(0);
 const isMoney = (text: string) => /^\d+(\.\d{1,2})?$/.test(text.trim());
@@ -41,7 +41,7 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
   // The sale's unique ID, made up here before anything is sent: pressing the button many
   // times, or the network repeating itself, can only ever save this sale once.
   const [requestId, setRequestId] = useState(() => crypto.randomUUID());
-  const remembered = useSyncExternalStore(onStorageChange, rememberedTerminal, () => null);
+  const remembered = useRememberedTerminal();
   const [chosenTerminal, setChosenTerminal] = useState<string | null>(null);
   // This computer remembers which terminal it is. With one terminal there is nothing to choose;
   // with several, nothing is assumed: receipt numbers belong to the terminal, so the person
@@ -52,7 +52,9 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
   const [lines, setLines] = useState<CartLine[]>([]);
   const [search, setSearch] = useState("");
   const [highlighted, setHighlighted] = useState(0);
-  const [tendered, setTendered] = useState("");
+  const [parts, setParts] = useState<PaymentPart[]>(() => [
+    { key: "first", methodId: catalogue.paymentMethods[0]?.id ?? "", amount: "", tendered: "", reference: "" },
+  ]);
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const searchBox = useRef<HTMLInputElement>(null);
@@ -101,7 +103,7 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
 
   function changeTerminal(id: string) {
     setChosenTerminal(id);
-    window.localStorage.setItem(TERMINAL_CHOICE, id);
+    rememberTerminal(id);
   }
 
   function add(product: CheckoutProduct) {
@@ -161,10 +163,51 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
   });
   const allValid = view.length > 0 && view.every((entry) => entry.amount !== null);
   const total = allValid ? sumMoney(view.map((entry) => entry.amount!)) : null;
-  const cash = isMoney(tendered) ? new Decimal(tendered.trim()) : null;
-  const changeDue = total && cash && cash.greaterThanOrEqualTo(total) ? cash.minus(total) : null;
-  const short = total && cash && cash.lessThan(total) ? total.minus(cash) : null;
-  const ready = !!total && !!cash && !short && terminalId !== "";
+
+  // --- How it is paid ----------------------------------------------------------------
+  const split = parts.length > 1;
+  const methodOf = (part: PaymentPart) => catalogue.paymentMethods.find((method) => method.id === part.methodId);
+  const paid = parts.map((part) => {
+    const method = methodOf(part);
+    const isCash = method?.kind === "CASH";
+    // A single payment is for the whole total; a split one is for what was typed.
+    const amount = split ? (isMoney(part.amount) && new Decimal(part.amount.trim()).greaterThan(0) ? new Decimal(part.amount.trim()) : null) : total;
+    // Cash handed over. When the payment is split it may be left empty, meaning "exactly its amount".
+    const typed = part.tendered.trim();
+    const received = !isCash ? null : typed === "" ? (split ? amount : null) : isMoney(typed) ? new Decimal(typed) : null;
+    const short = isCash && amount && received && received.lessThan(amount) ? amount.minus(received) : null;
+    const badCash = isCash && typed !== "" && !isMoney(typed);
+    const sound = !!method && !!amount && (!isCash || (!!received && !short));
+    return { part, method, isCash, amount, received, short, badCash, sound };
+  });
+  const paidSoFar = paid.every((entry) => entry.amount) ? sumMoney(paid.map((entry) => entry.amount!)) : null;
+  const leftToPay = total && paidSoFar ? total.minus(paidSoFar) : null;
+  const changeDue =
+    total && paid.every((entry) => entry.sound)
+      ? sumMoney(paid.filter((entry) => entry.isCash).map((entry) => entry.received!.minus(entry.amount!)))
+      : null;
+  const hasCash = paid.some((entry) => entry.isCash);
+  const terminal = catalogue.terminals.find((candidate) => candidate.id === terminalId);
+  const tillClosed = !!terminal && !terminal.tillOpen;
+  const ready = !!total && paid.every((entry) => entry.sound) && !!leftToPay && leftToPay.isZero() && !!terminal && !tillClosed;
+
+  function changePart(key: string, patch: Partial<PaymentPart>) {
+    setErrors({});
+    setParts((current) => current.map((part) => (part.key === key ? { ...part, ...patch } : part)));
+  }
+
+  function addPart() {
+    setErrors({});
+    setParts((current) => {
+      const unused = catalogue.paymentMethods.find((method) => !current.some((part) => part.methodId === method.id));
+      return [...current, { key: crypto.randomUUID(), methodId: unused?.id ?? "", amount: "", tendered: "", reference: "" }];
+    });
+  }
+
+  function removePart(key: string) {
+    setErrors({});
+    setParts((current) => (current.length === 1 ? current : current.filter((part) => part.key !== key)));
+  }
 
   function complete(event: React.FormEvent) {
     event.preventDefault();
@@ -177,7 +220,12 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
         terminalId,
         deviceTime: new Date().toISOString(),
         expectedTotal: moneyToString(total),
-        tendered: tendered.trim(),
+        payments: paid.map(({ part, isCash, amount }) => ({
+          methodId: part.methodId,
+          amount: moneyToString(amount!),
+          tendered: isCash ? part.tendered.trim() : "",
+          reference: isCash ? "" : part.reference.trim(),
+        })),
         lines: view.map(({ line, unit }) => ({
           productId: line.productId,
           unitId: line.unitId,
@@ -407,39 +455,133 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
             )}
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="tendered">Cash received (₦)</Label>
-            <div className="flex gap-2">
-              <Input
-                id="tendered"
-                ref={cashBox}
-                value={tendered}
-                onChange={(event) => {
-                  setTendered(event.target.value);
-                  setErrors({});
-                }}
-                inputMode="decimal"
-                autoComplete="off"
-                aria-invalid={!!errors.tendered || !!short}
-                className="h-12 text-right text-lg tabular-nums"
-              />
-              <Button type="button" variant="outline" className="h-12 shrink-0" disabled={!total} onClick={() => total && setTendered(moneyToString(total))}>
-                Exact
+          {tillClosed && (
+            <Alert variant="destructive" data-testid="till-closed">
+              The till of {terminal!.code} is not open, so nothing can be sold here yet.{" "}
+              <Link href={`/till?terminal=${terminal!.id}`} className="font-medium underline underline-offset-4">
+                Open the till
+              </Link>
+            </Alert>
+          )}
+
+          <div className="flex flex-col gap-3">
+            {paid.map(({ part, isCash, amount, short, badCash }, index) => {
+              const at = (field: string) => errors[`payments.${index}.${field}`];
+              // The box the cursor goes to when the cashier moves on to paying.
+              const first = index === 0;
+              return (
+                <div key={part.key} data-testid={`payment-${index + 1}`} className="flex flex-col gap-2 rounded-2xl border p-3">
+                  <div className="flex items-end gap-2">
+                    <div className="flex flex-1 flex-col gap-1.5">
+                      <Label htmlFor={`method-${part.key}`}>{split ? `Payment ${index + 1}: paid by` : "Paid by"}</Label>
+                      <NativeSelect
+                        id={`method-${part.key}`}
+                        value={part.methodId}
+                        onChange={(event) => changePart(part.key, { methodId: event.target.value, tendered: "", reference: "" })}
+                        aria-invalid={!!at("methodId")}
+                      >
+                        {catalogue.paymentMethods.map((method) => (
+                          <option key={method.id} value={method.id}>
+                            {method.name}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                    {split && (
+                      <Button type="button" variant="ghost" size="icon" onClick={() => removePart(part.key)} aria-label={`Remove payment ${index + 1}`} title="Remove this payment">
+                        <X className="size-4" aria-hidden />
+                      </Button>
+                    )}
+                  </div>
+                  {at("methodId") && <p className="text-xs text-destructive">{at("methodId")}</p>}
+
+                  {split && (
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`amount-${part.key}`}>Amount (₦)</Label>
+                      <Input
+                        id={`amount-${part.key}`}
+                        ref={first ? cashBox : undefined}
+                        value={part.amount}
+                        onChange={(event) => changePart(part.key, { amount: event.target.value })}
+                        inputMode="decimal"
+                        autoComplete="off"
+                        aria-invalid={!!at("amount") || (part.amount.trim() !== "" && !amount)}
+                        className="text-right tabular-nums"
+                      />
+                      {at("amount") && <p className="text-xs text-destructive">{at("amount")}</p>}
+                    </div>
+                  )}
+
+                  {isCash ? (
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`tendered-${part.key}`}>{split ? "Cash received (₦), if more than the amount" : "Cash received (₦)"}</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id={`tendered-${part.key}`}
+                          ref={first && !split ? cashBox : undefined}
+                          value={part.tendered}
+                          onChange={(event) => changePart(part.key, { tendered: event.target.value })}
+                          inputMode="decimal"
+                          autoComplete="off"
+                          aria-invalid={!!at("tendered") || !!short || badCash}
+                          className={split ? "text-right tabular-nums" : "h-12 text-right text-lg tabular-nums"}
+                        />
+                        {!split && (
+                          <Button type="button" variant="outline" className="h-12 shrink-0" disabled={!total} onClick={() => total && changePart(part.key, { tendered: moneyToString(total) })}>
+                            Exact
+                          </Button>
+                        )}
+                      </div>
+                      {at("tendered") && <p className="text-xs text-destructive">{at("tendered")}</p>}
+                      {!at("tendered") && short && <p className="text-xs text-destructive">{formatNaira(short)} short.</p>}
+                      {!at("tendered") && badCash && (
+                        <p className="text-xs text-destructive">Enter a plain amount, for example 5000 or 5000.50 (no commas).</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`reference-${part.key}`}>Reference (optional)</Label>
+                      <Input
+                        id={`reference-${part.key}`}
+                        ref={first && !split ? cashBox : undefined}
+                        value={part.reference}
+                        onChange={(event) => changePart(part.key, { reference: event.target.value })}
+                        autoComplete="off"
+                        maxLength={60}
+                        placeholder="For example the transfer or POS slip number"
+                        aria-invalid={!!at("reference")}
+                      />
+                      {at("reference") && <p className="text-xs text-destructive">{at("reference")}</p>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {catalogue.paymentMethods.length > parts.length && (
+              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={addPart}>
+                <Plus className="size-4" aria-hidden /> {split ? "Add another payment" : "Split the payment"}
               </Button>
-            </div>
-            {errors.tendered && <p className="text-xs text-destructive">{errors.tendered}</p>}
-            {!errors.tendered && short && <p className="text-xs text-destructive">{formatNaira(short)} short.</p>}
-            {!errors.tendered && tendered.trim() !== "" && !cash && (
-              <p className="text-xs text-destructive">Enter a plain amount, for example 5000 or 5000.50 (no commas).</p>
             )}
+            {split && (
+              <p className="flex items-baseline justify-between px-1 text-sm" data-testid="left-to-pay">
+                <span className="text-muted-foreground">Left to pay</span>
+                <span className={leftToPay && leftToPay.isZero() ? "font-semibold tabular-nums" : "font-semibold text-destructive tabular-nums"}>
+                  {leftToPay ? formatNaira(leftToPay) : "—"}
+                </span>
+              </p>
+            )}
+            {errors.payments && <p className="text-xs text-destructive">{errors.payments}</p>}
           </div>
 
-          <div className="flex items-baseline justify-between rounded-2xl bg-muted px-4 py-3">
-            <span className="text-sm text-muted-foreground">Change to give</span>
-            <span className="text-2xl font-semibold tabular-nums" data-testid="change-due">
-              {changeDue ? formatNaira(changeDue) : "—"}
-            </span>
-          </div>
+          {hasCash && (
+            <div className="flex items-baseline justify-between rounded-2xl bg-muted px-4 py-3">
+              <span className="text-sm text-muted-foreground">Change to give</span>
+              <span className="text-2xl font-semibold tabular-nums" data-testid="change-due">
+                {changeDue ? formatNaira(changeDue) : "—"}
+              </span>
+            </div>
+          )}
 
           {message && <Alert variant="destructive">{message}</Alert>}
           {errors.expectedTotal && <Alert variant="destructive">{errors.expectedTotal}</Alert>}
@@ -454,8 +596,8 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
             {pending ? "Saving…" : "Complete sale"}
           </Button>
           <p className="text-xs text-muted-foreground">
-            Enter in the cash box completes the sale. Nothing is saved until then, and a sale is saved once however many
-            times the button is pressed.
+            Enter in the payment box completes the sale. Nothing is saved until then, and a sale is saved once however
+            many times the button is pressed.
           </p>
         </CardContent>
       </Card>

@@ -106,6 +106,11 @@ export function saleReceiptNumber(terminalCode: string, sequence: number): strin
   return `${terminalCode}-${String(sequence).padStart(6, "0")}`;
 }
 
+/** Till session numbers are shown as TS-000012. */
+export function tillSessionNumber(number: number): string {
+  return `TS-${String(number).padStart(6, "0")}`;
+}
+
 /** Transfer numbers are shown as TR-000012. */
 export function transferNumber(number: number): string {
   return `TR-${String(number).padStart(6, "0")}`;

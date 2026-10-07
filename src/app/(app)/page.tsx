@@ -30,7 +30,6 @@ const SHORTCUTS: { href: string; title: string; text: string; icon: LucideIcon; 
 
 // Figures that will appear here as each part of KuchPos is built.
 const COMING: { title: string; icon: LucideIcon; needs: Permission }[] = [
-  { title: "Collected today", icon: Wallet, needs: "report.collections.view" },
   { title: "Owed by customers", icon: HandCoins, needs: "report.customerDebt.view" },
 ];
 
@@ -128,6 +127,15 @@ export default async function HomePage() {
             value={nairaFromText(snapshot.salesToday.total)}
             note={`${snapshot.salesToday.count.toLocaleString("en-NG")} sale${snapshot.salesToday.count === 1 ? "" : "s"} since midnight`}
             icon={ChartColumn}
+          />
+        )}
+        {snapshot.collectedToday !== null && (
+          <Stat
+            testId="stat-collected-today"
+            title="Collected today"
+            value={nairaFromText(snapshot.collectedToday.total)}
+            note={`${nairaFromText(snapshot.collectedToday.cash)} of it in cash`}
+            icon={Wallet}
           />
         )}
         {snapshot.staff !== null && (

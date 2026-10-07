@@ -5,6 +5,7 @@ import { getCheckoutCatalogue, getSale, listSales, postSale, recordReceiptPrint 
 import { setTaxRate } from "@/server/business/settings";
 import { createTerminal, setTerminalActive } from "@/server/business/setup";
 import { receiveGoods } from "@/server/business/stock";
+import { openTill } from "@/server/business/till";
 import { transferStock } from "@/server/business/transfers";
 import { recordAdjustment } from "@/server/business/adjustments";
 import type { AppContext } from "@/server/auth/context";
@@ -31,6 +32,9 @@ beforeEach(async () => {
   ).id;
   await deliver(world.a, world.a.shelfId, [{ productId: world.a.product.id, unitId: cartonId, quantity: "2", unitCost: "5000" }]);
   await deliver(world.a, world.a.storeroomId, [{ productId: world.a.product.id, unitId: cartonId, quantity: "1", unitCost: "5000" }]);
+  // Selling needs an open till at the terminal.
+  await openTill(world.a.as.CASHIER, { terminalId: world.a.terminalId, openingFloat: "0" });
+  await openTill(world.b.as.CASHIER, { terminalId: world.b.terminalId, openingFloat: "0" });
 });
 
 // The golden rule, checked after every single test in this file.
@@ -54,8 +58,34 @@ const singles = (quantity: string): Line => ({ productId: world.a.product.id, un
 const packs = (quantity: string): Line => ({ productId: world.a.product.id, unitId: world.a.product.packUnitId, quantity, unitPrice: "900.00" });
 const cartons = (quantity: string): Line => ({ productId: world.a.product.id, unitId: cartonId, quantity, unitPrice: "8500.00" });
 
+/** A sale paid in cash: `tendered` is what the customer hands over. */
 function sale(lines: Line[], expectedTotal: string, tendered = expectedTotal, extra: Record<string, unknown> = {}) {
-  return { requestId: randomUUID(), terminalId: world.a.terminalId, expectedTotal, tendered, lines, ...extra };
+  return {
+    requestId: randomUUID(),
+    terminalId: world.a.terminalId,
+    expectedTotal,
+    payments: [{ methodId: world.a.cashMethodId, amount: expectedTotal, tendered }],
+    lines,
+    ...extra,
+  };
+}
+
+/** The same for business B: one single at ₦100, paid exactly, in cash. */
+function saleInB() {
+  return {
+    requestId: randomUUID(),
+    terminalId: world.b.terminalId,
+    expectedTotal: "100.00",
+    payments: [{ methodId: world.b.cashMethodId, amount: "100.00" }],
+    lines: [{ productId: world.b.product.id, unitId: world.b.product.baseUnitId, quantity: "1", unitPrice: "100.00" }],
+  };
+}
+
+/** A second checkout terminal in business A, with its till open. */
+async function secondTill(paperWidth: "MM58" | "MM80" = "MM80") {
+  const terminal = await createTerminal(world.a.as.ADMIN, { code: "T2", name: "Second till", paperWidth });
+  await openTill(world.a.as.MANAGER, { terminalId: terminal.id, openingFloat: "0" });
+  return terminal;
 }
 
 async function held(locationId: string, productId = world.a.product.id): Promise<string> {
@@ -99,13 +129,14 @@ async function everything() {
 describe("a cash sale", () => {
   it("of 1 carton + 3 singles takes 103 singles off the Shelf and records both lines at their own prices", async () => {
     const result = await postSale(world.a.as.CASHIER, sale([cartons("1"), singles("3")], "8800.00", "10000"));
-    expect(result).toMatchObject({ receiptNumber: "T1-000001", total: "8800.00", tendered: "10000.00", change: "1200.00", alreadySaved: false });
+    expect(result).toMatchObject({ receiptNumber: "T1-000001", total: "8800.00", change: "1200.00", alreadySaved: false });
 
     expect(await onShelf()).toBe("97.000");
     expect(await held(world.a.storeroomId)).toBe("100.000");
 
     const detail = await getSale(world.a.as.CASHIER, { saleId: result.id });
-    expect(detail).toMatchObject({ receiptNumber: "T1-000001", cashierName: "Test a.cashier", terminalCode: "T1", total: "8800.00", tendered: "10000.00", change: "1200.00", taxTotal: "0.00", printCount: 0 });
+    expect(detail).toMatchObject({ receiptNumber: "T1-000001", cashierName: "Test a.cashier", terminalCode: "T1", total: "8800.00", change: "1200.00", taxTotal: "0.00", printCount: 0 });
+    expect(detail.payments).toEqual([{ methodName: "Cash", kind: "CASH", amount: "8800.00", tendered: "10000.00", change: "1200.00", reference: null }]);
     expect(detail.lines).toEqual([
       { lineNumber: 1, productName: "A Seed Sachet", unitName: "carton", quantity: "1.000", baseQuantity: "100.000", unitPrice: "8500.00", lineTotal: "8500.00", taxAmount: "0.00", locationName: "Shelf" },
       { lineNumber: 2, productName: "A Seed Sachet", unitName: "single", quantity: "3.000", baseQuantity: "3.000", unitPrice: "100.00", lineTotal: "300.00", taxAmount: "0.00", locationName: "Shelf" },
@@ -117,7 +148,7 @@ describe("a cash sale", () => {
       ["SALE", world.a.shelfId, "-3.000", "single", "T1-000001", "Test a.cashier"],
     ]);
     const payments = await getDb().payment.findMany({ where: { saleId: result.id } });
-    expect(payments.map((payment) => [payment.method, payment.amount.toFixed(2), payment.tendered?.toFixed(2), payment.changeGiven?.toFixed(2), payment.receivedByName])).toEqual([
+    expect(payments.map((payment) => [payment.kind, payment.amount.toFixed(2), payment.tendered?.toFixed(2), payment.changeGiven?.toFixed(2), payment.receivedByName])).toEqual([
       ["CASH", "8800.00", "10000.00", "1200.00", "Test a.cashier"],
     ]);
   });
@@ -156,7 +187,7 @@ describe("a cash sale", () => {
   });
 
   it("numbers receipts per terminal, without gaps, and separately in each business", async () => {
-    const second = await createTerminal(world.a.as.ADMIN, { code: "T2", name: "Second till", paperWidth: "MM58" });
+    const second = await secondTill("MM58");
     const numbers = [];
     numbers.push((await postSale(world.a.as.CASHIER, sale([singles("1")], "100.00"))).receiptNumber);
     numbers.push((await postSale(world.a.as.CASHIER, sale([singles("1")], "100.00", "100.00", { terminalId: second.id }))).receiptNumber);
@@ -166,13 +197,7 @@ describe("a cash sale", () => {
     expect(numbers).toEqual(["T1-000001", "T2-000001", "T1-000002", "T1-000003"]);
 
     await deliver(world.b, world.b.shelfId, [{ productId: world.b.product.id, unitId: world.b.product.baseUnitId, quantity: "5", unitCost: "50" }]);
-    const inB = await postSale(world.b.as.CASHIER, {
-      requestId: randomUUID(),
-      terminalId: world.b.terminalId,
-      expectedTotal: "100.00",
-      tendered: "100",
-      lines: [{ productId: world.b.product.id, unitId: world.b.product.baseUnitId, quantity: "1", unitPrice: "100.00" }],
-    });
+    const inB = await postSale(world.b.as.CASHIER, saleInB());
     expect(inB.receiptNumber).toBe("T1-000001");
     expect((await getSale(world.a.as.ADMIN, { saleId: (await listSales(world.a.as.ADMIN)).sales[2].id })).paperWidth).toBe("MM58");
   });
@@ -268,9 +293,9 @@ describe("the server trusts nothing the browser says about money", () => {
     expect((await refusal(postSale(world.a.as.CASHIER, sale([cartons("1"), singles("3")], "8500.00", "9000")))).fieldErrors).toHaveProperty("expectedTotal");
     expect((await refusal(postSale(world.a.as.CASHIER, sale([cartons("1")], "eight thousand", "9000")))).fieldErrors).toHaveProperty("expectedTotal");
     const short = (await refusal(postSale(world.a.as.CASHIER, sale([cartons("1")], "8500.00", "8000")))).fieldErrors;
-    expect(short.tendered).toBe("The total is ₦8,500.00. The cash received is ₦500.00 short.");
-    for (const tendered of ["", "plenty", "-1", "9,000"]) {
-      expect((await refusal(postSale(world.a.as.CASHIER, sale([cartons("1")], "8500.00", tendered)))).fieldErrors, tendered).toHaveProperty("tendered");
+    expect(short["payments.0.tendered"]).toBe("The cash received is ₦500.00 short of ₦8,500.00.");
+    for (const tendered of ["plenty", "-1", "9,000"]) {
+      expect((await refusal(postSale(world.a.as.CASHIER, sale([cartons("1")], "8500.00", tendered)))).fieldErrors, tendered).toHaveProperty(["payments.0.tendered"]);
     }
     expect(await everything()).toBe(before);
   });
@@ -288,7 +313,7 @@ describe("the server trusts nothing the browser says about money", () => {
     expect(await attempt(sale([singles("1")], "100.00", "100", { requestId: "nope" }))).toEqual(["requestId"]);
     expect(await everything()).toBe(before);
 
-    const second = await createTerminal(world.a.as.ADMIN, { code: "T2", name: "Second till", paperWidth: "MM80" });
+    const second = await secondTill();
     await setTerminalActive(world.a.as.ADMIN, { terminalId: second.id, active: false });
     expect(await attempt(sale([singles("1")], "100.00", "100", { terminalId: second.id }))).toEqual(["terminalId"]);
     await retireUnit(world.a.as.ADMIN, { unitId: cartonId });
@@ -354,7 +379,7 @@ describe("several tills at once, and repeated submissions", () => {
   it("two sales of the last unit at the same instant: one succeeds, one is refused, stock ends at exactly 0", async () => {
     await postSale(world.a.as.CASHIER, sale([singles("199")], "19900.00"));
     expect(await onShelf()).toBe("1.000");
-    const second = await createTerminal(world.a.as.ADMIN, { code: "T2", name: "Second till", paperWidth: "MM80" });
+    const second = await secondTill();
 
     const outcomes = await Promise.allSettled([
       postSale(world.a.as.CASHIER, sale([singles("1")], "100.00")),
@@ -372,7 +397,7 @@ describe("several tills at once, and repeated submissions", () => {
   });
 
   it("stays exact through many sales, a delivery and a price check at the same instant", async () => {
-    const second = await createTerminal(world.a.as.ADMIN, { code: "T2", name: "Second till", paperWidth: "MM80" });
+    const second = await secondTill();
     const results = await Promise.all([
       ...Array.from({ length: 6 }, () => postSale(world.a.as.CASHIER, sale([singles("7")], "700.00"))),
       ...Array.from({ length: 6 }, () => postSale(world.a.as.MANAGER, sale([packs("1")], "900.00", "900.00", { terminalId: second.id }))),
@@ -389,7 +414,7 @@ describe("several tills at once, and repeated submissions", () => {
 
 describe("a busy shop", () => {
   it("sales, deliveries, transfers and adjustments of one product all at the same instant: every one is saved, and the stock is exact", async () => {
-    const second = await createTerminal(world.a.as.ADMIN, { code: "T2", name: "Second till", paperWidth: "MM80" });
+    const second = await secondTill();
     const single = world.a.product.baseUnitId;
     const work: Promise<unknown>[] = [];
     for (let round = 0; round < 4; round++) {
@@ -500,14 +525,14 @@ describe("who may sell and see sales, and business separation", () => {
     expect(await everything()).toBe(before);
     expect(await held(world.b.shelfId, world.b.product.id)).toBe("5.000");
 
-    const inB = await postSale(world.b.as.CASHIER, { requestId: randomUUID(), terminalId: world.b.terminalId, expectedTotal: "100.00", tendered: "100", lines: [theirLine] });
+    const inB = await postSale(world.b.as.CASHIER, saleInB());
     await expect(getSale(world.a.as.ADMIN, { saleId: inB.id })).rejects.toBeInstanceOf(NotFoundError);
     expect((await listSales(world.a.as.ADMIN)).sales).toEqual([]);
     expect((await getCheckoutCatalogue(world.a.as.CASHIER)).products.map((product) => product.name)).toEqual(["A Seed Sachet"]);
     // The same sale ID used in another business is simply a different sale there.
     const request = sale([singles("1")], "100.00");
     await postSale(world.a.as.CASHIER, request);
-    await postSale(world.b.as.CASHIER, { ...request, terminalId: world.b.terminalId, lines: [theirLine] });
+    await postSale(world.b.as.CASHIER, { ...saleInB(), requestId: request.requestId });
     expect(await getDb().sale.count()).toBe(3);
   });
 });
@@ -517,7 +542,11 @@ describe("the checkout's copy of the catalogue, and receipts", () => {
     await createProduct(world.a.as.ADMIN, { name: "Not For Sale", code: "", barcode: "", baseUnitName: "piece", allowsFraction: false, taxable: true, tracksBatch: false, tracksExpiry: false, baseForSale: false, basePrice: "" });
     const catalogue = await getCheckoutCatalogue(world.a.as.CASHIER);
     expect(catalogue).toMatchObject({ businessName: "Business A", taxRatePercent: "0.00" });
-    expect(catalogue.terminals).toEqual([{ id: world.a.terminalId, code: "T1", name: expect.any(String) }]);
+    expect(catalogue.terminals).toEqual([{ id: world.a.terminalId, code: "T1", name: expect.any(String), tillOpen: true }]);
+    expect(catalogue.paymentMethods).toEqual([
+      { id: world.a.cashMethodId, name: "Cash", kind: "CASH" },
+      { id: world.a.transferMethodId, name: "Bank transfer", kind: "TRANSFER" },
+    ]);
     expect(catalogue.products).toHaveLength(1);
     expect(catalogue.products[0]).toMatchObject({ name: "A Seed Sachet", code: "A-001", allowsFraction: false, baseUnitName: "single", onShelf: "200.000", inStoreroom: "100.000" });
     expect(catalogue.products[0].units.map((unit) => [unit.name, unit.factor, unit.price])).toEqual([

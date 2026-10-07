@@ -69,6 +69,9 @@ model Business {
   stockAdjustmentLines StockAdjustmentLine[]
   stockAdjustmentDecisions StockAdjustmentDecision[]
   documentCounters DocumentCounter[]
+  paymentMethods PaymentMethod[]
+  tillSessions  TillSession[]
+  tillSessionCloses TillSessionClose[]
   sales         Sale[]
   saleLines     SaleLine[]
   payments      Payment[]
@@ -252,6 +255,7 @@ model Terminal {
   updatedAt     DateTime   @updatedAt @db.DateTime(3)
 
   sales         Sale[]
+  tillSessions  TillSession[]
 
   @@unique([businessId, code])
   @@map("terminal")
@@ -853,6 +857,9 @@ model Sale {
   deviceTime      DateTime? @db.DateTime(3)
   /// Server time when it was saved.
   createdAt       DateTime @default(now()) @db.DateTime(3)
+  /// The till session it was sold in. Empty only for sales made before till sessions existed.
+  tillSessionId   String?  @db.Char(36)
+  tillSession     TillSession? @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   lines           SaleLine[]
   payments        Payment[]
@@ -863,6 +870,7 @@ model Sale {
   @@unique([businessId, receiptNumber])
   @@index([businessId, createdAt])
   @@index([businessId, cashierUserId, createdAt])
+  @@index([tillSessionId])
   @@map("sale")
 }
 
@@ -903,18 +911,51 @@ model SaleLine {
   @@map("sale_line")
 }
 
-enum PaymentMethod {
+/// What kind of money a payment method is. CASH is what ends up in the till drawer.
+enum PaymentKind {
   CASH
+  TRANSFER
+  POS
 }
 
-/// Money received for a sale. Add-only.
+/// A way customers pay, from the business's own list (SPEC C46): "Cash", "Transfer – GTBank",
+/// "POS – Moniepoint"… Managed by the admin. Never deleted once it exists; switched off instead.
+model PaymentMethod {
+  id            String      @id @default(uuid()) @db.Char(36)
+  businessId    String      @db.Char(36)
+  business      Business    @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  name          String      @db.VarChar(60)
+  /// Fixed when the method is created.
+  kind          PaymentKind
+  /// True for the "Cash" every business starts with, which cannot be switched off.
+  builtIn       Boolean     @default(false)
+  deactivatedAt DateTime?   @db.DateTime(3)
+  createdAt     DateTime    @default(now()) @db.DateTime(3)
+  updatedAt     DateTime    @updatedAt @db.DateTime(3)
+
+  payments      Payment[]
+
+  @@unique([businessId, name])
+  @@map("payment_method")
+}
+
+/// Money received for a sale. A sale has one payment, or several when it is split. Add-only.
 model Payment {
   id               String        @id @default(uuid()) @db.Char(36)
   businessId       String        @db.Char(36)
   business         Business      @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   saleId           String        @db.Char(36)
   sale             Sale          @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  method           PaymentMethod
+  methodId         String        @db.Char(36)
+  method           PaymentMethod @relation(fields: [methodId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Copies of the method's name and kind as they were.
+  methodName       String        @db.VarChar(60)
+  kind             PaymentKind
+  /// Transfer and POS: the bank or terminal reference, if the cashier noted one.
+  reference        String?       @db.VarChar(60)
+  /// The till session the money was taken in.
+  tillSessionId    String?       @db.Char(36)
+  tillSession      TillSession?  @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   /// What this payment settles of the sale.
   amount           Decimal       @db.Decimal(14, 2)
   /// Cash only: what the customer handed over, and the change given back (tendered − amount).
@@ -926,6 +967,7 @@ model Payment {
 
   @@index([saleId])
   @@index([businessId, createdAt])
+  @@index([tillSessionId])
   @@map("payment")
 }
 
@@ -949,6 +991,7 @@ enum DocumentKind {
   STOCK_TRANSFER
   STOCK_COUNT
   STOCK_ADJUSTMENT
+  TILL_SESSION
 }
 
 /// The number the next document of each kind will get in a business (deliveries, transfers,
@@ -964,4 +1007,52 @@ model DocumentCounter {
 
   @@unique([businessId, kind])
   @@map("document_counter")
+}
+
+/// One stretch of selling at one checkout terminal — one cash drawer — from opening it with a
+/// float to closing it with a count. Sales can only be made at a terminal whose till is open.
+/// Add-only: it is open for as long as it has no TillSessionClose.
+model TillSession {
+  id             String   @id @default(uuid()) @db.Char(36)
+  businessId     String   @db.Char(36)
+  business       Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// 1, 2, 3… within the business; shown as TS-000012.
+  number         Int
+  terminalId     String   @db.Char(36)
+  terminal       Terminal @relation(fields: [terminalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  terminalCode   String   @db.VarChar(6)
+  /// Cash put in the drawer at the start, for giving change.
+  openingFloat   Decimal  @db.Decimal(14, 2)
+  openedByUserId String?
+  openedByName   String
+  openedAt       DateTime @default(now()) @db.DateTime(3)
+
+  sales          Sale[]
+  payments       Payment[]
+  close          TillSessionClose?
+
+  @@unique([businessId, number])
+  @@index([terminalId, openedAt])
+  @@index([businessId, openedAt])
+  @@map("till_session")
+}
+
+/// The closing of a till session: the cash counted in the drawer against what should be
+/// there (float + cash taken). One per session. Add-only.
+model TillSessionClose {
+  id             String      @id @default(uuid()) @db.Char(36)
+  businessId     String      @db.Char(36)
+  business       Business    @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sessionId      String      @unique @db.Char(36)
+  session        TillSession @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  expectedCash   Decimal     @db.Decimal(14, 2)
+  countedCash    Decimal     @db.Decimal(14, 2)
+  /// Counted minus expected: negative means cash is short.
+  difference     Decimal     @db.Decimal(14, 2)
+  note           String?     @db.VarChar(300)
+  closedByUserId String?
+  closedByName   String
+  createdAt      DateTime    @default(now()) @db.DateTime(3)
+
+  @@map("till_session_close")
 }

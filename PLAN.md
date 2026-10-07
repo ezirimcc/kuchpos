@@ -207,7 +207,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q14 (receipt contents) before this starts. *(Answered 2026-10-07: C44, C45.)*
 
-### M9 · Payment methods, split payments, till sessions
+### M9 · Payment methods, split payments, till sessions — built 2026-10-07, awaiting owner's check
 **Goal:** Every way a customer pays is recorded correctly.
 - Payment methods managed by the admin (C46): a name and a kind (cash, bank transfer, POS/card); "Cash" always exists; used methods are switched off, not deleted. Chosen at checkout, with an optional reference for transfer and POS. Split across methods.
 - Till sessions: open with float, close with counted cash, show expected vs counted.
@@ -217,6 +217,12 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🧑 A sale paid part cash, part transfer shows both on the receipt and in the session summary.
 - 🧑 Closing a till shows expected cash = float + cash sales − change − cash refunds.
 - 🤖 Payments that do not add up exactly to the total are refused.
+- 🧑 Selling is refused until the till is opened; after closing with a count, the session shows expected, counted and the difference, and selling stops again.
+- 🤖 A switched-off, unknown, repeated or other business's method is refused; only cash carries "received" and change; the built-in Cash cannot be switched off, and no method can be deleted or change kind, even in the database.
+- 🤖 A terminal has one open till, also when two people open it at the same instant; it is closed once, also when two people close it at the same instant.
+- 🤖 Closing and selling at the same instant: every cash sale is either in the closing figure or refused.
+- 🤖 A cashier sees and closes only the till they opened; the accountant reviews all but cannot open or close; a storekeeper sees none.
+- 🤖 Payments made before this milestone are carried onto each business's Cash method by the database update.
 
 ### M9b · Pending sales and cancelling a sale  ← added 2026-10-07 at the owner's request
 **Goal:** A cashier is never stuck behind one customer, and a changed mind can be put right the same day.

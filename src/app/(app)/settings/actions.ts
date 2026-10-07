@@ -2,6 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
+import { createPaymentMethod, renamePaymentMethod, setPaymentMethodActive } from "@/server/business/payment-methods";
 import { setExpiringSoonMonths, setIdleSignOutMinutes, setReceiptText, setTaxRate } from "@/server/business/settings";
 import { createTerminal, renameLocation, setTerminalActive, updateTerminal } from "@/server/business/setup";
 
@@ -63,5 +64,24 @@ export async function setTerminalActiveAction(_previous: FormState, formData: Fo
 export async function setExpiringSoonAction(_previous: FormState, formData: FormData): Promise<FormState> {
   return runAction({ success: "Saved." }, (context) =>
     setExpiringSoonMonths(context, { months: field(formData, "months") }),
+  );
+}
+
+export async function createPaymentMethodAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Payment method added." }, (context) =>
+    createPaymentMethod(context, { name: field(formData, "name"), kind: field(formData, "kind") }),
+  );
+}
+
+export async function renamePaymentMethodAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Payment method renamed." }, (context) =>
+    renamePaymentMethod(context, { methodId: field(formData, "methodId"), name: field(formData, "name") }),
+  );
+}
+
+export async function setPaymentMethodActiveAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const active = field(formData, "active") === "true";
+  return runAction({ success: active ? "Payment method switched on." : "Payment method switched off." }, (context) =>
+    setPaymentMethodActive(context, { methodId: field(formData, "methodId"), active }),
   );
 }

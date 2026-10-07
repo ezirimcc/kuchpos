@@ -139,7 +139,7 @@ Rules:
 - A completed sale is never edited. Corrections happen by cancelling the whole sale on the same day (C48) or, later or in part, by a return *(proposed, §7)*.
 - A sale in progress can be parked as a **pending sale** and picked up again later on the same computer (C47).
 - **Proposed:** sales take stock from the **Shelf** by default; a permitted user can choose **Storeroom** for a line (useful for 50 kg bags that never sit on the shelf). Permitted users are managers, admins and owners (accepted as P7).
-- **Proposed:** each cashier opens a **till session** at the start of a shift (opening cash) and closes it at the end (counted cash vs expected cash). This is what makes the cash collections report trustworthy.
+- **Till sessions** (built at M9): a till session belongs to one checkout terminal — one cash drawer. It is opened with the cash in the drawer (the float) and closed with a count. A terminal has one open session at a time, and **nothing can be sold at a terminal whose till is not open**. Whoever may sell can sell into the open till (each sale still records who made it); the person who opened it, or an admin or manager, closes it. Expected cash = float + cash payments (change given is already left out). The count is **blind**: the person running the till is shown the expected cash only after closing; admins, managers and accountants can see it at any time. This is what makes the cash collections report trustworthy.
 
 ### 4.4 Payments and customer accounts
 

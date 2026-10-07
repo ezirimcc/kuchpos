@@ -11,12 +11,17 @@ import { MAX_IDLE_SIGN_OUT_MINUTES, MIN_IDLE_SIGN_OUT_MINUTES } from "@/server/a
 import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { getBusinessSettings } from "@/server/business/settings";
+import { listPaymentMethods } from "@/server/business/payment-methods";
+import { PAYMENT_KINDS, paymentKindLabel } from "@/lib/payment-kinds";
 import { getSetup } from "@/server/business/setup";
 import {
   createTerminalAction,
   renameLocationAction,
   setExpiringSoonAction,
   setIdleSignOutAction,
+  createPaymentMethodAction,
+  renamePaymentMethodAction,
+  setPaymentMethodActiveAction,
   setReceiptTextAction,
   setTaxRateAction,
   setTerminalActiveAction,
@@ -30,9 +35,15 @@ const PAPER_OPTIONS = [
   { value: "MM58", label: "58 mm" },
 ];
 
+const PAYMENT_KIND_OPTIONS = PAYMENT_KINDS.map((kind) => ({ value: kind.value, label: kind.label }));
+
 export default async function SettingsPage() {
   const context = await requirePagePermission("settings.manage");
-  const [settings, setup] = await Promise.all([getBusinessSettings(context), getSetup(context)]);
+  const [settings, setup, paymentMethods] = await Promise.all([
+    getBusinessSettings(context),
+    getSetup(context),
+    listPaymentMethods(context),
+  ]);
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -128,6 +139,70 @@ export default async function SettingsPage() {
               />
             </div>
             <SubmitButton className="mt-2">Save receipt text</SubmitButton>
+          </ActionForm>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Payment methods</CardTitle>
+          <CardDescription>
+            The ways your customers pay, chosen at checkout. Name each one so staff recognise it, for example
+            &quot;Transfer – GTBank&quot; or &quot;POS – Moniepoint&quot;. The kind cannot be changed later: it decides
+            what counts as cash in the till. A method that is switched off is no longer offered, but past sales keep it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Kind</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paymentMethods.map((method) => (
+                <TableRow key={method.id} data-testid={`payment-method-${method.name}`}>
+                  <TableCell>
+                    <ActionForm action={renamePaymentMethodAction} showSuccess={false} compact className="flex flex-wrap items-center gap-2">
+                      <input type="hidden" name="methodId" value={method.id} />
+                      <Input name="name" defaultValue={method.name} aria-label={`Name of payment method ${method.name}`} className="h-8 w-56" maxLength={60} required />
+                      <SubmitButton variant="outline" size="sm">
+                        Save
+                      </SubmitButton>
+                    </ActionForm>
+                  </TableCell>
+                  <TableCell>{paymentKindLabel(method.kind)}</TableCell>
+                  <TableCell>
+                    {method.active ? <Badge variant="success">In use</Badge> : <Badge variant="destructive">Switched off</Badge>}
+                  </TableCell>
+                  <TableCell>
+                    {method.builtIn ? (
+                      <span className="text-xs text-muted-foreground">Always available</span>
+                    ) : (
+                      <ActionForm action={setPaymentMethodActiveAction} showSuccess={false}>
+                        <input type="hidden" name="methodId" value={method.id} />
+                        <input type="hidden" name="active" value={method.active ? "false" : "true"} />
+                        <SubmitButton variant={method.active ? "destructive" : "outline"} size="sm">
+                          {method.active ? "Switch off" : "Switch on"}
+                        </SubmitButton>
+                      </ActionForm>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+
+          <h3 className="mt-5 mb-2 text-sm font-medium">Add a payment method</h3>
+          <ActionForm action={createPaymentMethodAction} resetOnSuccess>
+            <div className="grid gap-x-4 gap-y-1 md:grid-cols-2">
+              <TextField name="name" label="Name of the new method" hint="For example: Transfer – GTBank" autoComplete="off" maxLength={60} required />
+              <SelectField name="kind" label="Kind" options={PAYMENT_KIND_OPTIONS} defaultValue="TRANSFER" />
+            </div>
+            <SubmitButton pendingLabel="Adding…">Add payment method</SubmitButton>
           </ActionForm>
         </CardContent>
       </Card>

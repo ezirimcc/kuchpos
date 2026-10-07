@@ -5,7 +5,7 @@ import { emptyAllTables } from "../../prisma/empty-tables";
 import type { AppContext } from "@/server/auth/context";
 import { placeholderEmail } from "@/server/auth/config";
 import { getDb } from "@/server/db/client";
-import { defaultLocations, defaultTerminal } from "@/server/business/defaults";
+import { defaultLocations, defaultPaymentMethod, defaultTerminal } from "@/server/business/defaults";
 import { BUSINESS_ROLES, type BusinessRole } from "@/server/permissions";
 
 export const TEST_PASSWORD = "correct-horse-battery";
@@ -93,6 +93,9 @@ export type TestBusiness = {
   storeroomId: string;
   supplierId: string;
   terminalId: string;
+  /** The built-in "Cash" payment method, and a "Bank transfer" method. */
+  cashMethodId: string;
+  transferMethodId: string;
   /** The category the sample product is in, and a second one with no products. */
   categoryId: string;
   emptyCategoryId: string;
@@ -105,6 +108,8 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
   const business = await getDb().business.create({ data: { name, nameKey: name.toLowerCase() } });
   await getDb().location.createMany({ data: defaultLocations(business.id) });
   const terminal = await getDb().terminal.create({ data: defaultTerminal(business.id) });
+  const cash = await getDb().paymentMethod.create({ data: defaultPaymentMethod(business.id) });
+  const transfer = await getDb().paymentMethod.create({ data: { businessId: business.id, name: "Bank transfer", kind: "TRANSFER" } });
   const shelf = await getDb().location.findFirstOrThrow({ where: { businessId: business.id, kind: "SHELF" } });
   const storeroom = await getDb().location.findFirstOrThrow({ where: { businessId: business.id, kind: "STOREROOM" } });
   const supplier = await getDb().supplier.create({ data: { businessId: business.id, name: `${prefix.toUpperCase()} Supplies Ltd` } });
@@ -145,6 +150,8 @@ async function createBusiness(name: string, prefix: string): Promise<TestBusines
     storeroomId: storeroom.id,
     supplierId: supplier.id,
     terminalId: terminal.id,
+    cashMethodId: cash.id,
+    transferMethodId: transfer.id,
     categoryId: category.id,
     emptyCategoryId: emptyCategory.id,
     product: {

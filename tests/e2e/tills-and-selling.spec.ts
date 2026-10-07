@@ -45,6 +45,15 @@ async function openCheckout(page: Page) {
   await page.getByTestId("checkout-search").focus();
 }
 
+/** On the Till page: says this computer is terminal T1, when the business has several. */
+async function chooseT1(page: Page) {
+  // The Till page itself must be on screen first: "ready" is already true from the page before.
+  await expect(page.getByRole("heading", { name: "Till", exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  const which = page.getByLabel("This checkout");
+  if ((await which.count()) > 0) await which.selectOption({ label: "T1 — Checkout 1" });
+}
+
 /** Finds a product from the keyboard and adds it to the sale. */
 async function addToSale(page: Page, words: string) {
   const search = page.getByTestId("checkout-search");
@@ -68,6 +77,33 @@ test("the storekeeper stocks the Shelf for the tests that follow", async ({ page
     await page.goto(path);
     await expect(page, path).toHaveURL(/\/$/);
   }
+});
+
+test("nothing can be sold until the till is open; the cashier opens it with a float", async ({ page }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await expect(page.getByTestId("till-closed")).toContainText("The till of T1 is not open");
+  await addToSale(page, "tomato");
+  await page.getByRole("button", { name: "Exact" }).click();
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+
+  await page.getByTestId("till-closed").getByRole("link", { name: "Open the till" }).click();
+  await expect(page.getByTestId("till-status")).toHaveText("The till of T1 is closed");
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByLabel("Cash in the drawer now (₦)").fill("5,000");
+  await page.getByRole("button", { name: "Open the till of T1" }).click();
+  await expect(page.getByText(/Enter the cash in the drawer as a plain amount/)).toBeVisible();
+  await page.getByLabel("Cash in the drawer now (₦)").fill("5000");
+  await page.getByRole("button", { name: "Open the till of T1" }).click();
+
+  await expect(page.getByTestId("till-status")).toHaveText("The till of T1 is open");
+  await expect(page.getByTestId("till-sale-count")).toHaveText("0");
+  // The cashier is not told how much cash should be in the drawer.
+  await expect(page.getByTestId("till-expected-now")).toHaveCount(0);
+  await page.getByRole("link", { name: "Go to the checkout" }).click();
+  await expect(page.getByTestId("checkout-search")).toBeVisible();
+  await expect(page.getByTestId("till-closed")).toHaveCount(0);
 });
 
 test("a cashier sells 1 carton + 3 sachets; pressing the button rapidly makes one sale; the receipt prints once", async ({ page }) => {
@@ -280,6 +316,67 @@ test("the admin adds a tax number and a tax rate; the next receipt shows both, a
   await expect(page.getByText(/Tax rate saved/)).toBeVisible();
 });
 
+test("the admin adds a payment method; a sale is split between cash and a transfer, and both show on the receipt", async ({ page }) => {
+  await signIn(page, "gv.admin");
+  await expectSignedInAs(page, "Admin");
+  await gotoReady(page, "/settings");
+  await page.getByLabel("Name of the new method").fill("Transfer – GTBank");
+  await page.getByLabel("Kind").selectOption({ label: "Bank transfer" });
+  await page.getByRole("button", { name: "Add payment method" }).click();
+  await expect(page.getByTestId("payment-method-Transfer – GTBank")).toContainText("Bank transfer");
+  await expect(page.getByTestId("payment-method-Cash")).toContainText("Always available");
+  // A sample method is switched off: it is no longer offered at checkout.
+  await page.getByTestId("payment-method-POS machine (sample)").getByRole("button", { name: "Switch off" }).click();
+  await expect(page.getByTestId("payment-method-POS machine (sample)")).toContainText("Switched off");
+  await signOut(page);
+
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("2");
+  await page.getByTestId("cart-line-1").getByLabel(/^Unit/).selectOption({ label: "pack — ₦4,500.00" });
+  await expect(page.getByTestId("cart-total")).toHaveText("₦9,000.00");
+
+  const firstMethod = page.getByTestId("payment-1").getByLabel(/paid by/i);
+  await expect(firstMethod.locator("option")).toHaveText(["Cash", "Bank transfer (sample)", "Transfer – GTBank"]);
+  await page.getByRole("button", { name: "Split the payment" }).click();
+  await expect(page.getByTestId("left-to-pay")).toContainText("—");
+
+  const cashPart = page.getByTestId("payment-1");
+  await cashPart.getByLabel("Amount (₦)").fill("4000");
+  await cashPart.getByLabel(/Cash received/).fill("5000");
+  const transferPart = page.getByTestId("payment-2");
+  await transferPart.getByLabel(/paid by/i).selectOption({ label: "Transfer – GTBank" });
+  // Not adding up yet: the sale cannot be completed.
+  await transferPart.getByLabel("Amount (₦)").fill("4000");
+  await expect(page.getByTestId("left-to-pay")).toContainText("₦1,000.00");
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+  await transferPart.getByLabel("Amount (₦)").fill("5000");
+  await transferPart.getByLabel("Reference (optional)").fill("GTB-448120");
+  await expect(page.getByTestId("left-to-pay")).toContainText("₦0.00");
+  await expect(page.getByTestId("change-due")).toHaveText("₦1,000.00");
+  await page.getByTestId("complete-sale").click();
+
+  const receipt = page.getByTestId("receipt");
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦9,000.00");
+  await expect(receipt).toContainText("Paid: Cash");
+  await expect(receipt).toContainText("Cash received");
+  await expect(receipt).toContainText("Paid: Transfer – GTBank");
+  await expect(receipt).toContainText("Ref: GTB-448120");
+  await expect(page.getByTestId("receipt-change")).toHaveText("₦1,000.00");
+
+  // A manager sees what should be in the drawer at any time.
+  await page.goto("/till");
+  await chooseT1(page);
+  await expect(page.getByTestId("till-status")).toHaveText("The till of T1 is open");
+  // Float 5,000 + cash sales 43,500 + 3,126.25 + 4,500 + 500 + 4,000.
+  await expect(page.getByTestId("till-expected-now")).toHaveText("₦60,626.25");
+  await page.goto("/");
+  await expect(page.getByTestId("stat-collected-today")).toContainText("₦60,626.25");
+  await expect(page.getByTestId("stat-collected-today")).toContainText("₦55,626.25 of it in cash");
+});
+
 test("a cashier sees only their own sales; an accountant sees all but cannot sell; the other business sees none", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");
@@ -310,4 +407,49 @@ test("a cashier sees only their own sales; an accountant sees all but cannot sel
   await openCheckout(page);
   await page.getByTestId("checkout-search").fill("tomato");
   await expect(page.getByText(/No product on sale matches/)).toBeVisible();
+});
+
+test("the cashier closes the till with a count; the difference is shown only afterwards, and selling stops", async ({ page }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openFromMenu(page, "Till");
+  await chooseT1(page);
+  await expect(page.getByTestId("till-status")).toHaveText("The till of T1 is open");
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("till-expected-now")).toHaveCount(0);
+
+  // While it is open, the cashier is shown transfers taken but not the cash figure.
+  await page.getByRole("link", { name: /See this session/ }).click();
+  await expect(page.getByTestId("till-expected")).toHaveText("Shown at closing");
+  await expect(page.getByTestId("till-method-Transfer – GTBank")).toContainText("₦5,000.00");
+  await expect(page.getByTestId("till-method-Cash")).toHaveCount(0);
+  await page.goBack();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+
+  const form = page.getByTestId("close-till-form");
+  await form.getByLabel("Cash counted in the drawer (₦)").fill("60600");
+  await form.getByLabel("Note (optional)").fill("Counted twice");
+  await form.getByRole("button", { name: "Close the till" }).click();
+
+  await expect(page.getByRole("heading", { name: /Till session TS-000001/ })).toBeVisible();
+  await expect(page.getByTestId("till-expected")).toHaveText("₦60,626.25");
+  await expect(page.getByTestId("till-counted")).toHaveText("₦60,600.00");
+  await expect(page.getByTestId("till-difference").first()).toHaveText("₦26.25 short");
+  await expect(page.getByTestId("till-method-Cash")).toContainText("₦55,626.25");
+  await expect(page.getByText("Note at closing: Counted twice")).toBeVisible();
+
+  // Nothing more can be sold at this checkout.
+  await openCheckout(page);
+  await expect(page.getByTestId("till-closed")).toBeVisible();
+  await signOut(page);
+
+  // The accountant reviews every session but has no till of their own to run.
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  await openFromMenu(page, "Till");
+  await expect(page.getByRole("heading", { name: "Till sessions" })).toBeVisible();
+  await expect(page.getByTestId("till-row-1")).toContainText("₦26.25 short");
+  await expect(page.getByTestId("till-row-1")).toContainText("Green Valley Cashier");
+  await page.goto("/activity");
+  await expect(page.getByText(/closed the till of T1 \(TS-000001\): counted ₦60,600.00, expected ₦60,626.25 — ₦26.25 SHORT/)).toBeVisible();
 });

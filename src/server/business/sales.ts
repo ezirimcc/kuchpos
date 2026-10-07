@@ -4,12 +4,14 @@ import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
 import { plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart } from "@/lib/format";
 import { formatNaira, lineTotal, moneyToString, parseMoney, roundMoney, sumMoney, taxIncludedIn } from "@/lib/money";
+import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { parseQuantity, quantityToString, toBaseQuantity } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
+import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize, can } from "@/server/permissions";
 
@@ -26,6 +28,7 @@ import { authorize, can } from "@/server/permissions";
  */
 
 const MAX_LINES = 200;
+const MAX_PAYMENTS = 6;
 const MAX_UNIT_QUANTITY = new Decimal("9999999.999");
 const MAX_BASE_QUANTITY = new Decimal("999999999.999");
 const MAX_MONEY = new Decimal("99999999999.99");
@@ -54,7 +57,10 @@ export type CheckoutCatalogue = {
   businessName: string;
   /** Tax rate in percent, e.g. "7.50". Prices already include it. */
   taxRatePercent: string;
-  terminals: { id: string; code: string; name: string }[];
+  /** Checkout terminals in use, and whether each one's till is open (a sale needs an open till). */
+  terminals: { id: string; code: string; name: string; tillOpen: boolean }[];
+  /** The ways a customer can pay, as the business named them; "Cash" first. */
+  paymentMethods: { id: string; name: string; kind: PaymentKindValue }[];
   /** True when this person may take a line from the Storeroom instead of the Shelf. */
   canSellFromStoreroom: boolean;
   products: CheckoutProduct[];
@@ -63,9 +69,15 @@ export type CheckoutCatalogue = {
 export async function getCheckoutCatalogue(context: AppContext): Promise<CheckoutCatalogue> {
   authorize(context, "sale.create");
   const db = businessDb(context);
-  const [business, terminals, locations, products] = await Promise.all([
+  const [business, terminals, openTills, paymentMethods, locations, products] = await Promise.all([
     db.business.findFirst({ select: { name: true, taxRatePercent: true } }),
     db.terminal.findMany({ where: { deactivatedAt: null }, orderBy: { code: "asc" }, select: { id: true, code: true, name: true } }),
+    db.tillSession.findMany({ where: { close: null }, select: { terminalId: true } }),
+    db.paymentMethod.findMany({
+      where: { deactivatedAt: null },
+      orderBy: [{ builtIn: "desc" }, { name: "asc" }],
+      select: { id: true, name: true, kind: true },
+    }),
     db.location.findMany({ select: { id: true, kind: true } }),
     db.product.findMany({
       where: { deactivatedAt: null, units: { some: { retiredAt: null, forSale: true, price: { not: null } } } },
@@ -91,7 +103,11 @@ export async function getCheckoutCatalogue(context: AppContext): Promise<Checkou
   return {
     businessName: business.name,
     taxRatePercent: business.taxRatePercent.toFixed(2),
-    terminals,
+    terminals: terminals.map((terminal) => ({
+      ...terminal,
+      tillOpen: openTills.some((till) => till.terminalId === terminal.id),
+    })),
+    paymentMethods,
     canSellFromStoreroom: can(context, "sale.fromStoreroom"),
     products: products.map((product) => ({
       id: product.id,
@@ -121,8 +137,21 @@ const saleSchema = z.object({
   deviceTime: z.string().datetime().optional(),
   /** The total the cashier saw. The server works the total out again and refuses the sale if they differ. */
   expectedTotal: z.string().trim(),
-  /** Cash handed over by the customer. */
-  tendered: z.string().trim(),
+  /**
+   * How the sale is paid: one part, or several when it is split. The parts must add up to
+   * exactly the total. Cash may carry what was handed over (change is worked out here);
+   * a transfer or POS payment may carry a reference.
+   */
+  payments: z
+    .array(
+      z.object({
+        methodId: z.string().trim(),
+        amount: z.string().trim(),
+        tendered: z.string().trim().optional().default(""),
+        reference: optionalText(60, "The reference is too long (60 characters at most).").optional().default(""),
+      }),
+    )
+    .max(MAX_PAYMENTS, `A sale can be split across at most ${MAX_PAYMENTS} payments.`),
   lines: z
     .array(
       z.object({
@@ -142,9 +171,17 @@ export type SaleResult = {
   id: string;
   receiptNumber: string;
   total: string;
-  tendered: string;
+  /** Cash to hand back to the customer. */
   change: string;
   alreadySaved: boolean;
+};
+
+type CheckedPayment = {
+  method: { id: string; name: string; kind: PaymentKindValue };
+  amount: Decimal;
+  tendered: Decimal | null;
+  change: Decimal | null;
+  reference: string | null;
 };
 
 type CheckedLine = {
@@ -166,12 +203,13 @@ type CheckedLine = {
 const NOTHING_SOLD = "Nothing was sold. Please correct what is marked.";
 
 /**
- * Saves a cash sale: the sale, its lines, the stock leaving the Shelf (or Storeroom), and the
- * payment — all of it, or none of it. Sending the same `requestId` again returns the sale
+ * Saves a sale: the sale, its lines, the stock leaving the Shelf (or Storeroom), and its
+ * payment or payments — all of it, or none of it. Sending the same `requestId` again returns the sale
  * that was already saved and changes nothing.
  *
  * Refused when: a price or the total differs from what the server works out; a location
- * does not hold enough; the cash handed over is less than the total.
+ * does not hold enough; the payments do not add up to exactly the total; cash handed over
+ * is less than its part; the terminal's till is not open.
  */
 export async function postSale(context: AppContext, input: unknown): Promise<SaleResult> {
   authorize(context, "sale.create");
@@ -183,15 +221,14 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
   const alreadySaved = async (): Promise<SaleResult | null> => {
     const saved = await db.sale.findFirst({
       where: { requestId: data.requestId },
-      select: { id: true, receiptNumber: true, total: true, payments: { select: { tendered: true, changeGiven: true } } },
+      select: { id: true, receiptNumber: true, total: true, payments: { select: { changeGiven: true } } },
     });
     if (!saved) return null;
     return {
       id: saved.id,
       receiptNumber: saved.receiptNumber,
       total: saved.total.toFixed(2),
-      tendered: (saved.payments[0]?.tendered ?? saved.total).toFixed(2),
-      change: (saved.payments[0]?.changeGiven ?? new Decimal(0)).toFixed(2),
+      change: moneyToString(sumMoney(saved.payments.map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
       alreadySaved: true,
     };
   };
@@ -301,17 +338,10 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
     }
   });
 
-  // --- Total and cash --------------------------------------------------------------
+  // --- Total and payments ----------------------------------------------------------
   const total = sumMoney(checked.map((line) => line.lineTotal));
   const linesAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("lines."));
-  let tendered: Decimal | null = null;
-  try {
-    tendered = parseMoney(data.tendered);
-    if (tendered.isNegative() || tendered.greaterThan(MAX_MONEY)) throw new Error("out of range");
-  } catch {
-    tendered = null;
-    fieldErrors.tendered = "Enter the cash received as a plain amount, for example 5000 or 5000.50 (no commas).";
-  }
+  const payments: CheckedPayment[] = [];
   if (linesAreSound) {
     let expected: Decimal | null = null;
     try {
@@ -321,16 +351,83 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
     }
     if (!expected || !expected.equals(total)) {
       fieldErrors.expectedTotal = `The total works out to ${formatNaira(total)}, which is not what this screen showed. Reload the page and enter the sale again.`;
-    } else if (tendered && tendered.lessThan(total)) {
-      fieldErrors.tendered = `The total is ${formatNaira(total)}. The cash received is ${formatNaira(total.minus(tendered))} short.`;
+    } else {
+      const methods = await db.paymentMethod.findMany({
+        where: { id: { in: data.payments.map((payment) => payment.methodId).filter(Boolean) } },
+        select: { id: true, name: true, kind: true, deactivatedAt: true },
+      });
+      const used = new Set<string>();
+      data.payments.forEach((payment, index) => {
+        const at = (field: string) => `payments.${index}.${field}`;
+        const method = methods.find((candidate) => candidate.id === payment.methodId);
+        if (!method) {
+          fieldErrors[at("methodId")] = "Choose how this is paid.";
+          return;
+        }
+        if (method.deactivatedAt) {
+          fieldErrors[at("methodId")] = `"${method.name}" is switched off. Choose another way to pay.`;
+          return;
+        }
+        if (used.has(method.id)) {
+          fieldErrors[at("methodId")] = `"${method.name}" is already used in this sale. Put the two amounts together.`;
+          return;
+        }
+        used.add(method.id);
+
+        let amount: Decimal;
+        try {
+          amount = parseMoney(payment.amount);
+          if (!amount.greaterThan(0) || amount.greaterThan(MAX_MONEY)) throw new Error("out of range");
+        } catch {
+          fieldErrors[at("amount")] = "Enter the amount as a plain number greater than zero, for example 5000 or 5000.50 (no commas).";
+          return;
+        }
+
+        if (method.kind !== "CASH") {
+          // Refused rather than quietly dropped: it would mean the screen and the server disagree.
+          if (payment.tendered !== "") {
+            fieldErrors[at("tendered")] = "Only cash is handed over with change.";
+            return;
+          }
+          payments.push({ method, amount, tendered: null, change: null, reference: payment.reference || null });
+          return;
+        }
+        if (payment.reference) {
+          fieldErrors[at("reference")] = "A cash payment has no reference.";
+          return;
+        }
+        let tendered = amount;
+        if (payment.tendered !== "") {
+          try {
+            tendered = parseMoney(payment.tendered);
+            if (tendered.isNegative() || tendered.greaterThan(MAX_MONEY)) throw new Error("out of range");
+          } catch {
+            fieldErrors[at("tendered")] = "Enter the cash received as a plain amount, for example 5000 or 5000.50 (no commas).";
+            return;
+          }
+        }
+        if (tendered.lessThan(amount)) {
+          fieldErrors[at("tendered")] = `The cash received is ${formatNaira(amount.minus(tendered))} short of ${formatNaira(amount)}.`;
+          return;
+        }
+        payments.push({ method, amount, tendered, change: tendered.minus(amount), reference: null });
+      });
+
+      const paymentsAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("payments."));
+      const paid = sumMoney(payments.map((payment) => payment.amount));
+      if (paymentsAreSound && !paid.equals(total)) {
+        fieldErrors.payments =
+          data.payments.length === 0
+            ? `Say how the ${formatNaira(total)} is paid.`
+            : `The payments add up to ${formatNaira(paid)}, but the total is ${formatNaira(total)}. They must be exactly equal.`;
+      }
     }
   }
 
-  if (Object.keys(fieldErrors).length > 0 || !terminal || !tendered) {
+  if (Object.keys(fieldErrors).length > 0 || !terminal) {
     throw new ValidationError(NOTHING_SOLD, fieldErrors);
   }
-  const cash = tendered;
-  const change = cash.minus(total);
+  const change = sumMoney(payments.map((payment) => payment.change ?? new Decimal(0)));
 
   // What each product loses from each location, in base units.
   const perPlace = new Map<string, Map<string, Decimal>>();
@@ -354,6 +451,15 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
         });
         const sequence = counter.nextReceiptNumber - 1;
         const receiptNumber = saleReceiptNumber(terminal.code, sequence);
+
+        // A sale belongs to the terminal's open till. (Opening and closing take the same
+        // "turn" on the terminal, so a till cannot be closed under a sale that is going through.)
+        const till = await tx.tillSession.findFirst({ where: { terminalId: terminal.id, close: null }, select: { id: true } });
+        if (!till) {
+          throw new ValidationError(`Nothing was sold: the till of ${terminal.code} is not open. Open the till, then complete the sale.`, {
+            till: "The till is not open.",
+          });
+        }
 
         // The tax rate at this moment; it is copied onto the sale and never looked up again.
         const business = await tx.business.findFirst({ select: { taxRatePercent: true } });
@@ -422,6 +528,7 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             cashierUserId: context.actor.userId,
             cashierName: context.actor.name,
             deviceTime: data.deviceTime ? new Date(data.deviceTime) : null,
+            tillSessionId: till.id,
           },
         });
         await tx.saleLine.createMany({
@@ -464,19 +571,23 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             userName: context.actor.name,
           })),
         });
-        // The payment is written last: if it cannot be saved, nothing of the sale is.
-        if (total.greaterThan(0)) {
-          await tx.payment.create({
-            data: {
+        // The payments are written last: if they cannot be saved, nothing of the sale is.
+        if (payments.length > 0) {
+          await tx.payment.createMany({
+            data: payments.map((payment) => ({
               businessId,
               saleId: sale.id,
-              method: "CASH",
-              amount: moneyToString(total),
-              tendered: moneyToString(cash),
-              changeGiven: moneyToString(change),
+              methodId: payment.method.id,
+              methodName: payment.method.name,
+              kind: payment.method.kind,
+              amount: moneyToString(payment.amount),
+              tendered: payment.tendered ? moneyToString(payment.tendered) : null,
+              changeGiven: payment.change ? moneyToString(payment.change) : null,
+              reference: payment.reference,
+              tillSessionId: till.id,
               receivedByUserId: context.actor.userId,
               receivedByName: context.actor.name,
-            },
+            })),
           });
         }
 
@@ -484,7 +595,6 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           id: sale.id,
           receiptNumber,
           total: moneyToString(total),
-          tendered: moneyToString(cash),
           change: moneyToString(change),
           alreadySaved: false,
         };
@@ -618,7 +728,17 @@ export type SaleDetail = {
   taxTotal: string;
   /** What the goods cost, and the profit — only for those who may see cost prices. */
   costTotal: string | null;
-  tendered: string;
+  /** How it was paid: one entry, or several when it was split. */
+  payments: {
+    methodName: string;
+    kind: PaymentKindValue;
+    amount: string;
+    /** Cash only: what was handed over and the change given back. */
+    tendered: string | null;
+    change: string | null;
+    reference: string | null;
+  }[];
+  /** Cash handed back to the customer in all. */
   change: string;
   /** How many times the receipt has been printed so far. */
   printCount: number;
@@ -650,7 +770,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
       where: { id: saleId, ...ownOnly(context) },
       include: {
         lines: { orderBy: { lineNumber: "asc" } },
-        payments: true,
+        payments: { orderBy: [{ kind: "asc" }, { methodName: "asc" }] },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
       },
@@ -658,7 +778,6 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
     db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true } }),
   ]);
   if (!row || !business) throw new NotFoundError("That sale could not be found.");
-  const cash = row.payments[0];
   return {
     id: row.id,
     receiptNumber: row.receiptNumber,
@@ -670,8 +789,15 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
     taxRatePercent: row.taxRatePercent.toFixed(2),
     taxTotal: row.taxTotal.toFixed(2),
     costTotal: can(context, "cost.view") ? row.costTotal.toFixed(2) : null,
-    tendered: (cash?.tendered ?? row.total).toFixed(2),
-    change: (cash?.changeGiven ?? new Decimal(0)).toFixed(2),
+    payments: row.payments.map((payment) => ({
+      methodName: payment.methodName,
+      kind: payment.kind,
+      amount: payment.amount.toFixed(2),
+      tendered: payment.tendered?.toFixed(2) ?? null,
+      change: payment.changeGiven?.toFixed(2) ?? null,
+      reference: payment.reference,
+    })),
+    change: moneyToString(sumMoney(row.payments.map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
     printCount: row._count.receiptPrints,
     business,
     lines: row.lines.map((line) => ({

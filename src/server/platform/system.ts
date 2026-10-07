@@ -45,6 +45,8 @@ const ADD_ONLY_TABLES = [
   "sale_line",
   "payment",
   "sale_receipt_print",
+  "till_session",
+  "till_session_close",
 ];
 
 /**
@@ -57,6 +59,9 @@ const OTHER_TRIGGERS = [
   // Document numbers only ever go up by one, and are never removed.
   "document_counter_no_delete",
   "document_counter_only_up",
+  // A payment method is never deleted and never changes kind.
+  "payment_method_no_delete",
+  "payment_method_kind_fixed",
 ];
 
 /** Limits written into the database itself (CHECK constraints). */
@@ -84,6 +89,10 @@ const REQUIRED_CHECKS = [
   "sale_line_amounts_check",
   "payment_amounts_check",
   "document_counter_next_check",
+  "payment_tender_is_cash_check",
+  "payment_method_built_in_check",
+  "till_session_float_check",
+  "till_session_close_amounts_check",
 ];
 
 function readAppVersion(): string {

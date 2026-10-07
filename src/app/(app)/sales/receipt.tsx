@@ -66,14 +66,27 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
             <span data-testid="receipt-tax">{nairaFromText(sale.taxTotal)}</span>
           </p>
         )}
-        <p className="flex justify-between gap-2">
-          <span>Cash</span>
-          <span>{nairaFromText(sale.tendered)}</span>
-        </p>
-        <p className="flex justify-between gap-2">
-          <span>Change</span>
-          <span data-testid="receipt-change">{nairaFromText(sale.change)}</span>
-        </p>
+        {sale.payments.map((payment, index) => (
+          <div key={index} data-testid={`receipt-payment-${index + 1}`}>
+            <p className="flex flex-wrap justify-between gap-x-2">
+              <span>Paid: {payment.methodName}</span>
+              <span className="ml-auto">{nairaFromText(payment.amount)}</span>
+            </p>
+            {payment.reference && <p className="pl-2">Ref: {payment.reference}</p>}
+            {payment.tendered !== null && payment.tendered !== payment.amount && (
+              <p className="flex justify-between gap-2 pl-2">
+                <span>Cash received</span>
+                <span>{nairaFromText(payment.tendered)}</span>
+              </p>
+            )}
+          </div>
+        ))}
+        {sale.payments.some((payment) => payment.kind === "CASH") && (
+          <p className="flex justify-between gap-2">
+            <span>Change</span>
+            <span data-testid="receipt-change">{nairaFromText(sale.change)}</span>
+          </p>
+        )}
       </div>
 
       {lines(sale.business.receiptFooter).length > 0 && (

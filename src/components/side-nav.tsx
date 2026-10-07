@@ -14,6 +14,7 @@ import {
   Store,
   UserCog,
   Users,
+  Wallet,
   Warehouse,
 } from "lucide-react";
 import Link from "next/link";
@@ -26,6 +27,7 @@ const ICONS: Record<string, LucideIcon> = {
   home: LayoutDashboard,
   cart: ShoppingCart,
   sales: ReceiptText,
+  till: Wallet,
   customers: Users,
   stock: Warehouse,
   products: Package,

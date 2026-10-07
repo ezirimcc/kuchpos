@@ -185,6 +185,13 @@ async function main() {
       ],
     });
     await db.terminal.create({ data: { businessId: created.id, code: "T1", name: "Checkout 1", paperWidth: "MM80" } });
+    await db.paymentMethod.createMany({
+      data: [
+        { businessId: created.id, name: "Cash", kind: "CASH", builtIn: true },
+        { businessId: created.id, name: "Bank transfer (sample)", kind: "TRANSFER" },
+        { businessId: created.id, name: "POS machine (sample)", kind: "POS" },
+      ],
+    });
 
     await db.supplier.createMany({
       data: [

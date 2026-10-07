@@ -6,6 +6,7 @@ import * as adjustments from "@/server/business/adjustments";
 import * as catalog from "@/server/business/catalog";
 import * as counts from "@/server/business/counts";
 import * as dashboard from "@/server/business/dashboard";
+import * as paymentMethods from "@/server/business/payment-methods";
 import * as sales from "@/server/business/sales";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
@@ -13,6 +14,7 @@ import * as staff from "@/server/business/staff";
 import * as corrections from "@/server/business/receipt-corrections";
 import * as stock from "@/server/business/stock";
 import * as suppliers from "@/server/business/suppliers";
+import * as till from "@/server/business/till";
 import * as transfers from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
@@ -61,10 +63,14 @@ function selling(business: World["a"]) {
     requestId: randomUUID(),
     terminalId: business.terminalId,
     expectedTotal: "100.00",
-    tendered: "100",
+    payments: [{ methodId: business.cashMethodId, amount: "100.00" }],
     lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "1", unitPrice: "100.00" }],
   };
 }
+
+/** The open till session of each business's terminal (opened by its cashier), and its transfer payment method. */
+let tillInA = "";
+let tillInB = "";
 
 /** And a transfer in each. */
 let transferInA = "";
@@ -112,6 +118,11 @@ beforeEach(async () => {
   for (const business of [world.a, world.b]) {
     await stock.receiveGoods(business.as.ADMIN, { ...delivery(business), locationId: business.shelfId });
   }
+  for (const business of [world.a, world.b]) {
+    await till.openTill(business.as.CASHIER, { terminalId: business.terminalId, openingFloat: "1000" });
+  }
+  tillInA = (await getDb().tillSession.findFirstOrThrow({ where: { businessId: world.a.id } })).id;
+  tillInB = (await getDb().tillSession.findFirstOrThrow({ where: { businessId: world.b.id } })).id;
   saleInA = (await sales.postSale(world.a.as.CASHIER, selling(world.a))).id;
   saleInB = (await sales.postSale(world.b.as.CASHIER, selling(world.b))).id;
   countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
@@ -402,6 +413,61 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => sales.recordReceiptPrint(context, { saleId: saleInB }),
   },
   {
+    name: "paymentMethods.listPaymentMethods",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => paymentMethods.listPaymentMethods(context),
+  },
+  {
+    name: "paymentMethods.createPaymentMethod",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => paymentMethods.createPaymentMethod(context, { name: unique("POS machine "), kind: "POS" }),
+  },
+  {
+    name: "paymentMethods.renamePaymentMethod",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => paymentMethods.renamePaymentMethod(context, { methodId: world.a.transferMethodId, name: unique("Transfer ") }),
+    runAgainstB: (context) => paymentMethods.renamePaymentMethod(context, { methodId: world.b.transferMethodId, name: "Renamed" }),
+  },
+  {
+    name: "paymentMethods.setPaymentMethodActive",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => paymentMethods.setPaymentMethodActive(context, { methodId: world.a.transferMethodId, active: false }),
+    runAgainstB: (context) => paymentMethods.setPaymentMethodActive(context, { methodId: world.b.transferMethodId, active: false }),
+  },
+  {
+    name: "till.getTill",
+    allowed: SELLERS,
+    run: (context) => till.getTill(context, { terminalId: world.a.terminalId }),
+  },
+  {
+    name: "till.openTill",
+    allowed: SELLERS,
+    // The fixture's till is open, so a second terminal is opened instead.
+    run: async (context) =>
+      till.openTill(context, {
+        terminalId: (await setup.createTerminal(world.a.as.ADMIN, { code: unique("X"), name: "Extra till", paperWidth: "MM80" })).id,
+        openingFloat: "0",
+      }),
+  },
+  {
+    name: "till.closeTill",
+    // The till was opened by the cashier; those who may review any till can close it too.
+    allowed: SELLERS,
+    run: (context) => till.closeTill(context, { sessionId: tillInA, countedCash: "1100" }),
+    runAgainstB: (context) => till.closeTill(context, { sessionId: tillInB, countedCash: "1100" }),
+  },
+  {
+    name: "till.listTillSessions",
+    allowed: SALES_VIEWERS,
+    run: (context) => till.listTillSessions(context),
+  },
+  {
+    name: "till.getTillSession",
+    allowed: SALES_VIEWERS,
+    run: (context) => till.getTillSession(context, { sessionId: tillInA }),
+    runAgainstB: (context) => till.getTillSession(context, { sessionId: tillInB }),
+  },
+  {
     name: "stock.listStockOnHand",
     allowed: EVERYONE_IN_A,
     run: (context) => stock.listStockOnHand(context),
@@ -656,6 +722,8 @@ describe("every server operation is listed here", () => {
       ...Object.keys(transfers).map((name) => `transfers.${name}`),
       ...Object.keys(counts).map((name) => `counts.${name}`),
       ...Object.keys(sales).map((name) => `sales.${name}`),
+      ...Object.keys(paymentMethods).map((name) => `paymentMethods.${name}`),
+      ...Object.keys(till).map((name) => `till.${name}`),
       ...Object.keys(adjustments).map((name) => `adjustments.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),

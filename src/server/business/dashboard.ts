@@ -1,5 +1,7 @@
 import "server-only";
+import { Decimal } from "@/lib/decimal";
 import { shopDayStart, shopToday } from "@/lib/format";
+import { moneyToString, sumMoney } from "@/lib/money";
 import type { AppContext } from "@/server/auth/context";
 import { businessDb } from "@/server/db/scoped";
 import { authorize, can } from "@/server/permissions";
@@ -27,6 +29,8 @@ export type DashboardSnapshot = {
    * report, the person's own for a cashier, nothing for anyone else.
    */
   salesToday: { count: number; total: string; ownOnly: boolean } | null;
+  /** Money received since the start of the shop's day, and how much of it was cash — collections report readers. */
+  collectedToday: { total: string; cash: string } | null;
 };
 
 export async function getDashboard(context: AppContext): Promise<DashboardSnapshot> {
@@ -39,7 +43,7 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
   const seesAllSales = can(context, "report.sales.view");
   const seesSales = seesAllSales || can(context, "report.ownShift.view");
 
-  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday] = await Promise.all([
+  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday, collected] = await Promise.all([
     db.product.count({ where: { deactivatedAt: null } }),
     db.category.count(),
     db.business.findFirst({ select: { taxRatePercent: true } }),
@@ -60,7 +64,19 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
           _sum: { total: true },
         })
       : null,
+    can(context, "report.collections.view")
+      ? db.payment.groupBy({ by: ["kind"], where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } })
+      : null,
   ]);
+
+  const collectedToday = collected
+    ? {
+        total: moneyToString(sumMoney(collected.map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0")))),
+        cash: moneyToString(
+          sumMoney(collected.filter((group) => group.kind === "CASH").map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))),
+        ),
+      }
+    : null;
 
   return {
     products,
@@ -73,5 +89,6 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     salesToday: salesToday
       ? { count: salesToday._count._all, total: salesToday._sum.total?.toFixed(2) ?? "0.00", ownOnly: !seesAllSales }
       : null,
+    collectedToday,
   };
 }

@@ -77,6 +77,8 @@ describe("database update tool for the hosting server", () => {
       "sale_line",
       "payment",
       "sale_receipt_print",
+      "till_session",
+      "till_session_close",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -86,6 +88,8 @@ describe("database update tool for the hosting server", () => {
         "goods_receipt_guard_update",
         "document_counter_no_delete",
         "document_counter_only_up",
+        "payment_method_no_delete",
+        "payment_method_kind_fixed",
       ].sort(),
     );
 
@@ -117,6 +121,10 @@ describe("database update tool for the hosting server", () => {
         "sale_line_amounts_check",
         "payment_amounts_check",
         "document_counter_next_check",
+        "payment_tender_is_cash_check",
+        "payment_method_built_in_check",
+        "till_session_float_check",
+        "till_session_close_amounts_check",
       ]),
     );
   });

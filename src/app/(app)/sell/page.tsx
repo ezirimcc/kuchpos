@@ -18,7 +18,7 @@ export default async function SellPage() {
       <PageHeader
         icon={ShoppingCart}
         title="Sell"
-        description="Find a product, set the unit and how many, take the cash. F2 jumps to the search box, F4 to the cash box."
+        description="Find a product, set the unit and how many, take the payment. F2 jumps to the search box, F4 to the payment box."
       />
       <Checkout catalogue={catalogue} />
     </div>

@@ -2,6 +2,8 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
+import { adjustFromCount, decideAdjustment, recordAdjustment } from "@/server/business/adjustments";
+import { submitCount } from "@/server/business/counts";
 import { correctReceipt } from "@/server/business/receipt-corrections";
 import { receiveGoods } from "@/server/business/stock";
 import { createSupplier, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
@@ -32,6 +34,38 @@ export async function transferStockAction(input: unknown): Promise<FormState & {
     transferId = (await transferStock(context, input)).id;
   });
   return result.status === "success" ? { ...result, transferId } : result;
+}
+
+/** Saves a stock count. On success the answer carries the count's id so the screen can show the differences. */
+export async function submitCountAction(input: unknown): Promise<FormState & { countId?: string }> {
+  let countId: string | undefined;
+  const result = await runAction({ success: "Count saved." }, async (context) => {
+    countId = (await submitCount(context, input)).id;
+  });
+  return result.status === "success" ? { ...result, countId } : result;
+}
+
+/** Records an adjustment entered directly. It is applied at once or waits for approval, depending on who entered it. */
+export async function recordAdjustmentAction(input: unknown): Promise<FormState & { adjustmentId?: string }> {
+  let adjustmentId: string | undefined;
+  const result = await runAction({ success: "Adjustment saved." }, async (context) => {
+    adjustmentId = (await recordAdjustment(context, input)).id;
+  });
+  return result.status === "success" ? { ...result, adjustmentId } : result;
+}
+
+/** Records the adjustment for the differences a stock count found. */
+export async function adjustFromCountAction(input: unknown): Promise<FormState & { adjustmentId?: string }> {
+  let adjustmentId: string | undefined;
+  const result = await runAction({ success: "Adjustment saved." }, async (context) => {
+    adjustmentId = (await adjustFromCount(context, input)).id;
+  });
+  return result.status === "success" ? { ...result, adjustmentId } : result;
+}
+
+/** Approves (and applies) or rejects an adjustment that is waiting. */
+export async function decideAdjustmentAction(input: unknown): Promise<FormState> {
+  return runAction({ success: "Decision saved." }, (context) => decideAdjustment(context, input));
 }
 
 /** Adds a supplier from inside the delivery form and reports its id. */

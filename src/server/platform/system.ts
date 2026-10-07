@@ -36,6 +36,11 @@ const ADD_ONLY_TABLES = [
   "goods_receipt_change",
   "stock_transfer",
   "stock_transfer_line",
+  "stock_count",
+  "stock_count_line",
+  "stock_adjustment",
+  "stock_adjustment_line",
+  "stock_adjustment_decision",
 ];
 
 /**
@@ -62,6 +67,9 @@ const REQUIRED_CHECKS = [
   "goods_receipt_version_reason_check",
   "stock_transfer_two_locations_check",
   "stock_transfer_line_amounts_check",
+  "stock_count_line_amounts_check",
+  "stock_adjustment_line_amounts_check",
+  "stock_adjustment_decision_note_check",
 ];
 
 function readAppVersion(): string {

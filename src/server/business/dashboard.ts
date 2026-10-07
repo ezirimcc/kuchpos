@@ -20,6 +20,8 @@ export type DashboardSnapshot = {
   /** Activity log entries since the start of the shop's day — those who may view the log. */
   activityToday: number | null;
   recentActivity: ActivityItem[] | null;
+  /** Stock adjustments waiting for a decision — those who may approve them. */
+  adjustmentsWaiting: number | null;
 };
 
 export async function getDashboard(context: AppContext): Promise<DashboardSnapshot> {
@@ -29,7 +31,7 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
   const seesActivity = can(context, "activityLog.view");
   const startOfToday = shopDayStart(shopToday()) ?? new Date();
 
-  const [products, categories, business, staff, activityToday, recentActivity] = await Promise.all([
+  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting] = await Promise.all([
     db.product.count({ where: { deactivatedAt: null } }),
     db.category.count(),
     db.business.findFirst({ select: { taxRatePercent: true } }),
@@ -42,6 +44,7 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
           select: { id: true, createdAt: true, actorName: true, actorRole: true, action: true, summary: true },
         })
       : null,
+    can(context, "stock.adjust.approve") ? db.stockAdjustment.count({ where: { decision: null } }) : null,
   ]);
 
   return {
@@ -51,5 +54,6 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     staff,
     activityToday,
     recentActivity,
+    adjustmentsWaiting,
   };
 }

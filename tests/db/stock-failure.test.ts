@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { correctReceipt, getCorrectionOptions, getReceiptHistory } from "@/server/business/receipt-corrections";
 import { getReceipt, receiveGoods } from "@/server/business/stock";
 import { transferStock } from "@/server/business/transfers";
+import { adjustFromCount, decideAdjustment, getAdjustment, recordAdjustment } from "@/server/business/adjustments";
+import { submitCount } from "@/server/business/counts";
 import { getDb } from "@/server/db/client";
 import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
 
@@ -194,6 +196,60 @@ describe("a failure halfway through saving a transfer", () => {
     expect(await transferStock(world.a.as.ADMIN, request)).toMatchObject({ number: 1, alreadySaved: true });
     const shelf = await getDb().stockBalance.findFirstOrThrow({ where: { productId: world.a.product.id, locationId: world.a.shelfId } });
     expect(shelf.quantity.toFixed(3)).toBe("23.000");
+    await expectBalancesMatchMovements();
+  });
+});
+
+/** And for counts, adjustments and approvals. */
+describe("a failure halfway through a count, an adjustment or an approval", () => {
+  const state = async () => {
+    const db = getDb();
+    return JSON.stringify({
+      counts: await db.stockCount.count(),
+      countLines: await db.stockCountLine.count(),
+      adjustments: await db.stockAdjustment.count(),
+      adjustmentLines: await db.stockAdjustmentLine.count(),
+      decisions: await db.stockAdjustmentDecision.count(),
+      movements: await db.stockMovement.count(),
+      balances: await db.stockBalance.findMany({ orderBy: { id: "asc" } }),
+      numbers: await db.business.findUniqueOrThrow({ where: { id: world.a.id }, select: { nextStockCountNumber: true, nextStockAdjustmentNumber: true } }),
+    });
+  };
+  const line = () => ({ productId: world.a.product.id, unitId: world.a.product.baseUnitId, direction: "remove", quantity: "3", reason: "DAMAGED" });
+  const adjusting = () => ({ requestId: randomUUID(), locationId: world.a.storeroomId, lines: [line()] });
+  const counting = () => ({
+    requestId: randomUUID(),
+    locationId: world.a.storeroomId,
+    lines: [{ productId: world.a.product.id, entries: [{ unitId: world.a.product.baseUnitId, quantity: "40" }] }],
+  });
+
+  it("leaves nothing behind, and each can then be done again", async () => {
+    await receiveGoods(world.a.as.ADMIN, delivery());
+    // Something waiting for approval, and a count, saved before the failures start.
+    const waiting = await recordAdjustment(world.a.as.STOREKEEPER, adjusting());
+    const counted = await submitCount(world.a.as.ADMIN, counting());
+    const before = await state();
+
+    failure.on = true;
+    const direct = adjusting();
+    const fromCount = { requestId: randomUUID(), countId: counted.id, reasons: [{ lineNumber: 1, reason: "MISSING" }] };
+    await expect(submitCount(world.a.as.ADMIN, counting())).rejects.toThrow("Simulated failure while saving");
+    await expect(recordAdjustment(world.a.as.MANAGER, direct)).rejects.toThrow("Simulated failure while saving");
+    await expect(adjustFromCount(world.a.as.MANAGER, fromCount)).rejects.toThrow("Simulated failure while saving");
+    await expect(decideAdjustment(world.a.as.MANAGER, { adjustmentId: waiting.id, outcome: "APPLIED" })).rejects.toThrow("Simulated failure while saving");
+    await expect(decideAdjustment(world.a.as.MANAGER, { adjustmentId: waiting.id, outcome: "REJECTED", note: "Not agreed" })).rejects.toThrow("Simulated failure while saving");
+
+    expect(await state()).toBe(before);
+    expect((await getAdjustment(world.a.as.ADMIN, { adjustmentId: waiting.id })).status).toBe("PENDING");
+    await expectBalancesMatchMovements();
+
+    failure.on = false;
+    expect(await recordAdjustment(world.a.as.MANAGER, direct)).toMatchObject({ number: 2, status: "APPLIED", alreadySaved: false });
+    expect(await adjustFromCount(world.a.as.MANAGER, fromCount)).toMatchObject({ number: 3, status: "APPLIED" });
+    expect(await decideAdjustment(world.a.as.MANAGER, { adjustmentId: waiting.id, outcome: "APPLIED" })).toMatchObject({ alreadyDecided: false });
+    // 43 held; counted 40 (−3), then −3 direct, then −3 approved.
+    const storeroom = await getDb().stockBalance.findFirstOrThrow({ where: { productId: world.a.product.id, locationId: world.a.storeroomId } });
+    expect(storeroom.quantity.toFixed(3)).toBe("34.000");
     await expectBalancesMatchMovements();
   });
 });

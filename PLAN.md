@@ -158,16 +158,21 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 The same transfer sent twice is saved once; a failure at the last step leaves nothing behind; if one product of several is short, nothing moves.
 - 🤖 A cashier and an accountant cannot transfer; business A cannot use business B's locations or products, and B sees none of A's transfers.
 
-### M7 · Stock counts and adjustments
+### M7 · Stock counts and adjustments — built 2026-10-07, awaiting owner's check
 **Goal:** Physical reality can be compared with the system and corrected, with reasons.
-- Count sheet per location (enter in any unit); difference shown.
-- Adjustments with mandatory reason. A storekeeper's adjustment waits for manager approval; a manager's or admin's applies at once.
+- Count sheet per location (enter in any unit); difference shown. Blind while counting (C41); may be narrowed to a category, and only products filled in are counted (C42).
+- Adjustments with mandatory reason from a fixed list, per line (C40). A storekeeper's adjustment waits for manager approval; a manager's or admin's applies at once. Approve or reject (rejection needs a reason).
+- One adjustment per count, with amounts taken from the saved count. Home page tells approvers when adjustments are waiting.
 
 **Accept when:**
 - 🧑 Counting 95 where the system expects 100 proposes an adjustment of −5 and demands a reason.
 - 🧑 A storekeeper's adjustment does not change stock until a manager approves it.
 - 🤖 An adjustment without a reason is refused by the server.
-- 🤖 A sale made between counting and posting is not wiped out by the adjustment.
+- 🤖 A sale made between counting and posting is not wiped out by the adjustment. *(Until selling exists, the test uses a transfer as the movement in between.)*
+- 🤖 An adjustment that would take out more than is there is refused whole; an approval that no longer fits leaves the adjustment waiting.
+- 🤖 Two approvals, or an approval and a rejection, at the same instant: exactly one decision is recorded and stock changes at most once.
+- 🤖 The same count or adjustment sent twice is saved once; a failure at the last step of a count, adjustment or approval leaves nothing behind.
+- 🤖 Cashier and accountant cannot count, adjust or approve; a storekeeper cannot approve; business A and B are sealed off from each other.
 
 ---
 

@@ -99,6 +99,23 @@ export default async function HomePage() {
         </p>
       </div>
 
+      {snapshot.adjustmentsWaiting !== null && snapshot.adjustmentsWaiting > 0 && (
+        <Link
+          href="/stock/adjustments?status=pending"
+          data-testid="adjustments-waiting"
+          className="flex items-center justify-between gap-3 rounded-3xl bg-accent px-5 py-4 text-sm font-medium text-accent-foreground"
+        >
+          <span>
+            {snapshot.adjustmentsWaiting === 1
+              ? "1 stock adjustment is waiting for your approval."
+              : `${snapshot.adjustmentsWaiting} stock adjustments are waiting for your approval.`}
+          </span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            Review <ArrowUpRight className="size-4" aria-hidden />
+          </span>
+        </Link>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat testId="stat-products" highlight title="Products" value={snapshot.products.toLocaleString("en-NG")} note="In use and on sale" icon={Boxes} />
         <Stat testId="stat-categories" title="Categories" value={snapshot.categories.toLocaleString("en-NG")} note="Groups of products" icon={Tags} />

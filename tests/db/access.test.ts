@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "@/server/auth/context";
 import * as activityLog from "@/server/business/activity-log";
+import * as adjustments from "@/server/business/adjustments";
 import * as catalog from "@/server/business/catalog";
+import * as counts from "@/server/business/counts";
 import * as dashboard from "@/server/business/dashboard";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
@@ -27,6 +29,28 @@ let world: World;
 /** A delivery already recorded in each business, for operations that look one up by id. */
 let receiptInA = "";
 let receiptInB = "";
+/** A stock count (2 found where 1 is held) and an adjustment waiting for approval, in each. */
+let countInA = "";
+let countInB = "";
+let waitingInA = "";
+let waitingInB = "";
+
+function counted(business: World["a"], quantity = "2") {
+  return {
+    requestId: randomUUID(),
+    locationId: business.shelfId,
+    lines: [{ productId: business.product.id, entries: [{ unitId: business.product.baseUnitId, quantity }] }],
+  };
+}
+
+function adjusting(business: World["a"]) {
+  return {
+    requestId: randomUUID(),
+    locationId: business.shelfId,
+    lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, direction: "add", quantity: "1", reason: "FOUND" }],
+  };
+}
+
 /** And a transfer in each. */
 let transferInA = "";
 let transferInB = "";
@@ -70,6 +94,10 @@ beforeEach(async () => {
   receiptInB = (await stock.receiveGoods(world.b.as.ADMIN, delivery(world.b))).id;
   transferInA = (await transfers.transferStock(world.a.as.ADMIN, transfer(world.a))).id;
   transferInB = (await transfers.transferStock(world.b.as.ADMIN, transfer(world.b))).id;
+  countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
+  countInB = (await counts.submitCount(world.b.as.STOREKEEPER, counted(world.b))).id;
+  waitingInA = (await adjustments.recordAdjustment(world.a.as.STOREKEEPER, adjusting(world.a))).id;
+  waitingInB = (await adjustments.recordAdjustment(world.b.as.STOREKEEPER, adjusting(world.b))).id;
 });
 
 type Actor =
@@ -262,6 +290,67 @@ const OPERATIONS: Operation[] = [
     allowed: DELIVERY_VIEWERS,
     run: (context) => transfers.getTransfer(context, { transferId: transferInA }),
     runAgainstB: (context) => transfers.getTransfer(context, { transferId: transferInB }),
+  },
+  {
+    name: "counts.getCountSheet",
+    allowed: STOCK_MOVERS,
+    run: (context) => counts.getCountSheet(context),
+  },
+  {
+    name: "counts.submitCount",
+    allowed: STOCK_MOVERS,
+    run: (context) => counts.submitCount(context, counted(world.a)),
+  },
+  {
+    name: "counts.listCounts",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => counts.listCounts(context),
+  },
+  {
+    name: "counts.getCount",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => counts.getCount(context, { countId: countInA }),
+    runAgainstB: (context) => counts.getCount(context, { countId: countInB }),
+  },
+  {
+    name: "adjustments.getAdjustmentOptions",
+    allowed: STOCK_MOVERS,
+    run: (context) => adjustments.getAdjustmentOptions(context),
+  },
+  {
+    name: "adjustments.recordAdjustment",
+    allowed: STOCK_MOVERS,
+    run: (context) => adjustments.recordAdjustment(context, adjusting(world.a)),
+  },
+  {
+    name: "adjustments.adjustFromCount",
+    allowed: STOCK_MOVERS,
+    run: async (context) =>
+      adjustments.adjustFromCount(context, {
+        requestId: randomUUID(),
+        // A fresh count each time, because a count can be adjusted only once.
+        countId: (await counts.submitCount(world.a.as.ADMIN, counted(world.a, "5"))).id,
+        reasons: [{ lineNumber: 1, reason: "FOUND" }],
+      }),
+    runAgainstB: (context) =>
+      adjustments.adjustFromCount(context, { requestId: randomUUID(), countId: countInB, reasons: [{ lineNumber: 1, reason: "FOUND" }] }),
+  },
+  {
+    name: "adjustments.decideAdjustment",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => adjustments.decideAdjustment(context, { adjustmentId: waitingInA, outcome: "APPLIED" }),
+    runAgainstB: (context) => adjustments.decideAdjustment(context, { adjustmentId: waitingInB, outcome: "APPLIED" }),
+  },
+  {
+    name: "adjustments.listAdjustments",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => adjustments.listAdjustments(context),
+  },
+  {
+    name: "adjustments.getAdjustment",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => adjustments.getAdjustment(context, { adjustmentId: waitingInA }),
+    runAgainstB: (context) => adjustments.getAdjustment(context, { adjustmentId: waitingInB }),
   },
   {
     name: "stock.listStockOnHand",
@@ -516,6 +605,8 @@ describe("every server operation is listed here", () => {
       ...Object.keys(stock).map((name) => `stock.${name}`),
       ...Object.keys(corrections).map((name) => `corrections.${name}`),
       ...Object.keys(transfers).map((name) => `transfers.${name}`),
+      ...Object.keys(counts).map((name) => `counts.${name}`),
+      ...Object.keys(adjustments).map((name) => `adjustments.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

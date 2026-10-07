@@ -106,6 +106,22 @@ export function transferNumber(number: number): string {
   return `TR-${String(number).padStart(6, "0")}`;
 }
 
+/** A change in quantity for reading: "+5", "−5" (with a real minus sign) or "0". */
+export function signedNumber(value: string): string {
+  const plain = plainNumber(value.replace(/^-/, ""));
+  if (plain === "0") return "0";
+  return value.startsWith("-") ? `−${plain}` : `+${plain}`;
+}
+
+/** Stock count numbers are shown as SC-000012, adjustment numbers as AD-000012. */
+export function countNumber(number: number): string {
+  return `SC-${String(number).padStart(6, "0")}`;
+}
+
+export function adjustmentNumber(number: number): string {
+  return `AD-${String(number).padStart(6, "0")}`;
+}
+
 /**
  * A quantity in base units, also broken into the product's larger units for reading:
  * 215 singles with pack = 10 and carton = 100 → "2 carton + 1 pack + 5 single".

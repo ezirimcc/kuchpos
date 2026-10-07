@@ -332,3 +332,153 @@ test("an accountant can read transfers but not make one; a cashier sees neither;
   await page.goto("/stock/transfers");
   await expect(page.getByText("No stock has been moved between locations yet.")).toBeVisible();
 });
+
+async function stockOf(page: Page, product: string, location: "Storeroom" | "Shelf"): Promise<number> {
+  await page.goto("/stock");
+  return Number.parseInt(await page.getByTestId(`stock-row-${product}`).getByTestId(`stock-${location}`).innerText(), 10);
+}
+
+test("a storekeeper counts 5 fewer than the system holds: the difference shows only after saving, and the adjustment waits", async ({ page }) => {
+  await signIn(page, "gv.storekeeper");
+  await expectSignedInAs(page, "Storekeeper");
+  const before = await stockOf(page, "Tomato Seed Sachet", "Storeroom");
+
+  await page.getByRole("link", { name: "Counts" }).click();
+  await expect(page.getByText("No stock has been counted yet.")).toBeVisible();
+  await page.getByRole("link", { name: "New count" }).click();
+  await expect(page.getByRole("heading", { name: "New stock count" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+
+  // A blind count: nothing on the sheet says how much the system holds.
+  const row = page.getByTestId("count-product-Tomato Seed Sachet");
+  await expect(row).not.toContainText(String(before));
+  await expect(page.getByText("Nothing counted yet.")).toBeVisible();
+
+  await page.getByLabel("Where are you counting?").selectOption({ label: "Storeroom" });
+  await page.getByLabel("Tomato Seed Sachet: carton").fill("1");
+  await page.getByLabel("Tomato Seed Sachet: sachet").fill(String(before - 100 - 5));
+  await expect(page.getByTestId("counted-so-far")).toContainText("1 product counted");
+  await page.getByRole("button", { name: "Save count" }).click();
+
+  await expect(page.getByRole("heading", { name: /Count SC-000001/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Count SC-000001/ })).toContainText("1 did not match");
+  await expect(page.getByTestId("count-line-1")).toContainText(`1 carton + ${before - 105} sachet`);
+  await expect(page.getByTestId("count-line-1")).toContainText(String(before));
+  await expect(page.getByTestId("count-difference-1")).toHaveText("−5");
+
+  // The adjustment demands a reason, and a storekeeper's waits for approval.
+  const form = page.getByTestId("count-adjust-form");
+  await expect(form).toContainText("A manager or admin must approve this before stock changes.");
+  await form.getByLabel("Reason for Tomato Seed Sachet").selectOption({ label: "Missing or stolen" });
+  await form.getByRole("button", { name: "Send for approval" }).click();
+
+  await expect(page.getByRole("heading", { name: /Adjustment AD-000001/ })).toBeVisible();
+  await expect(page.getByTestId("adjustment-status")).toHaveText("Waiting for approval");
+  await expect(page.getByTestId("adjustment-line-1")).toContainText("−5 sachet");
+  await expect(page.getByTestId("adjustment-line-1")).toContainText("Missing or stolen");
+  await expect(page.getByTestId("decision-form")).toHaveCount(0);
+
+  expect(await stockOf(page, "Tomato Seed Sachet", "Storeroom")).toBe(before);
+});
+
+test("a manager is told an adjustment is waiting, approves it, and stock changes by the difference", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  const before = await stockOf(page, "Tomato Seed Sachet", "Storeroom");
+
+  await page.goto("/");
+  await expect(page.getByTestId("adjustments-waiting")).toContainText("1 stock adjustment is waiting for your approval.");
+  await page.getByTestId("adjustments-waiting").click();
+  await page.getByTestId("adjustment-row-1").getByRole("link", { name: "AD-000001" }).click();
+
+  await expect(page.getByRole("heading", { name: /Adjustment AD-000001/ })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("adjustment-line-1")).toContainText(String(before - 5));
+  await page.getByRole("button", { name: "Approve and change stock" }).click();
+
+  await expect(page.getByTestId("adjustment-status")).toHaveText("Applied");
+  await expect(page.getByTestId("decision-form")).toHaveCount(0);
+  await expect(page.getByText(/Green Valley Manager, /)).toBeVisible();
+
+  expect(await stockOf(page, "Tomato Seed Sachet", "Storeroom")).toBe(before - 5);
+  await page.goto("/");
+  await expect(page.getByTestId("adjustments-waiting")).toHaveCount(0);
+});
+
+test("a manager's own adjustment applies at once; a storekeeper's can be rejected, but only with a reason", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  const shelf = await stockOf(page, "Tomato Seed Sachet", "Shelf");
+
+  await gotoReady(page, "/stock/adjustments/new");
+  await page.getByLabel("Which location?").selectOption({ label: "Shelf" });
+  const line = page.getByTestId("adjustment-line-1");
+  await line.getByLabel("Product").fill("Tomato Seed Sachet");
+  await expect(page.getByTestId("available-1")).toContainText(`In Shelf now: ${shelf}`);
+  await line.getByLabel("How many").fill("2");
+  await line.getByLabel("Reason").selectOption({ label: "Damaged" });
+  await page.getByRole("button", { name: "Adjust stock now" }).click();
+
+  await expect(page.getByRole("heading", { name: /Adjustment AD-000002/ })).toBeVisible();
+  await expect(page.getByTestId("adjustment-status")).toHaveText("Applied");
+  await expect(page.getByTestId("adjustment-line-1")).toContainText("−2 sachet");
+  expect(await stockOf(page, "Tomato Seed Sachet", "Shelf")).toBe(shelf - 2);
+  await signOut(page);
+
+  // A storekeeper asks for more to be written off than is believable…
+  await signIn(page, "gv.storekeeper");
+  await expectSignedInAs(page, "Storekeeper");
+  await gotoReady(page, "/stock/adjustments/new");
+  await page.getByLabel("Which location?").selectOption({ label: "Shelf" });
+  await page.getByTestId("adjustment-line-1").getByLabel("Product").fill("Tomato Seed Sachet");
+  await page.getByTestId("adjustment-line-1").getByLabel("How many").fill("40");
+  await page.getByTestId("adjustment-line-1").getByLabel("Reason").selectOption({ label: "Expired" });
+  await page.getByRole("button", { name: "Send for approval" }).click();
+  await expect(page.getByRole("heading", { name: /Adjustment AD-000003/ })).toBeVisible();
+  await expect(page.getByTestId("adjustment-status")).toHaveText("Waiting for approval");
+  await signOut(page);
+
+  // …and the manager turns it down.
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await page.goto("/stock/adjustments?status=pending");
+  await page.getByTestId("adjustment-row-3").getByRole("link", { name: "AD-000003" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByRole("button", { name: "Reject" }).click();
+  await expect(page.getByText("Say why the adjustment is rejected.").first()).toBeVisible();
+  await page.getByLabel("Note (required when rejecting)").fill("These are not expired, check the dates again");
+  await page.getByRole("button", { name: "Reject" }).click();
+  await expect(page.getByTestId("adjustment-status")).toHaveText("Rejected");
+  await expect(page.getByTestId("decision-note")).toContainText("These are not expired, check the dates again");
+
+  expect(await stockOf(page, "Tomato Seed Sachet", "Shelf")).toBe(shelf - 2);
+  await page.goto("/stock/adjustments");
+  await expect(page.getByTestId("adjustment-row-3").getByTestId("adjustment-status")).toHaveText("Rejected");
+  await expect(page.getByTestId("adjustment-row-1")).toContainText("from SC-000001");
+});
+
+test("an accountant can read counts and adjustments but not make or decide them; a cashier sees neither", async ({ page }) => {
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  await page.goto("/stock/counts");
+  await expect(page.getByTestId("count-row-1")).toContainText("AD-000001 · applied");
+  await expect(page.getByRole("link", { name: "New count" })).toHaveCount(0);
+  await page.goto("/stock/adjustments");
+  await expect(page.getByTestId("adjustment-row-3")).toBeVisible();
+  await expect(page.getByRole("link", { name: "New adjustment" })).toHaveCount(0);
+  for (const path of ["/stock/counts/new", "/stock/adjustments/new"]) {
+    await page.goto(path);
+    await expect(page, path).toHaveURL(/\/$/);
+  }
+  await signOut(page);
+
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openFromMenu(page, "Stock");
+  await expect(page.getByRole("link", { name: "Counts" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Adjustments" })).toHaveCount(0);
+  for (const path of ["/stock/counts", "/stock/adjustments"]) {
+    await page.goto(path);
+    await expect(page, path).toHaveURL(/\/$/);
+  }
+});

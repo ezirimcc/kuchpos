@@ -64,6 +64,10 @@ How to read this document:
 | C37 | **Batch number and expiry date are per product.** When a product is created (or edited), two tick-boxes say whether it uses a batch number and whether it uses an expiry date. Deliveries of such a product must give them; other products are never asked. |
 | C38 | **"Expiring soon" is a setting.** Each business's admin sets how many months ahead counts as expiring soon (default 3). |
 | C39 | **Deliveries can be corrected after saving, without losing history** (owner's requirement, 2026-10-06). A correction never overwrites: every version of the delivery is kept as an unchangeable snapshot (the original is version 1), and every changed field is recorded with its previous value, new value, who, when and a required reason. Stock is corrected by a new, compensating stock movement — past movements are never edited. A correction that would leave less than zero in a location is refused. The corrected delivery, its history, the stock movements, the balances and the average cost are saved together or not at all. Only admins, managers and owners may correct. Corrected deliveries are marked, and their full history is shown. Nothing in the history can be deleted. |
+| C40 | **Adjustment reasons are a fixed list plus a note** (owner, 2026-10-07): Damaged, Expired, Missing or stolen, Counting error, Found, Sample or gift, Data entry error, Other. A note is required with "Other". The reason is chosen per product line, so reports can later say how much was lost to each cause. |
+| C41 | **Stock counts are "blind"** (owner, 2026-10-07): while counting, the sheet does not show what the system expects. The expected quantity and the difference are shown once the count is submitted. |
+| C42 | **A count may cover part of a location** (owner, 2026-10-07): the sheet can be narrowed to a category, and only the products actually filled in are counted — a product left blank is "not counted", never "zero". |
+| C43 | **Delivery corrections by a manager need no second approval** (owner, 2026-10-07). |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -106,8 +110,8 @@ How to read this document:
   - **Goods received** — stock arrives from a supplier into a chosen location (usually Storeroom). Records supplier, unit, quantity, cost price, and — for products that use them — batch number and expiry date. A delivery normally carries today's date; an admin or manager may give an earlier date with a note (C35). The stock itself changes at the moment the delivery is saved, whatever date it carries. A saved delivery can later be **corrected** by an admin or manager with a reason (C39): the supplier, date, invoice number, note, location, and each line's unit, quantity, cost, batch and expiry can be changed, and lines added or removed. The original and every later version stay on record.
   - **Transfer** — moves stock between Storeroom and Shelf. One document, two movements (out of one, into the other), saved together. Any of the product's units may be chosen. A transfer of more than the location holds is refused whole. A saved transfer is never changed; a mistake is put right with a transfer the other way. The list of transfers can be read by everyone who can read the stock reports (admin, manager, accountant, storekeeper).
   - **Sale** — takes stock out of the selling location.
-  - **Stock count** — staff enter what they physically counted; the system shows the difference from what it expected.
-  - **Adjustment** — corrects a difference, always with a **reason** chosen from a list (damaged, expired, theft/loss, count correction, sample/gift, data entry error, other + note).
+  - **Stock count** — staff enter what they physically counted in one location, in any of the product's units (for example 2 cartons and 7 singles); the system records what it expected at that moment and shows the difference (C41, C42). A saved count is never changed. The differences of a count can be turned into one adjustment, once.
+  - **Adjustment** — adds to or takes from the stock of one location, always with a **reason** per line chosen from a list (C40). It is stored as a difference ("5 fewer"), never as "set to 95", so anything sold or moved between counting and applying is not wiped out. A storekeeper's adjustment waits for an admin or manager to approve or reject it (P5); an admin's or manager's applies at once. An adjustment that would take out more than is there cannot be applied. Adjustments do not change the average cost.
   - **Return** *(proposed, §7)*.
 - **Stock cannot go below zero** while online. If the Shelf has 3 and the cashier tries to sell 5, the sale is refused with a clear message.
 
@@ -269,7 +273,7 @@ The table below applies **inside one business**.
 | Transfer between Storeroom and Shelf | ✅ | ✅ | — | — | ✅ |
 | Enter a stock count | ✅ | ✅ | — | — | ✅ |
 | Record a stock adjustment | ✅ | ✅ | — | — | 📝 |
-| Approve a stock adjustment *(proposed feature)* | ✅ | ✅ | — | — | — |
+| Approve or reject a stock adjustment | ✅ | ✅ | — | — | — |
 | **Reports** | | | | | |
 | Sales report | ✅ | ✅ | ✅ | own shift only | — |
 | Collections report | ✅ | ✅ | ✅ | own shift only | — |

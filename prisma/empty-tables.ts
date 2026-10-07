@@ -11,6 +11,11 @@ import type { PrismaClient } from "../src/generated/prisma/client";
 const TABLES = [
   "activity_log",
   "stock_movement",
+  "stock_adjustment_decision",
+  "stock_adjustment_line",
+  "stock_adjustment",
+  "stock_count_line",
+  "stock_count",
   "stock_transfer_line",
   "stock_transfer",
   "goods_receipt_change",

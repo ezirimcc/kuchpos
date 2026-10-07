@@ -207,19 +207,35 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q14 (receipt contents) before this starts. *(Answered 2026-10-07: C44, C45.)*
 
-### M9 · Other payment methods, split payments, till sessions
+### M9 · Payment methods, split payments, till sessions
 **Goal:** Every way a customer pays is recorded correctly.
-- Card terminal and bank transfer (recorded, with reference). Split across methods.
+- Payment methods managed by the admin (C46): a name and a kind (cash, bank transfer, POS/card); "Cash" always exists; used methods are switched off, not deleted. Chosen at checkout, with an optional reference for transfer and POS. Split across methods.
 - Till sessions: open with float, close with counted cash, show expected vs counted.
 
 **Accept when:**
+- 🧑 The admin adds "Transfer – GTBank" and "POS – Moniepoint"; both can be chosen at checkout; a method switched off is no longer offered but old sales still show it.
 - 🧑 A sale paid part cash, part transfer shows both on the receipt and in the session summary.
 - 🧑 Closing a till shows expected cash = float + cash sales − change − cash refunds.
 - 🤖 Payments that do not add up exactly to the total are refused.
 
+### M9b · Pending sales and cancelling a sale  ← added 2026-10-07 at the owner's request
+**Goal:** A cashier is never stuck behind one customer, and a changed mind can be put right the same day.
+- Pending sales (C47): park the sale in progress, start another, pick the parked one up again. Kept on that computer for that cashier, up to 10; no stock reserved; checked again on completion.
+- Cancel a sale (C48): admin or manager, whole sale, same business day, note required. Stock returns by new movements; the refund is recorded in the till session; the sale is marked "Cancelled" and printed receipts of it say so.
+
+**Accept when:**
+- 🧑 Park a sale of two products, make and complete a different sale, pick the parked one up: it is as it was, and completes normally.
+- 🧑 A parked sale survives reloading the page, and another cashier signing in on the same computer does not see it.
+- 🧑 A manager cancels a sale with a note: the Shelf has the goods back, the sale says "Cancelled" with who, when and why, and the till's expected cash is lower by the cash refunded.
+- 🧑 A cashier has no "Cancel sale" button.
+- 🤖 A cancelled sale cannot be cancelled again; two people cancelling at the same instant cancel it once.
+- 🤖 A sale from an earlier business day cannot be cancelled; a cancellation without a note is refused.
+- 🤖 Cancelling adds stock movements and payment records; it never changes or deletes the sale, its lines, its movements or its payments.
+- 🤖 A failure halfway through cancelling leaves the sale, the stock and the till exactly as they were.
+
 ### M10 · Customers and credit
 **Goal:** Debts are known precisely and can be explained line by line.
-- Customer records (per business). Credit as a payment method (full or as part of a split).
+- Customer records (per business): name and phone required; address, city and state optional (C49). Chosen at checkout; no customer means a walk-in. Credit as a payment method (full or as part of a split).
 - Add-only customer account history; balance = sum of history.
 - Repayments by any method, part or full; applied oldest-first unless a sale is chosen.
 - Customer statement. Optional credit limit; exceeding it needs manager approval.

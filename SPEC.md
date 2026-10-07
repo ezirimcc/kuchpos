@@ -70,6 +70,11 @@ How to read this document:
 | C43 | **Delivery corrections by a manager need no second approval** (owner, 2026-10-07). |
 | C44 | **What a sales receipt shows** (owner, 2026-10-07; answers Q14): business name; the header text from Settings (address, phone); the business's tax number (TIN), a new optional setting, printed only if filled in; receipt number; date and time; cashier's name; each item with unit, quantity, unit price and line total; the total; amount paid and change; the footer text from Settings (return policy, thank-you line). The tax amount is printed only when the tax rate is above 0%. |
 | C45 | **After a sale is saved** (owner, 2026-10-07): the receipt is shown and the print window opens automatically, with "New sale" ready for the Enter key. A receipt can be printed again later from the sale's page and is then marked "REPRINT". |
+| C46 | **Payment methods are a list the admin manages** (owner, 2026-10-07). Each has a name the business chooses (for example "Transfer – GTBank", "POS – Moniepoint") and a kind: cash, bank transfer or POS/card. The kind is what tells the till how much cash should be in the drawer. "Cash" always exists and cannot be removed. A method that has been used is switched off, never deleted. The method is chosen at checkout; one sale may be split across several; transfer and POS payments may carry a reference number. |
+| C47 | **A sale can be kept pending while another is made** (owner, 2026-10-07). A pending sale is kept on that checkout computer for the cashier who parked it (up to 10), survives a page reload, reserves no stock, and has its prices and stock checked again when it is completed. It is not a sale until completed. |
+| C48 | **Admins and managers can cancel a sale with a note** (owner, 2026-10-07), for example when the customer changes their mind. Whole sale only, on the same business day. The sale stays on record marked "Cancelled"; its stock goes back to where it came from by new movements; the refund is recorded against the till so the till still balances. Part of a sale, or a sale from an earlier day, is a return (M13). |
+| C49 | **Customer details** (owner, 2026-10-07): name and phone are required; address, city and state are optional. A sale with no customer chosen is a walk-in. A customer is required only for a credit sale. |
+| C50 | **Order of the selling milestones** (owner, 2026-10-07): M9 payment methods, split payments and till sessions → M9b pending sales and cancelling a sale → M10 customers and credit → M11 discounts. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -131,13 +136,14 @@ Rules:
 - **All or nothing.** The sale, its stock movements, its payments and any customer debt are saved in one step. If any part fails, none of it is saved.
 - **No double sales.** Each sale gets a unique ID on the cashier's computer before it is sent. If the Save button is pressed twice, or the network repeats the request, the server recognises the ID and saves it only once.
 - **Two cashiers at once.** If two cashiers try to sell the last item at the same moment, exactly one succeeds; the other gets an "insufficient stock" message.
-- A completed sale is never edited. Corrections happen through a void or return *(proposed, §7)*.
+- A completed sale is never edited. Corrections happen by cancelling the whole sale on the same day (C48) or, later or in part, by a return *(proposed, §7)*.
+- A sale in progress can be parked as a **pending sale** and picked up again later on the same computer (C47).
 - **Proposed:** sales take stock from the **Shelf** by default; a permitted user can choose **Storeroom** for a line (useful for 50 kg bags that never sit on the shelf). Permitted users are managers, admins and owners (accepted as P7).
 - **Proposed:** each cashier opens a **till session** at the start of a shift (opening cash) and closes it at the end (counted cash vs expected cash). This is what makes the cash collections report trustworthy.
 
 ### 4.4 Payments and customer accounts
 
-- Payment methods: **Cash**, **Card/POS terminal** (recorded, with optional reference number), **Bank transfer** (recorded, with optional reference), **Credit** (added to the customer's account).
+- Payment methods are a list managed by the admin (C46), each of the kind **cash**, **bank transfer** or **POS/card** (recorded, with optional reference number); plus **Credit** (added to the customer's account), which is not in the list.
 - **Split payment:** any combination. The parts must add up exactly to the sale total.
 - Cash: the app records amount tendered and change given.
 - **Credit sales** require a named customer account. Walk-in customers cannot buy on credit.
@@ -257,7 +263,8 @@ The table below applies **inside one business**.
 | Sell on credit to a customer | ✅ | ✅ | — | ✅ | — |
 | Request an extra discount | ✅ | ✅ | — | 📝 | — |
 | Approve an extra discount | ✅ | ✅ | — | — | — |
-| Void a sale / process a return *(proposed feature)* | ✅ | ✅ | — | 📝 | — |
+| Cancel a whole sale on the same day, with a note (C48) | ✅ | ✅ | — | — | — |
+| Process a return *(proposed feature)* | ✅ | ✅ | — | 📝 | — |
 | Open and close own till session | ✅ | ✅ | — | ✅ | — |
 | Review any till session | ✅ | ✅ | ✅ | — | — |
 | **Customers** | | | | | |

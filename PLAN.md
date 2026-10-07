@@ -178,7 +178,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ## Phase C — Selling
 
-### M8 · Checkout: cash sale — built 2026-10-07, awaiting owner's check
+### M8 · Checkout: cash sale ✅ (verified 2026-10-07, tag `m8`; the real-printer check is still to do)
 **Goal:** The core of the system — a correct, fast, safe cash sale.
 - Checkout screen: search by name/code/barcode, pick unit and quantity, running total, keyboard-friendly.
 - **Built offline-ready from the start:** the screen works from a copy of the product list and prices held in the browser, and sends a complete sale to the server in one message. (The offline queue itself comes in M12.)

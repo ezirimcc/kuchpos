@@ -145,7 +145,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 Storekeeper, cashier and accountant cannot correct; business B cannot correct or read business A's delivery.
 - 🤖 Deliveries saved before this feature get their original snapshot from the database update and can then be corrected.
 
-### M6 · Transfers — built 2026-10-07, awaiting owner's check
+### M6 · Transfers ✅ (verified 2026-10-07, tag `m6`)
 **Goal:** Stock moves between Storeroom and Shelf with a paper trail.
 - Transfer document with unit selection; out-movement and in-movement saved together.
 - Transfers list (search, date range) and detail, readable by admin, manager, accountant, storekeeper; the form shows how much is in the "from" location.

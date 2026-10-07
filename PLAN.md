@@ -158,7 +158,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 The same transfer sent twice is saved once; a failure at the last step leaves nothing behind; if one product of several is short, nothing moves.
 - 🤖 A cashier and an accountant cannot transfer; business A cannot use business B's locations or products, and B sees none of A's transfers.
 
-### M7 · Stock counts and adjustments — built 2026-10-07, awaiting owner's check
+### M7 · Stock counts and adjustments ✅ (verified 2026-10-07, tag `m7`)
 **Goal:** Physical reality can be compared with the system and corrected, with reasons.
 - Count sheet per location (enter in any unit); difference shown. Blind while counting (C41); may be narrowed to a category, and only products filled in are counted (C42).
 - Adjustments with mandatory reason from a fixed list, per line (C40). A storekeeper's adjustment waits for manager approval; a manager's or admin's applies at once. Approve or reject (rejection needs a reason).
@@ -200,7 +200,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 A sale whose price was tampered with in the browser is refused by the server.
 - 🤖 A cashier of Business A cannot sell Business B's products or stock.
 
-**You do:** Answer Q14 (receipt contents) before this starts.
+**You do:** Answer Q14 (receipt contents) before this starts. *(Answered 2026-10-07: C44, C45.)*
 
 ### M9 · Other payment methods, split payments, till sessions
 **Goal:** Every way a customer pays is recorded correctly.

@@ -68,6 +68,8 @@ How to read this document:
 | C41 | **Stock counts are "blind"** (owner, 2026-10-07): while counting, the sheet does not show what the system expects. The expected quantity and the difference are shown once the count is submitted. |
 | C42 | **A count may cover part of a location** (owner, 2026-10-07): the sheet can be narrowed to a category, and only the products actually filled in are counted — a product left blank is "not counted", never "zero". |
 | C43 | **Delivery corrections by a manager need no second approval** (owner, 2026-10-07). |
+| C44 | **What a sales receipt shows** (owner, 2026-10-07; answers Q14): business name; the header text from Settings (address, phone); the business's tax number (TIN), a new optional setting, printed only if filled in; receipt number; date and time; cashier's name; each item with unit, quantity, unit price and line total; the total; amount paid and change; the footer text from Settings (return policy, thank-you line). The tax amount is printed only when the tax rate is above 0%. |
+| C45 | **After a sale is saved** (owner, 2026-10-07): the receipt is shown and the print window opens automatically, with "New sale" ready for the Enter key. A receipt can be printed again later from the sale's page and is then marked "REPRINT". |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1

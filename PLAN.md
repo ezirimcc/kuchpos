@@ -245,7 +245,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 A cash sale cannot be cancelled while its terminal's till is closed, or when that till does not hold the cash to give back; a sale paid only by transfer or POS can.
 - 🤖 Cancelled sales are left out of sales totals, "sales today" and a till's sales figure; refunds are taken off "collected today" and off the till's expected cash.
 
-### M10 · Customers and credit — built 2026-10-08, awaiting owner's check
+### M10 · Customers and credit ✅ (verified 2026-10-08, tag `m10`)
 **Goal:** Debts are known precisely and can be explained line by line.
 - Customer records (per business): name and phone required; address, city and state optional (C49). Chosen at checkout; no customer means a walk-in. Credit as a payment method (full or as part of a split).
 - Add-only customer account history; balance = sum of history.

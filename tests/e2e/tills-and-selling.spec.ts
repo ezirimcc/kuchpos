@@ -427,7 +427,16 @@ test("the cashier closes the till with a count and is not told the result; the m
   await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
 
   const form = page.getByTestId("close-till-form");
-  await form.getByLabel("Cash counted in the drawer (₦)").fill("60600");
+  // Counted note by note: 60 × ₦1,000 + 1 × ₦500 + 4 × ₦20 + ₦20 in coins = ₦60,600.
+  await form.getByRole("button", { name: "Count by notes" }).click();
+  await form.getByLabel("₦1000 ×").fill("60");
+  await form.getByLabel("₦500 ×").fill("1");
+  await form.getByLabel("₦20 ×").fill("four");
+  await expect(form.getByTestId("close-cash-counter-total")).toHaveText("Check the numbers above");
+  await form.getByLabel("₦20 ×").fill("4");
+  await form.getByLabel("Coins / other ₦").fill("20");
+  await expect(form.getByTestId("close-cash-counter-total")).toHaveText("₦60,600.00");
+  await expect(form.getByLabel("Cash counted in the drawer (₦)")).toHaveValue("60600.00");
   await form.getByLabel("Note (optional)").fill("Counted twice");
   await form.getByRole("button", { name: "Close the till" }).click();
 

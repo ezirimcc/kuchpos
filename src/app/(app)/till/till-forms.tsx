@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { closeTillAction, openTillAction, recountTillAction } from "./actions";
+import { CashCounter } from "./cash-counter";
 
 type Terminal = { id: string; code: string; name: string };
 
@@ -92,6 +93,7 @@ export function OpenTillForm({ terminalId, terminalCode }: { terminalId: string;
           <p className="text-xs text-muted-foreground">The float you start with for giving change. Type 0 if the drawer is empty.</p>
         )}
       </div>
+      <CashCounter idPrefix="open" onTotal={setOpeningFloat} />
       {message && <Alert variant="destructive">{message}</Alert>}
       {errors.terminalId && <Alert variant="destructive">{errors.terminalId}</Alert>}
       <div>
@@ -150,6 +152,7 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
         />
         {errors.countedCash && <p className="text-xs text-destructive">{errors.countedCash}</p>}
       </div>
+      <CashCounter idPrefix="close" onTotal={setCountedCash} />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="closing-note">Note (optional)</Label>
         <Input id="closing-note" value={note} onChange={(event) => setNote(event.target.value)} autoComplete="off" maxLength={300} />
@@ -213,6 +216,7 @@ export function RecountTillForm({ sessionId }: { sessionId: string }) {
         />
         {errors.countedCash && <p className="text-xs text-destructive">{errors.countedCash}</p>}
       </div>
+      <CashCounter idPrefix="recount" onTotal={setCountedCash} />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="recount-note">Why it was counted again</Label>
         <Input id="recount-note" value={note} onChange={(event) => setNote(event.target.value)} aria-invalid={!!errors.note} autoComplete="off" maxLength={300} required />

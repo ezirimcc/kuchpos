@@ -75,6 +75,8 @@ How to read this document:
 | C48 | **Admins and managers can cancel a sale with a note** (owner, 2026-10-07), for example when the customer changes their mind. Whole sale only, on the same business day. The sale stays on record marked "Cancelled"; its stock goes back to where it came from by new movements; the refund is recorded against the till so the till still balances. Part of a sale, or a sale from an earlier day, is a return (M13). |
 | C49 | **Customer details** (owner, 2026-10-07): name and phone are required; address, city and state are optional. A sale with no customer chosen is a walk-in. A customer is required only for a credit sale. |
 | C50 | **Order of the selling milestones** (owner, 2026-10-07): M9 payment methods, split payments and till sessions → M9b pending sales and cancelling a sale → M10 customers and credit → M11 discounts. |
+| C51 | **A till belongs to a checkout computer** — one cash drawer — not to a person (owner, 2026-10-08). The cashier's count at closing is blind, **and the cashier is not told whether it balanced**: the expected cash and the difference are shown only to those who review tills (admin, manager, accountant, owner). A closing note is optional. Each payment method is used at most once per sale. |
+| C52 | **A manager or admin can recount a closed till on the same business day** (owner, 2026-10-08). Each recount is saved as a separate record with who, when, the amount counted and a note; the cashier's own closing count is never replaced. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -139,7 +141,7 @@ Rules:
 - A completed sale is never edited. Corrections happen by cancelling the whole sale on the same day (C48) or, later or in part, by a return *(proposed, §7)*.
 - A sale in progress can be parked as a **pending sale** and picked up again later on the same computer (C47).
 - **Proposed:** sales take stock from the **Shelf** by default; a permitted user can choose **Storeroom** for a line (useful for 50 kg bags that never sit on the shelf). Permitted users are managers, admins and owners (accepted as P7).
-- **Till sessions** (built at M9): a till session belongs to one checkout terminal — one cash drawer. It is opened with the cash in the drawer (the float) and closed with a count. A terminal has one open session at a time, and **nothing can be sold at a terminal whose till is not open**. Whoever may sell can sell into the open till (each sale still records who made it); the person who opened it, or an admin or manager, closes it. Expected cash = float + cash payments (change given is already left out). The count is **blind**: the person running the till is shown the expected cash only after closing; admins, managers and accountants can see it at any time. This is what makes the cash collections report trustworthy.
+- **Till sessions** (built at M9): a till session belongs to one checkout terminal — one cash drawer. It is opened with the cash in the drawer (the float) and closed with a count. A terminal has one open session at a time, and **nothing can be sold at a terminal whose till is not open**. Whoever may sell can sell into the open till (each sale still records who made it); the person who opened it, or an admin or manager, closes it. Expected cash = float + cash payments (change given is already left out). The count is **blind** (C51): the person running the till is never shown the expected cash or whether the count balanced; admins, managers and accountants can see both at any time. An admin or manager may **recount** a closed till on the same business day, as a separate record (C52). This is what makes the cash collections report trustworthy.
 
 ### 4.4 Payments and customer accounts
 
@@ -266,7 +268,8 @@ The table below applies **inside one business**.
 | Cancel a whole sale on the same day, with a note (C48) | ✅ | ✅ | — | — | — |
 | Process a return *(proposed feature)* | ✅ | ✅ | — | 📝 | — |
 | Open and close own till session | ✅ | ✅ | — | ✅ | — |
-| Review any till session | ✅ | ✅ | ✅ | — | — |
+| Review any till session (expected cash, and whether a count balanced) | ✅ | ✅ | ✅ | — | — |
+| Recount a closed till on the same day (C52) | ✅ | ✅ | — | — | — |
 | **Customers** | | | | | |
 | Create a customer, edit contact details | ✅ | ✅ | ✅ | ✅ | — |
 | Set a customer's credit limit *(proposed feature)* | ✅ | ✅ | — | — | — |

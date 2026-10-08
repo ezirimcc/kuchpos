@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
-import { closeTillAction, openTillAction } from "./actions";
+import { closeTillAction, openTillAction, recountTillAction } from "./actions";
 
 type Terminal = { id: string; code: string; name: string };
 
@@ -132,8 +132,8 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
       <div>
         <h2 className="text-base font-semibold">Close the till</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Count all the cash in the drawer, including the float, and type the amount. What the system expected is shown
-          after you close. Nothing can be sold at this checkout until the till is opened again.
+          Count all the cash in the drawer, including the float, and type the amount. A manager checks it against the
+          sales. Nothing can be sold at this checkout until the till is opened again.
         </p>
       </div>
       <div className="flex flex-col gap-1.5">
@@ -159,6 +159,69 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
       <div>
         <Button type="submit" size="lg" variant="outline" disabled={pending}>
           {pending ? "Closing…" : "Close the till"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** A manager's or admin's own count of a closed till, the same day. Saved as a separate record. */
+export function RecountTillForm({ sessionId }: { sessionId: string }) {
+  const [pending, startTransition] = useTransition();
+  const [countedCash, setCountedCash] = useState("");
+  const [note, setNote] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function recount(event: React.FormEvent) {
+    event.preventDefault();
+    if (pending) return;
+    setMessage(null);
+    setErrors({});
+    startTransition(async () => {
+      const result = await recountTillAction({ sessionId, countedCash: countedCash.trim(), note });
+      if (result.status === "success") {
+        // The page is drawn again by the server and lists the new recount.
+        setCountedCash("");
+        setNote("");
+      } else if (result.status === "error") {
+        setMessage(result.message);
+        setErrors(result.fieldErrors);
+      }
+    });
+  }
+
+  return (
+    <form onSubmit={recount} className="flex max-w-md flex-col gap-4" data-testid="recount-till-form">
+      <div>
+        <h2 className="text-base font-semibold">Count this till again</h2>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Only today, the day it was closed. Your count is saved as a separate record; the closing count stays as it is.
+        </p>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="recountedCash">Cash you counted (₦)</Label>
+        <Input
+          id="recountedCash"
+          value={countedCash}
+          onChange={(event) => setCountedCash(event.target.value)}
+          inputMode="decimal"
+          autoComplete="off"
+          aria-invalid={!!errors.countedCash}
+          className="text-right tabular-nums"
+          required
+        />
+        {errors.countedCash && <p className="text-xs text-destructive">{errors.countedCash}</p>}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="recount-note">Why it was counted again</Label>
+        <Input id="recount-note" value={note} onChange={(event) => setNote(event.target.value)} aria-invalid={!!errors.note} autoComplete="off" maxLength={300} required />
+        {errors.note && <p className="text-xs text-destructive">{errors.note}</p>}
+      </div>
+      {message && <Alert variant="destructive">{message}</Alert>}
+      <div>
+        <Button type="submit" variant="outline" disabled={pending}>
+          {pending ? "Saving…" : "Save recount"}
         </Button>
       </div>
     </form>

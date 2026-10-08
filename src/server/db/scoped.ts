@@ -50,6 +50,7 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   StockAdjustmentDecision: { filter: (businessId) => ({ businessId }), stamp: true },
   PaymentMethod: { filter: (businessId) => ({ businessId }), stamp: true },
   TillSession: { filter: (businessId) => ({ businessId }), stamp: true },
+  TillSessionRecount: { filter: (businessId) => ({ businessId }), stamp: true },
   TillSessionClose: { filter: (businessId) => ({ businessId }), stamp: true },
   DocumentCounter: { filter: (businessId) => ({ businessId }), stamp: true },
   Sale: { filter: (businessId) => ({ businessId }), stamp: true },

@@ -72,6 +72,7 @@ model Business {
   paymentMethods PaymentMethod[]
   tillSessions  TillSession[]
   tillSessionCloses TillSessionClose[]
+  tillSessionRecounts TillSessionRecount[]
   sales         Sale[]
   saleLines     SaleLine[]
   payments      Payment[]
@@ -1030,6 +1031,7 @@ model TillSession {
   sales          Sale[]
   payments       Payment[]
   close          TillSessionClose?
+  recounts       TillSessionRecount[]
 
   @@unique([businessId, number])
   @@index([terminalId, openedAt])
@@ -1055,4 +1057,27 @@ model TillSessionClose {
   createdAt      DateTime    @default(now()) @db.DateTime(3)
 
   @@map("till_session_close")
+}
+
+/// A manager's or admin's own count of a till's cash after it was closed, on the same business
+/// day (SPEC C52). A separate record each time: the cashier's closing count is never replaced.
+/// Add-only.
+model TillSessionRecount {
+  id                String      @id @default(uuid()) @db.Char(36)
+  businessId        String      @db.Char(36)
+  business          Business    @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sessionId         String      @db.Char(36)
+  session           TillSession @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// What should be there: the figure stored when the till was closed.
+  expectedCash      Decimal     @db.Decimal(14, 2)
+  countedCash       Decimal     @db.Decimal(14, 2)
+  /// Counted minus expected: negative means cash is short.
+  difference        Decimal     @db.Decimal(14, 2)
+  note              String      @db.VarChar(300)
+  recountedByUserId String?
+  recountedByName   String
+  createdAt         DateTime    @default(now()) @db.DateTime(3)
+
+  @@index([sessionId, createdAt])
+  @@map("till_session_recount")
 }

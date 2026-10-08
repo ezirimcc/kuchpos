@@ -11,6 +11,8 @@ import { paymentKindLabel } from "@/lib/payment-kinds";
 import { requirePageContext } from "@/server/auth/request";
 import { getTillSession } from "@/server/business/till";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
+import { can } from "@/server/permissions";
+import { RecountTillForm } from "../../till-forms";
 import { Difference } from "../difference";
 
 export const metadata: Metadata = { title: "Till session — KuchPos" };
@@ -29,6 +31,8 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
     throw error;
   }
   const open = session.closedAt === null;
+  // Only those who review tills are shown the expected cash and whether a count balanced (SPEC C51).
+  const reviewer = can(context, "till.reviewAny");
 
   const facts: [string, string][] = [
     ["Checkout", session.terminalCode],
@@ -47,13 +51,15 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
         title={
           <span className="flex flex-wrap items-center gap-2">
             Till session {tillSessionNumber(session.number)}
-            {open ? <Badge>Open now</Badge> : <Difference amount={session.difference ?? "0.00"} />}
+            {open ? <Badge>Open now</Badge> : session.difference !== null ? <Difference amount={session.difference} /> : <Badge variant="secondary">Closed</Badge>}
           </span>
         }
         description={
           open
             ? "This till is still open. Its cash is counted when it is closed."
-            : "What was taken, and how the cash counted in the drawer compared with what should have been there."
+            : reviewer
+              ? "What was taken, and how the cash counted in the drawer compared with what should have been there."
+              : "This till is closed and its cash has been counted. A manager checks the count against the sales."
         }
       />
 
@@ -76,7 +82,7 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
           <h2 className="px-1 text-base font-semibold">Taken, by payment method</h2>
           {session.byMethod.length === 0 ? (
             <p className="rounded-3xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-              {open && session.saleCount > 0 ? "Cash takings are shown when the till is closed." : "Nothing has been taken in this session."}
+              {!reviewer && session.saleCount > 0 ? "Cash takings are checked by a manager." : "Nothing has been taken in this session."}
             </p>
           ) : (
             <Table>
@@ -101,8 +107,8 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
               </TableBody>
             </Table>
           )}
-          {open && session.expectedCash === null && session.byMethod.length > 0 && (
-            <p className="px-1 text-xs text-muted-foreground">Cash takings are shown when the till is closed.</p>
+          {!reviewer && session.byMethod.length > 0 && (
+            <p className="px-1 text-xs text-muted-foreground">Cash takings are not shown here; a manager checks them.</p>
           )}
         </div>
 
@@ -113,18 +119,40 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
               <span className="text-muted-foreground">Opening float</span>
               <span>{nairaFromText(session.openingFloat)}</span>
             </p>
+            {reviewer && (
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Should be there (float + cash sales − change)</span>
+                <span data-testid="till-expected">{nairaFromText(session.expectedCash ?? "0.00")}</span>
+              </p>
+            )}
             <p className="flex justify-between gap-3 text-sm">
-              <span className="text-muted-foreground">Should be there (float + cash sales − change)</span>
-              <span data-testid="till-expected">{session.expectedCash === null ? "Shown at closing" : nairaFromText(session.expectedCash)}</span>
-            </p>
-            <p className="flex justify-between gap-3 text-sm">
-              <span className="text-muted-foreground">Counted</span>
+              <span className="text-muted-foreground">Counted at closing{session.closedByName ? ` by ${session.closedByName}` : ""}</span>
               <span data-testid="till-counted">{session.countedCash === null ? "Not counted yet" : nairaFromText(session.countedCash)}</span>
             </p>
-            {session.difference !== null && (
+            {session.closingDifference !== null && (
               <p className="flex items-center justify-between gap-3 border-t pt-2 text-sm font-medium">
-                <span>Result</span>
-                <Difference amount={session.difference} />
+                <span>Result of the closing count</span>
+                <span data-testid="till-closing-result">
+                  <Difference amount={session.closingDifference} />
+                </span>
+              </p>
+            )}
+            {session.recounts.map((recount, index) => (
+              <div key={recount.id} className="flex flex-col gap-1 border-t pt-2 text-sm" data-testid={`till-recount-${index + 1}`}>
+                <p className="flex items-center justify-between gap-3 font-medium">
+                  <span>
+                    Recount {index + 1}: {nairaFromText(recount.countedCash)}
+                  </span>
+                  <Difference amount={recount.difference} />
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {recount.recountedByName}, {formatDateTime(recount.createdAt)} · {recount.note}
+                </p>
+              </div>
+            ))}
+            {!reviewer && !open && (
+              <p className="border-t pt-2 text-xs text-muted-foreground" data-testid="till-result-hidden">
+                A manager checks this count against the sales.
               </p>
             )}
             {session.canClose && (
@@ -135,6 +163,14 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
           </CardContent>
         </Card>
       </div>
+
+      {session.canRecount && (
+        <Card>
+          <CardContent>
+            <RecountTillForm sessionId={session.id} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

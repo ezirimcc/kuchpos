@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPaymentMethod, listPaymentMethods, renamePaymentMethod, setPaymentMethodActive } from "@/server/business/payment-methods";
 import { getCheckoutCatalogue, getSale, postSale } from "@/server/business/sales";
 import { createTerminal } from "@/server/business/setup";
 import { receiveGoods } from "@/server/business/stock";
-import { closeTill, getTill, getTillSession, listTillSessions, openTill } from "@/server/business/till";
+import { closeTill, getTill, getTillSession, listTillSessions, openTill, recountTill } from "@/server/business/till";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
@@ -209,11 +209,18 @@ describe("the till", () => {
     expect(open).toMatchObject({ expectedCash: null, countedCash: null, canClose: true, saleCount: 3, salesTotal: "12700.00" });
     expect(open.byMethod).toEqual([{ methodName: "Bank transfer", kind: "TRANSFER", count: 2, amount: "6700.00" }]);
 
+    // The cashier closes, and is told nothing about the result — then or later.
     const closed = await closeTill(world.a.as.CASHIER, { sessionId: opened.id, countedCash: "10900", note: "A ₦100 note is missing" });
-    expect(closed).toMatchObject({ expectedCash: "11000.00", countedCash: "10900.00", difference: "-100.00", alreadyClosed: false });
+    expect(closed).toEqual({ id: opened.id, number: 1, countedCash: "10900.00", expectedCash: null, difference: null, alreadyClosed: false });
+    const cashiers = await getTillSession(world.a.as.CASHIER, { sessionId: opened.id });
+    expect(cashiers).toMatchObject({ countedCash: "10900.00", expectedCash: null, difference: null, closingDifference: null, recounts: [], canRecount: false });
+    expect(cashiers.byMethod.map((entry) => entry.kind)).toEqual(["TRANSFER"]);
+    expect((await listTillSessions(world.a.as.CASHIER)).sessions[0]).toMatchObject({ number: 1, difference: null });
+    expect(JSON.stringify(cashiers)).not.toContain("11000");
 
-    const detail = await getTillSession(world.a.as.CASHIER, { sessionId: opened.id });
-    expect(detail).toMatchObject({ openingFloat: "5000.00", expectedCash: "11000.00", countedCash: "10900.00", difference: "-100.00", closingNote: "A ₦100 note is missing", closedByName: "Test a.cashier", canClose: false });
+    // The manager sees all of it.
+    const detail = await getTillSession(world.a.as.MANAGER, { sessionId: opened.id });
+    expect(detail).toMatchObject({ openingFloat: "5000.00", expectedCash: "11000.00", countedCash: "10900.00", difference: "-100.00", closingDifference: "-100.00", closingNote: "A ₦100 note is missing", closedByName: "Test a.cashier", canClose: false, canRecount: true });
     expect(detail.byMethod).toEqual([
       { methodName: "Bank transfer", kind: "TRANSFER", count: 2, amount: "6700.00" },
       { methodName: "Cash", kind: "CASH", count: 2, amount: "6000.00" },
@@ -225,7 +232,7 @@ describe("the till", () => {
   it("once closed nothing more can be sold there until it is opened again, and each session counts only its own sales", async () => {
     const first = await openA("1000");
     await postSale(world.a.as.CASHIER, sale(5, [cash("500.00")]));
-    expect(await closeTill(world.a.as.CASHIER, { sessionId: first.id, countedCash: "1500" })).toMatchObject({ difference: "0.00" });
+    expect(await closeTill(world.a.as.MANAGER, { sessionId: first.id, countedCash: "1500" })).toMatchObject({ difference: "0.00" });
     expect((await refusal(postSale(world.a.as.CASHIER, sale(1, [cash("100.00")])))).message).toMatch(/till of T1 is not open/);
 
     const second = await openA("200", world.a.as.MANAGER);
@@ -258,7 +265,10 @@ describe("the till", () => {
       closeTill(world.a.as.MANAGER, { sessionId: opened.id, countedCash: "1400" }),
     ]);
     expect(results.filter((result) => !result.alreadyClosed)).toHaveLength(1);
-    expect(results[0].difference).toBe(results[1].difference);
+    // Both are told about the one closing that was saved; only the manager is told its result.
+    expect(results[0].countedCash).toBe(results[1].countedCash);
+    expect(results[0].difference).toBeNull();
+    expect(results[1].difference).toBe(results[1].countedCash === "1500.00" ? "0.00" : "-100.00");
     expect(await closeTill(world.a.as.ADMIN, { sessionId: opened.id, countedCash: "9" })).toMatchObject({ alreadyClosed: true });
     expect(await getDb().tillSessionClose.count()).toBe(1);
   });
@@ -274,6 +284,68 @@ describe("the till", () => {
     expect(close.expectedCash.toFixed(2)).toBe(`${sold * 100}.00`);
     expect(await getDb().sale.count({ where: { tillSessionId: opened.id } })).toBe(sold);
     expect(await onShelf()).toBe(`${500 - sold}.000`);
+  });
+
+  it("can be recounted by a manager or admin the same day, each recount a record of its own; the closing count is never replaced", async () => {
+    const opened = await openA("1000");
+    await postSale(world.a.as.CASHIER, sale(5, [cash("500.00")]));
+    // Still open: there is nothing to recount.
+    expect((await refusal(recountTill(world.a.as.MANAGER, { sessionId: opened.id, countedCash: "1500", note: "Checking early" }))).message).toMatch(/still open/);
+    await closeTill(world.a.as.CASHIER, { sessionId: opened.id, countedCash: "1400", note: "End of shift" });
+
+    const first = await recountTill(world.a.as.MANAGER, { sessionId: opened.id, countedCash: "1450", note: "Found ₦50 under the tray" });
+    expect(first).toMatchObject({ expectedCash: "1500.00", countedCash: "1450.00", difference: "-50.00" });
+    await recountTill(world.a.as.ADMIN, { sessionId: opened.id, countedCash: "1500", note: "Counted together with the cashier" });
+
+    const detail = await getTillSession(world.a.as.ACCOUNTANT, { sessionId: opened.id });
+    // The closing count stands as it was; the session's result is that of the latest count.
+    expect(detail).toMatchObject({ countedCash: "1400.00", closingDifference: "-100.00", difference: "0.00", closedByName: "Test a.cashier", canRecount: false });
+    expect(detail.recounts.map((recount) => [recount.countedCash, recount.difference, recount.recountedByName, recount.note])).toEqual([
+      ["1450.00", "-50.00", "Test a.manager", "Found ₦50 under the tray"],
+      ["1500.00", "0.00", "Test a.admin", "Counted together with the cashier"],
+    ]);
+    expect((await listTillSessions(world.a.as.MANAGER)).sessions[0].difference).toBe("0.00");
+    // The cashier still sees none of it.
+    expect(await getTillSession(world.a.as.CASHIER, { sessionId: opened.id })).toMatchObject({ recounts: [], difference: null, expectedCash: null });
+
+    const close = await getDb().tillSessionClose.findFirstOrThrow();
+    expect([close.countedCash.toFixed(2), close.difference.toFixed(2)]).toEqual(["1400.00", "-100.00"]);
+    const log = await getDb().activityLog.findMany({ where: { action: "till.recounted" }, orderBy: { createdAt: "asc" } });
+    expect(log).toHaveLength(2);
+    expect(log[0].summary).toBe(
+      "Test a.manager recounted the till of T1 (TS-000001): counted ₦1,450.00, expected ₦1,500.00 — ₦50.00 SHORT. The closing count was ₦1,400.00. Note: Found ₦50 under the tray",
+    );
+  });
+
+  it("a recount needs a note and a proper amount; the cashier and accountant cannot recount; nor can anyone on a later day", async () => {
+    const opened = await openA("0");
+    await closeTill(world.a.as.CASHIER, { sessionId: opened.id, countedCash: "0" });
+    const good = { sessionId: opened.id, countedCash: "0", note: "Second look" };
+
+    expect((await refusal(recountTill(world.a.as.MANAGER, { ...good, note: "" }))).fieldErrors).toHaveProperty("note");
+    expect((await refusal(recountTill(world.a.as.MANAGER, { ...good, countedCash: "none" }))).fieldErrors).toHaveProperty("countedCash");
+    for (const role of ["CASHIER", "ACCOUNTANT", "STOREKEEPER"] as const) {
+      await expect(recountTill(world.a.as[role], good)).rejects.toBeInstanceOf(ForbiddenError);
+    }
+    await expect(recountTill(world.b.as.ADMIN, good)).rejects.toBeInstanceOf(NotFoundError);
+    expect(await getDb().tillSessionRecount.count()).toBe(0);
+
+    // Two days on, the till can no longer be recounted.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 2 * 24 * 60 * 60 * 1000 });
+    try {
+      expect((await refusal(recountTill(world.a.as.MANAGER, good))).message).toBe("A till can only be recounted on the day it was closed.");
+      expect((await getTillSession(world.a.as.MANAGER, { sessionId: opened.id })).canRecount).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+    await recountTill(world.ownerInA, good);
+
+    const db = getDb();
+    const recount = await db.tillSessionRecount.findFirstOrThrow();
+    await expect(db.tillSessionRecount.update({ where: { id: recount.id }, data: { note: "changed" } })).rejects.toThrow();
+    await expect(db.tillSessionRecount.delete({ where: { id: recount.id } })).rejects.toThrow();
+    await expect(db.tillSessionRecount.create({ data: { ...recount, id: randomUUID(), difference: "7" } })).rejects.toThrow();
+    await expect(db.tillSessionRecount.create({ data: { ...recount, id: randomUUID(), note: " " } })).rejects.toThrow();
   });
 
   it("refuses bad amounts, an unknown or foreign terminal, and a terminal out of use", async () => {

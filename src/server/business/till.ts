@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { shopDayEnd, shopDayStart, tillSessionNumber } from "@/lib/format";
+import { shopDayEnd, shopDayStart, shopToday, tillSessionNumber } from "@/lib/format";
 import { formatNaira, moneyToString, parseMoney } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { activityRow } from "@/server/activity";
@@ -25,9 +25,12 @@ import { authorize, can } from "@/server/permissions";
  * Expected cash = the opening float + every CASH payment taken in the session. (A payment's
  * amount is what the sale was owed, so change given is already left out.)
  *
- * The count is "blind": the person who runs the till is not shown the expected cash until
- * the session is closed. Those who may review any till (admin, manager, accountant) see it
- * at any time. Sessions and their closings are add-only.
+ * The count is "blind" (SPEC C51): the person who runs the till is never shown the expected
+ * cash, the cash taken, or whether their count balanced — not even after closing. Those who
+ * may review any till (admin, manager, accountant) see all of it at any time.
+ *
+ * An admin or manager may recount a closed till on the same business day (C52); each recount
+ * is a record of its own. Sessions, closings and recounts are add-only.
  */
 
 const MAX_MONEY = new Decimal("99999999999.99");
@@ -196,7 +199,15 @@ const closeSchema = z.object({
   note: optionalText(300, "The note is too long (300 characters at most).").optional().default(""),
 });
 
-export type CloseResult = { id: string; number: number; expectedCash: string; countedCash: string; difference: string; alreadyClosed: boolean };
+export type CloseResult = {
+  id: string;
+  number: number;
+  countedCash: string;
+  /** Only for those who may review any till. The person who ran the till is not told the result. */
+  expectedCash: string | null;
+  difference: string | null;
+  alreadyClosed: boolean;
+};
 
 /**
  * Closes a till session with the cash counted in the drawer. The expected cash is worked
@@ -211,12 +222,13 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
 
   const session = await db.tillSession.findFirst({ where: { id: data.sessionId, ...ownOnly(context) }, include: { close: true } });
   if (!session) throw new NotFoundError("That till session could not be found.");
+  const reviews = can(context, "till.reviewAny");
   const closed = (close: NonNullable<typeof session.close>): CloseResult => ({
     id: session.id,
     number: session.number,
-    expectedCash: close.expectedCash.toFixed(2),
     countedCash: close.countedCash.toFixed(2),
-    difference: close.difference.toFixed(2),
+    expectedCash: reviews ? close.expectedCash.toFixed(2) : null,
+    difference: reviews ? close.difference.toFixed(2) : null,
     alreadyClosed: true,
   });
   if (session.close) return closed(session.close);
@@ -265,9 +277,9 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
         return {
           id: session.id,
           number: session.number,
-          expectedCash: moneyToString(expected),
           countedCash: moneyToString(counted),
-          difference: moneyToString(difference),
+          expectedCash: reviews ? moneyToString(expected) : null,
+          difference: reviews ? moneyToString(difference) : null,
           alreadyClosed: false,
         };
       },
@@ -283,6 +295,75 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
   }
 }
 
+const recountSchema = z.object({
+  sessionId: z.string().uuid("That till session could not be found."),
+  countedCash: z.string().trim(),
+  note: z.string().trim().min(5, "Say why the till was counted again.").max(300, "The note is too long (300 characters at most)."),
+});
+
+export type RecountResult = { id: string; expectedCash: string; countedCash: string; difference: string };
+
+/**
+ * Records a manager's or admin's own count of a till that has been closed, on the same
+ * business day it was closed. It is a record of its own: the closing count stays as it was.
+ * A till can be recounted more than once.
+ */
+export async function recountTill(context: AppContext, input: unknown): Promise<RecountResult> {
+  // Those who both review tills and run them: admins, managers and owners. Not the accountant, not a cashier.
+  authorize(context, "till.reviewAny");
+  authorize(context, "till.operateOwn");
+  const businessId = businessIdOf(context);
+  const data = parseInput(recountSchema, input);
+  const db = businessDb(context);
+
+  const session = await db.tillSession.findFirst({ where: { id: data.sessionId }, include: { close: true } });
+  if (!session) throw new NotFoundError("That till session could not be found.");
+  if (!session.close) throw new ValidationError("This till is still open. It is counted when it is closed.");
+  if (shopToday(session.close.createdAt) !== shopToday()) {
+    throw new ValidationError("A till can only be recounted on the day it was closed.");
+  }
+
+  const fieldErrors: Record<string, string> = {};
+  const counted = parseAmount(
+    data.countedCash,
+    fieldErrors,
+    "countedCash",
+    "Enter the cash you counted as a plain amount, for example 48500 (0 if there is none).",
+  );
+  if (!counted) throw new ValidationError("The recount was not saved. Please correct the highlighted field.", fieldErrors);
+
+  const expected = new Decimal(session.close.expectedCash.toFixed(2));
+  const difference = counted.minus(expected);
+  return db.$transaction(async (tx) => {
+    const recount = await tx.tillSessionRecount.create({
+      data: {
+        businessId,
+        sessionId: session.id,
+        expectedCash: moneyToString(expected),
+        countedCash: moneyToString(counted),
+        difference: moneyToString(difference),
+        note: data.note,
+        recountedByUserId: context.actor.userId,
+        recountedByName: context.actor.name,
+      },
+    });
+    await tx.activityLog.create({
+      data: activityRow(context, {
+        action: "till.recounted",
+        summary:
+          `${context.actor.name} recounted the till of ${session.terminalCode} (${tillSessionNumber(session.number)}): ` +
+          `counted ${formatNaira(counted)}, expected ${formatNaira(expected)}` +
+          (difference.isZero() ? " — it balanced." : ` — ${formatNaira(difference.abs())} ${difference.isNegative() ? "SHORT" : "OVER"}.`) +
+          ` The closing count was ${formatNaira(new Decimal(session.close!.countedCash.toFixed(2)))}. Note: ${data.note}`,
+        targetType: "till_session",
+        targetId: session.id,
+        details: { number: session.number, expected: moneyToString(expected), counted: moneyToString(counted), difference: moneyToString(difference) },
+      }),
+    });
+    return { id: recount.id, expectedCash: moneyToString(expected), countedCash: moneyToString(counted), difference: moneyToString(difference) };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Sessions: list and detail
 // ---------------------------------------------------------------------------
@@ -295,7 +376,10 @@ export type TillSessionSummary = {
   openedAt: Date;
   closedAt: Date | null;
   closedByName: string | null;
-  /** Counted minus expected, once closed: negative means short. */
+  /**
+   * Counted minus expected, once closed (by the latest count: a recount if there is one):
+   * negative means short. Only for those who may review any till.
+   */
   difference: string | null;
 };
 
@@ -342,11 +426,12 @@ export async function listTillSessions(
       orderBy: [{ number: "desc" }],
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
-      include: { close: true },
+      include: { close: true, recounts: { orderBy: { createdAt: "desc" }, take: 1 } },
     }),
   ]);
+  const reviews = can(context, "till.reviewAny");
   return {
-    ownOnly: !can(context, "till.reviewAny"),
+    ownOnly: !reviews,
     canOperate: can(context, "till.operateOwn"),
     sessions: rows.map((row) => ({
       id: row.id,
@@ -356,7 +441,7 @@ export async function listTillSessions(
       openedAt: row.openedAt,
       closedAt: row.close?.createdAt ?? null,
       closedByName: row.close?.closedByName ?? null,
-      difference: row.close?.difference.toFixed(2) ?? null,
+      difference: reviews ? ((row.recounts[0] ?? row.close)?.difference.toFixed(2) ?? null) : null,
     })),
     ...paged(total, page),
   };
@@ -369,15 +454,19 @@ export type TillSessionDetail = TillSessionSummary & {
   salesTotal: string;
   /** What was taken, by payment method, largest first. */
   byMethod: { methodName: string; kind: PaymentKindValue; count: number; amount: string }[];
-  /**
-   * Float + cash taken. For an open session only those who may review any till are told
-   * (the count is blind); once closed it is the figure stored at closing.
-   */
+  /** Float + cash taken; once closed, the figure stored at closing. Only for those who may review any till. */
   expectedCash: string | null;
+  /** What was counted at closing. Shown to the person who closed it too. */
   countedCash: string | null;
+  /** The closing count against the expected cash. Only for those who may review any till. */
+  closingDifference: string | null;
   closingNote: string | null;
+  /** Counts made again after closing, oldest first. Only for those who may review any till. */
+  recounts: { id: string; countedCash: string; difference: string; note: string; recountedByName: string; createdAt: Date }[];
   /** True when this person may close it now. */
   canClose: boolean;
+  /** True when this person may recount it now: closed today, and they both review and run tills. */
+  canRecount: boolean;
 };
 
 export async function getTillSession(context: AppContext, input: unknown): Promise<TillSessionDetail> {
@@ -385,7 +474,10 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
   const { sessionId } = parseInput(z.object({ sessionId: z.string().uuid("That till session could not be found.") }), input);
   const db = businessDb(context);
 
-  const session = await db.tillSession.findFirst({ where: { id: sessionId, ...ownOnly(context) }, include: { close: true } });
+  const session = await db.tillSession.findFirst({
+    where: { id: sessionId, ...ownOnly(context) },
+    include: { close: true, recounts: { orderBy: { createdAt: "asc" } } },
+  });
   if (!session) throw new NotFoundError("That till session could not be found.");
 
   const [sales, groups] = await Promise.all([
@@ -416,22 +508,33 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
     openedAt: session.openedAt,
     closedAt: session.close?.createdAt ?? null,
     closedByName: session.close?.closedByName ?? null,
-    difference: session.close?.difference.toFixed(2) ?? null,
+    difference: reviews ? ((session.recounts.at(-1) ?? session.close)?.difference.toFixed(2) ?? null) : null,
     terminalId: session.terminalId,
     openingFloat: session.openingFloat.toFixed(2),
     saleCount: sales._count._all,
     salesTotal: sales._sum.total?.toFixed(2) ?? "0.00",
-    // While the till is open, what was taken in cash would give the expected figure away.
-    byMethod: byMethod
-      .filter((entry) => session.close !== null || reviews || entry.kind !== "CASH")
-      .map((entry) => ({ ...entry, amount: moneyToString(entry.amount) })),
-    expectedCash: session.close
-      ? session.close.expectedCash.toFixed(2)
-      : reviews
-        ? moneyToString(new Decimal(session.openingFloat.toFixed(2)).plus(cash))
-        : null,
+    // What was taken in cash would give the expected figure away, so only reviewers see it.
+    byMethod: byMethod.filter((entry) => reviews || entry.kind !== "CASH").map((entry) => ({ ...entry, amount: moneyToString(entry.amount) })),
+    expectedCash: !reviews
+      ? null
+      : session.close
+        ? session.close.expectedCash.toFixed(2)
+        : moneyToString(new Decimal(session.openingFloat.toFixed(2)).plus(cash)),
     countedCash: session.close?.countedCash.toFixed(2) ?? null,
+    closingDifference: reviews ? (session.close?.difference.toFixed(2) ?? null) : null,
     closingNote: session.close?.note ?? null,
+    recounts: reviews
+      ? session.recounts.map((recount) => ({
+          id: recount.id,
+          countedCash: recount.countedCash.toFixed(2),
+          difference: recount.difference.toFixed(2),
+          note: recount.note,
+          recountedByName: recount.recountedByName,
+          createdAt: recount.createdAt,
+        }))
+      : [],
+    canRecount:
+      reviews && can(context, "till.operateOwn") && session.close !== null && shopToday(session.close.createdAt) === shopToday(),
     canClose: session.close === null && can(context, "till.operateOwn") && (reviews || session.openedByUserId === context.actor.userId),
   };
 }

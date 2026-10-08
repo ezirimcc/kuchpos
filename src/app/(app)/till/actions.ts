@@ -2,7 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { runAction } from "@/server/action";
-import { closeTill, openTill } from "@/server/business/till";
+import { closeTill, openTill, recountTill } from "@/server/business/till";
 
 export async function openTillAction(input: unknown): Promise<FormState> {
   return runAction({ success: "Till opened." }, (context) => openTill(context, input));
@@ -15,4 +15,9 @@ export async function closeTillAction(input: unknown): Promise<FormState & { ses
     sessionId = (await closeTill(context, input)).id;
   });
   return result.status === "success" ? { ...result, sessionId } : result;
+}
+
+/** Saves a manager's or admin's recount of a closed till, as a record of its own. */
+export async function recountTillAction(input: unknown): Promise<FormState> {
+  return runAction({ success: "Recount saved." }, (context) => recountTill(context, input));
 }

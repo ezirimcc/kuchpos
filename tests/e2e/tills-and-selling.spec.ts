@@ -409,7 +409,7 @@ test("a cashier sees only their own sales; an accountant sees all but cannot sel
   await expect(page.getByText(/No product on sale matches/)).toBeVisible();
 });
 
-test("the cashier closes the till with a count; the difference is shown only afterwards, and selling stops", async ({ page }) => {
+test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");
   await openFromMenu(page, "Till");
@@ -420,7 +420,7 @@ test("the cashier closes the till with a count; the difference is shown only aft
 
   // While it is open, the cashier is shown transfers taken but not the cash figure.
   await page.getByRole("link", { name: /See this session/ }).click();
-  await expect(page.getByTestId("till-expected")).toHaveText("Shown at closing");
+  await expect(page.getByTestId("till-expected")).toHaveCount(0);
   await expect(page.getByTestId("till-method-Transfer – GTBank")).toContainText("₦5,000.00");
   await expect(page.getByTestId("till-method-Cash")).toHaveCount(0);
   await page.goBack();
@@ -431,12 +431,18 @@ test("the cashier closes the till with a count; the difference is shown only aft
   await form.getByLabel("Note (optional)").fill("Counted twice");
   await form.getByRole("button", { name: "Close the till" }).click();
 
+  // The cashier sees what they counted — and nothing about whether it was right.
   await expect(page.getByRole("heading", { name: /Till session TS-000001/ })).toBeVisible();
-  await expect(page.getByTestId("till-expected")).toHaveText("₦60,626.25");
   await expect(page.getByTestId("till-counted")).toHaveText("₦60,600.00");
-  await expect(page.getByTestId("till-difference").first()).toHaveText("₦26.25 short");
-  await expect(page.getByTestId("till-method-Cash")).toContainText("₦55,626.25");
+  await expect(page.getByTestId("till-result-hidden")).toBeVisible();
+  await expect(page.getByTestId("till-expected")).toHaveCount(0);
+  await expect(page.getByTestId("till-difference")).toHaveCount(0);
+  await expect(page.getByTestId("till-method-Cash")).toHaveCount(0);
+  await expect(page.getByTestId("recount-till-form")).toHaveCount(0);
   await expect(page.getByText("Note at closing: Counted twice")).toBeVisible();
+  await page.goto("/till/sessions");
+  await expect(page.getByTestId("till-row-1")).toContainText("Counted");
+  await expect(page.getByTestId("till-row-1")).not.toContainText("short");
 
   // Nothing more can be sold at this checkout.
   await openCheckout(page);
@@ -450,6 +456,34 @@ test("the cashier closes the till with a count; the difference is shown only aft
   await expect(page.getByRole("heading", { name: "Till sessions" })).toBeVisible();
   await expect(page.getByTestId("till-row-1")).toContainText("₦26.25 short");
   await expect(page.getByTestId("till-row-1")).toContainText("Green Valley Cashier");
+  await page.getByTestId("till-row-1").getByRole("link", { name: "TS-000001" }).click();
+  await expect(page.getByTestId("till-expected")).toHaveText("₦60,626.25");
+  await expect(page.getByTestId("till-method-Cash")).toContainText("₦55,626.25");
+  // The accountant reviews, but does not count cash.
+  await expect(page.getByTestId("recount-till-form")).toHaveCount(0);
   await page.goto("/activity");
   await expect(page.getByText(/closed the till of T1 \(TS-000001\): counted ₦60,600.00, expected ₦60,626.25 — ₦26.25 SHORT/)).toBeVisible();
+  await signOut(page);
+
+  // The manager counts the drawer again the same day; it is saved beside the cashier's count, not over it.
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await page.goto("/till/sessions");
+  await page.getByTestId("till-row-1").getByRole("link", { name: "TS-000001" }).click();
+  await expect(page.getByTestId("till-closing-result")).toHaveText("₦26.25 short");
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  const recount = page.getByTestId("recount-till-form");
+  await recount.getByLabel("Cash you counted (₦)").fill("60626.25");
+  await recount.getByLabel("Why it was counted again").fill("Coins were in the second tray");
+  await recount.getByRole("button", { name: "Save recount" }).click();
+
+  await expect(page.getByTestId("till-recount-1")).toContainText("₦60,626.25");
+  await expect(page.getByTestId("till-recount-1")).toContainText("Balanced");
+  await expect(page.getByTestId("till-recount-1")).toContainText("Green Valley Manager");
+  await expect(page.getByTestId("till-recount-1")).toContainText("Coins were in the second tray");
+  // The cashier's closing count still stands as it was entered.
+  await expect(page.getByTestId("till-counted")).toHaveText("₦60,600.00");
+  await expect(page.getByTestId("till-closing-result")).toHaveText("₦26.25 short");
+  await page.goto("/till/sessions");
+  await expect(page.getByTestId("till-row-1")).toContainText("Balanced");
 });

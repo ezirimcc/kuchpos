@@ -217,7 +217,9 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🧑 A sale paid part cash, part transfer shows both on the receipt and in the session summary.
 - 🧑 Closing a till shows expected cash = float + cash sales − change − cash refunds.
 - 🤖 Payments that do not add up exactly to the total are refused.
-- 🧑 Selling is refused until the till is opened; after closing with a count, the session shows expected, counted and the difference, and selling stops again.
+- 🧑 Selling is refused until the till is opened; after the cashier closes it with a count, selling stops again and the cashier is shown only what they counted — not what was expected, nor whether it balanced (C51).
+- 🧑 A manager sees expected, counted and the difference, and can count the till again the same day; the recount is listed beside the closing count, which stays as it was (C52).
+- 🤖 A recount needs a note, is refused on a later day, for an open till, and from a cashier or accountant; recounts cannot be changed or deleted.
 - 🤖 A switched-off, unknown, repeated or other business's method is refused; only cash carries "received" and change; the built-in Cash cannot be switched off, and no method can be deleted or change kind, even in the database.
 - 🤖 A terminal has one open till, also when two people open it at the same instant; it is closed once, also when two people close it at the same instant.
 - 🤖 Closing and selling at the same instant: every cash sale is either in the closing figure or refused.

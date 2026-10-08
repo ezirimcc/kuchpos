@@ -36,7 +36,7 @@ export default async function TillSessionsPage({ searchParams }: PageProps<"/til
         title="Till sessions"
         description={
           list.ownOnly
-            ? "The till sessions you opened, newest first."
+            ? "The till sessions you opened, newest first. A manager checks each count against the sales."
             : "Every till session, newest first: who ran it, and whether the cash matched at closing."
         }
       >
@@ -104,7 +104,9 @@ export default async function TillSessionsPage({ searchParams }: PageProps<"/til
                     <Badge>Open now</Badge>
                   )}
                 </TableCell>
-                <TableCell className="text-right">{session.difference === null ? "—" : <Difference amount={session.difference} />}</TableCell>
+                <TableCell className="text-right">
+                  {session.difference !== null ? <Difference amount={session.difference} /> : session.closedAt ? "Counted" : "—"}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

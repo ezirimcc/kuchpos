@@ -12,6 +12,7 @@ const TABLES = [
   "activity_log",
   "stock_movement",
   "document_counter",
+  "till_session_recount",
   "till_session_close",
   "sale_receipt_print",
   "payment",

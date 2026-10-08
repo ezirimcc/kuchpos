@@ -47,6 +47,7 @@ const ADD_ONLY_TABLES = [
   "sale_receipt_print",
   "till_session",
   "till_session_close",
+  "till_session_recount",
 ];
 
 /**
@@ -93,6 +94,7 @@ const REQUIRED_CHECKS = [
   "payment_method_built_in_check",
   "till_session_float_check",
   "till_session_close_amounts_check",
+  "till_session_recount_amounts_check",
 ];
 
 function readAppVersion(): string {

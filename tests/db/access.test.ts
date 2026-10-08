@@ -457,6 +457,16 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => till.closeTill(context, { sessionId: tillInB, countedCash: "1100" }),
   },
   {
+    name: "till.recountTill",
+    allowed: PRODUCT_MANAGERS,
+    run: async (context) => {
+      // A till is recounted after it has been closed.
+      await till.closeTill(world.a.as.ADMIN, { sessionId: tillInA, countedCash: "1100" });
+      return till.recountTill(context, { sessionId: tillInA, countedCash: "1100", note: "Counted again" });
+    },
+    runAgainstB: (context) => till.recountTill(context, { sessionId: tillInB, countedCash: "1100", note: "Counted again" }),
+  },
+  {
     name: "till.listTillSessions",
     allowed: SALES_VIEWERS,
     run: (context) => till.listTillSessions(context),

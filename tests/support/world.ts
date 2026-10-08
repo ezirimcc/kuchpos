@@ -215,8 +215,24 @@ export async function expectBalancesMatchMovements(): Promise<void> {
 /** The number the next document of a kind will get in a business (1 if none has been made yet). */
 export async function nextDocumentNumber(
   businessId: string,
-  kind: "GOODS_RECEIPT" | "STOCK_TRANSFER" | "STOCK_COUNT" | "STOCK_ADJUSTMENT",
+  kind: "GOODS_RECEIPT" | "STOCK_TRANSFER" | "STOCK_COUNT" | "STOCK_ADJUSTMENT" | "TILL_SESSION" | "REPAYMENT",
 ): Promise<number> {
   const counter = await getDb().documentCounter.findUnique({ where: { businessId_kind: { businessId, kind } } });
   return counter?.next ?? 1;
+}
+
+/**
+ * The golden rule of customer debt, for the whole database: what each customer is recorded
+ * as owing equals the sum of their account entries, and nobody owes less than nothing.
+ */
+export async function expectCustomerBalancesMatchEntries(): Promise<void> {
+  const db = getDb();
+  const mismatches = await db.$queryRaw<{ id: string; balance: string; entries: string }[]>`
+    SELECT c.id, CAST(c.balance AS CHAR) AS balance, CAST(COALESCE(e.total, 0) AS CHAR) AS entries
+    FROM customer c
+    LEFT JOIN (SELECT customerId, SUM(amount) AS total FROM customer_account_entry GROUP BY customerId) e ON e.customerId = c.id
+    WHERE c.balance <> COALESCE(e.total, 0) OR c.balance < 0`;
+  if (mismatches.length > 0) {
+    throw new Error(`Customer balances do not match their account entries: ${JSON.stringify(mismatches)}`);
+  }
 }

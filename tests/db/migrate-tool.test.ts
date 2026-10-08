@@ -82,6 +82,10 @@ describe("database update tool for the hosting server", () => {
       "till_session_recount",
       "sale_cancellation",
       "refund",
+      "customer_account_entry",
+      "credit_limit_change",
+      "repayment",
+      "repayment_allocation",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -93,6 +97,7 @@ describe("database update tool for the hosting server", () => {
         "document_counter_only_up",
         "payment_method_no_delete",
         "payment_method_kind_fixed",
+        "customer_no_delete",
       ].sort(),
     );
 
@@ -131,6 +136,11 @@ describe("database update tool for the hosting server", () => {
         "till_session_recount_amounts_check",
         "sale_cancellation_note_check",
         "refund_amounts_check",
+        "customer_amounts_check",
+        "sale_credit_check",
+        "customer_account_entry_amounts_check",
+        "repayment_amounts_check",
+        "repayment_allocation_amount_check",
       ]),
     );
   });

@@ -47,7 +47,25 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
             {sale.cancellation && <Badge variant="destructive">Cancelled</Badge>}
           </span>
         }
-        description={`${formatDateTime(sale.createdAt)} · served by ${sale.cashierName} · a saved sale is never changed.`}
+        description={
+          <>
+            {formatDateTime(sale.createdAt)} · served by {sale.cashierName}
+            {sale.customer && (
+              <>
+                {" "}
+                · sold to{" "}
+                {can(context, "customer.balance.view") ? (
+                  <Link href={`/customers/${sale.customer.id}`} className="text-link underline-offset-4 hover:underline">
+                    {sale.customer.name}
+                  </Link>
+                ) : (
+                  sale.customer.name
+                )}
+              </>
+            )}{" "}
+            · a saved sale is never changed.
+          </>
+        }
       />
 
       {sale.cancellation && (

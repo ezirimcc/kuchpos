@@ -11,6 +11,7 @@ import {
   ShoppingCart,
   Tags,
   UserCog,
+  Users,
   Wallet,
 } from "lucide-react";
 import Link from "next/link";
@@ -22,6 +23,7 @@ import { can, type Permission, ROLE_LABELS } from "@/server/permissions";
 
 const SHORTCUTS: { href: string; title: string; text: string; icon: LucideIcon; needs: Permission }[] = [
   { href: "/sell", title: "Sell", text: "Start a sale at the checkout.", icon: ShoppingCart, needs: "sale.create" },
+  { href: "/customers", title: "Customers", text: "See what a customer owes, or take a repayment.", icon: Users, needs: "customer.balance.view" },
   { href: "/products", title: "Products & Categories", text: "Look up a price, or add and change products.", icon: Package, needs: "price.view" },
   { href: "/staff", title: "Staff", text: "Add people and set what they can do.", icon: UserCog, needs: "staff.manage" },
   { href: "/activity", title: "Activity log", text: "See who did what, and when.", icon: History, needs: "activityLog.view" },
@@ -30,7 +32,6 @@ const SHORTCUTS: { href: string; title: string; text: string; icon: LucideIcon; 
 
 // Figures that will appear here as each part of KuchPos is built.
 const COMING: { title: string; icon: LucideIcon; needs: Permission }[] = [
-  { title: "Owed by customers", icon: HandCoins, needs: "report.customerDebt.view" },
 ];
 
 function Stat({
@@ -136,6 +137,15 @@ export default async function HomePage() {
             value={nairaFromText(snapshot.collectedToday.total)}
             note={`${nairaFromText(snapshot.collectedToday.cash)} of it in cash`}
             icon={Wallet}
+          />
+        )}
+        {snapshot.owedByCustomers !== null && (
+          <Stat
+            testId="stat-owed"
+            title="Owed by customers"
+            value={nairaFromText(snapshot.owedByCustomers.total)}
+            note={`${snapshot.owedByCustomers.customers.toLocaleString("en-NG")} customer${snapshot.owedByCustomers.customers === 1 ? "" : "s"} owing`}
+            icon={HandCoins}
           />
         )}
         {snapshot.staff !== null && (

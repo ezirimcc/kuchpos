@@ -50,6 +50,10 @@ const ADD_ONLY_TABLES = [
   "till_session_recount",
   "sale_cancellation",
   "refund",
+  "customer_account_entry",
+  "credit_limit_change",
+  "repayment",
+  "repayment_allocation",
 ];
 
 /**
@@ -65,6 +69,7 @@ const OTHER_TRIGGERS = [
   // A payment method is never deleted and never changes kind.
   "payment_method_no_delete",
   "payment_method_kind_fixed",
+  "customer_no_delete",
 ];
 
 /** Limits written into the database itself (CHECK constraints). */
@@ -99,6 +104,11 @@ const REQUIRED_CHECKS = [
   "till_session_recount_amounts_check",
   "sale_cancellation_note_check",
   "refund_amounts_check",
+  "customer_amounts_check",
+  "sale_credit_check",
+  "customer_account_entry_amounts_check",
+  "repayment_amounts_check",
+  "repayment_allocation_amount_check",
 ];
 
 function readAppVersion(): string {

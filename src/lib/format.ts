@@ -106,6 +106,11 @@ export function saleReceiptNumber(terminalCode: string, sequence: number): strin
   return `${terminalCode}-${String(sequence).padStart(6, "0")}`;
 }
 
+/** Repayment numbers are shown as RP-000012. */
+export function repaymentNumber(number: number): string {
+  return `RP-${String(number).padStart(6, "0")}`;
+}
+
 /** Till session numbers are shown as TS-000012. */
 export function tillSessionNumber(number: number): string {
   return `TS-${String(number).padStart(6, "0")}`;

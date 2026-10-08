@@ -151,7 +151,8 @@ Rules:
 - Payment methods are a list managed by the admin (C46), each of the kind **cash**, **bank transfer** or **POS/card** (recorded, with optional reference number); plus **Credit** (added to the customer's account), which is not in the list.
 - **Split payment:** any combination. The parts must add up exactly to the sale total.
 - Cash: the app records amount tendered and change given.
-- **Credit sales** require a named customer account. Walk-in customers cannot buy on credit.
+- **Credit sales** require a named customer account with a credit limit (C55). Walk-in customers cannot buy on credit. Part or all of a sale can go on credit; the rest is paid by the usual methods. A sale that would take the customer over their limit is refused for a cashier; an admin or manager making the sale may let it through, and that is recorded. *(The cashier asking a manager to approve from the cashier's own screen comes with the approval mechanism of M11.)*
+- **Repayments** in cash go into the open till of a checkout; a repayment can never be more than the customer owes (C54). Cancelling a credit sale takes its debt off the account again, and is refused once any of that debt has been repaid.
 - Each customer has an **account history** that only grows: credit sales increase the balance, repayments reduce it. The outstanding balance is always the sum of that history, so it can always be explained line by line.
 - **Repayments** can be made at any time, by any payment method, in part or in full. **Proposed:** a repayment is applied to the oldest unpaid sale first, unless the user picks a specific sale.
 - A customer **statement** shows every credit sale, every repayment and the running balance.

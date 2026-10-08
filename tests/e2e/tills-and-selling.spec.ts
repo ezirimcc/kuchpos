@@ -515,6 +515,118 @@ test("a manager cancels a sale with a note: the goods are back, the cash is refu
   await expect(page.getByText(/Green Valley Manager cancelled sale T1-\d+ \(₦500.00, sold by Green Valley Manager\)/)).toBeVisible();
 });
 
+test("a customer is added, given a credit limit, buys partly on credit, and repays part of it", async ({ page }) => {
+  // The cashier adds the customer. A new customer has no credit.
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openFromMenu(page, "Customers");
+  await page.getByRole("link", { name: "New customer" }).click();
+  await expect(page.getByRole("heading", { name: "New customer" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByLabel("Name", { exact: true }).fill("Chief Okoro");
+  await page.getByLabel("Phone number").fill("0803 111 2222");
+  await page.getByLabel("City (optional)").fill("Aba");
+  await page.getByRole("button", { name: "Save customer" }).click();
+  await expect(page.getByRole("heading", { name: "Chief Okoro" })).toBeVisible();
+  await expect(page.getByTestId("customer-balance")).toHaveText("₦0.00");
+  await expect(page.getByTestId("customer-limit")).toHaveText("No credit");
+  // A cashier sees the balance, not the statement, and cannot set a limit.
+  await expect(page.getByTestId("statement")).toHaveCount(0);
+  await expect(page.getByLabel("Credit limit (₦)")).toHaveCount(0);
+  const customerUrl = page.url();
+  await signOut(page);
+
+  // The manager allows up to ₦5,000 of credit.
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await gotoReady(page, customerUrl);
+  await page.getByLabel("Credit limit (₦)").fill("5000");
+  await page.getByRole("button", { name: "Save credit limit" }).click();
+  await expect(page.getByTestId("customer-limit")).toHaveText("₦5,000.00");
+  await expect(page.getByTestId("customer-available")).toHaveText("₦5,000.00");
+  await signOut(page);
+
+  // The cashier sells ₦10,000 of goods to him: ₦4,000 on credit, the rest by transfer.
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("20");
+  await expect(page.getByTestId("cart-total")).toHaveText("₦10,000.00");
+  await page.getByLabel("Customer", { exact: true }).fill("Chief Okoro — 08031112222");
+  await expect(page.getByTestId("customer-standing")).toHaveText("Owes ₦0.00 · limit ₦5,000.00 · can still take ₦5,000.00 on credit");
+  // More than the limit allows: a cashier cannot complete it.
+  await page.getByLabel("Put on credit (₦)").fill("6000");
+  await expect(page.getByText(/Over the customer's limit: only ₦5,000.00 more can go on credit/)).toBeVisible();
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+  await page.getByLabel("Put on credit (₦)").fill("4000");
+  await expect(page.getByTestId("to-pay-now")).toHaveText("To pay now: ₦6,000.00");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+
+  const receipt = page.getByTestId("receipt");
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦10,000.00");
+  await expect(page.getByTestId("receipt-customer")).toHaveText("Customer: Chief Okoro (08031112222)");
+  await expect(receipt).toContainText("Paid: Bank transfer (sample)");
+  await expect(page.getByTestId("receipt-credit")).toContainText("On credit (to pay later)");
+  await expect(page.getByTestId("receipt-credit")).toContainText("₦4,000.00");
+  await expect(page.getByTestId("receipt-credit")).toContainText("Owed after this sale");
+
+  // At the checkout a new customer can be added on the spot — with no credit.
+  await page.getByTestId("new-sale").click();
+  await page.getByRole("button", { name: "+ New customer" }).click();
+  await page.getByLabel("New customer's name").fill("Mama Nkechi");
+  await page.getByLabel("New customer's phone number").fill("08044443333");
+  await page.getByRole("button", { name: "Add customer" }).click();
+  await expect(page.getByLabel("Customer", { exact: true })).toHaveValue("Mama Nkechi — 08044443333");
+  await expect(page.getByTestId("customer-standing")).toHaveText("Owes ₦0.00 · no credit");
+  await expect(page.getByLabel("Put on credit (₦)")).toHaveCount(0);
+  await signOut(page);
+
+  // The accountant sees who owes, reads the statement and takes ₦1,000 in cash against the debt.
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  await page.goto("/customers?owing=1");
+  await expect(page.getByTestId("customer-row-Chief Okoro")).toContainText("₦4,000.00");
+  await expect(page.getByTestId("customer-row-Mama Nkechi")).toHaveCount(0);
+  await expect(page.getByTestId("total-owed")).toHaveText("₦4,000.00");
+  await page.getByTestId("customer-row-Chief Okoro").getByRole("link", { name: "Chief Okoro" }).click();
+  await expect(page.getByTestId("customer-balance")).toHaveText("₦4,000.00");
+  await expect(page.getByTestId("customer-available")).toHaveText("₦1,000.00");
+  await expect(page.getByTestId("statement-line")).toHaveCount(1);
+  await expect(page.getByTestId("statement-line").first()).toContainText("Bought on credit");
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+
+  const repayment = page.getByTestId("repayment-form");
+  // More than is owed is refused.
+  await repayment.getByLabel("Amount received (₦)").fill("4000.01");
+  await repayment.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await repayment.getByRole("button", { name: "Save repayment" }).click();
+  await expect(page.getByText("The most that can be received is ₦4,000.00.")).toBeVisible();
+  await repayment.getByLabel("Amount received (₦)").fill("1000");
+  await repayment.getByLabel("Paid by").selectOption({ label: "Cash" });
+  const till = repayment.getByLabel("The cash goes into the till of");
+  if ((await till.inputValue()) === "") await till.selectOption({ label: "T1 — Checkout 1" });
+  await repayment.getByRole("button", { name: "Save repayment" }).click();
+
+  await expect(page.getByTestId("repayment-saved")).toContainText("₦1,000.00");
+  await expect(page.getByTestId("customer-balance")).toHaveText("₦3,000.00");
+  await expect(page.getByTestId("statement-line")).toHaveCount(2);
+  await expect(page.getByTestId("statement-line").first()).toContainText("Repayment");
+  await expect(page.getByTestId("statement-line").first()).toContainText("RP-000001");
+  await expect(page.getByTestId(/^unpaid-/)).toContainText("₦3,000.00");
+  await page.goto("/");
+  await expect(page.getByTestId("stat-owed")).toContainText("₦3,000.00");
+  await expect(page.getByTestId("stat-owed")).toContainText("1 customer owing");
+  await signOut(page);
+
+  // Another business has none of these customers.
+  await signIn(page, "sf.manager");
+  await expectSignedInAs(page, "Manager");
+  await page.goto("/customers");
+  await expect(page.getByText(/No customers yet/)).toBeVisible();
+});
+
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");
@@ -533,22 +645,22 @@ test("the cashier closes the till with a count and is not told the result; the m
   await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
 
   const form = page.getByTestId("close-till-form");
-  // Counted note by note: 60 × ₦1,000 + 1 × ₦500 + 4 × ₦20 + ₦20 in coins = ₦60,600.
+  // Counted note by note: 61 × ₦1,000 + 1 × ₦500 + 4 × ₦20 + ₦20 in coins = ₦61,600.
   await form.getByRole("button", { name: "Count by notes" }).click();
-  await form.getByLabel("₦1000 ×").fill("60");
+  await form.getByLabel("₦1000 ×").fill("61");
   await form.getByLabel("₦500 ×").fill("1");
   await form.getByLabel("₦20 ×").fill("four");
   await expect(form.getByTestId("close-cash-counter-total")).toHaveText("Check the numbers above");
   await form.getByLabel("₦20 ×").fill("4");
   await form.getByLabel("Coins / other ₦").fill("20");
-  await expect(form.getByTestId("close-cash-counter-total")).toHaveText("₦60,600.00");
-  await expect(form.getByLabel("Cash counted in the drawer (₦)")).toHaveValue("60600.00");
+  await expect(form.getByTestId("close-cash-counter-total")).toHaveText("₦61,600.00");
+  await expect(form.getByLabel("Cash counted in the drawer (₦)")).toHaveValue("61600.00");
   await form.getByLabel("Note (optional)").fill("Counted twice");
   await form.getByRole("button", { name: "Close the till" }).click();
 
   // The cashier sees what they counted — and nothing about whether it was right.
   await expect(page.getByRole("heading", { name: /Till session TS-000001/ })).toBeVisible();
-  await expect(page.getByTestId("till-counted")).toHaveText("₦60,600.00");
+  await expect(page.getByTestId("till-counted")).toHaveText("₦61,600.00");
   await expect(page.getByTestId("till-result-hidden")).toBeVisible();
   await expect(page.getByTestId("till-expected")).toHaveCount(0);
   await expect(page.getByTestId("till-difference")).toHaveCount(0);
@@ -573,14 +685,16 @@ test("the cashier closes the till with a count and is not told the result; the m
   await expect(page.getByTestId("till-row-1")).toContainText("₦26.25 short");
   await expect(page.getByTestId("till-row-1")).toContainText("Green Valley Cashier");
   await page.getByTestId("till-row-1").getByRole("link", { name: "TS-000001" }).click();
-  await expect(page.getByTestId("till-expected")).toHaveText("₦60,626.25");
+  // Float 5,000 + cash sales 56,126.25 + ₦1,000 repaid in cash − ₦500 refunded.
+  await expect(page.getByTestId("till-expected")).toHaveText("₦61,626.25");
+  await expect(page.getByTestId("till-cash-repaid")).toHaveText("+₦1,000.00");
   // Cash taken includes the ₦500 sale that was cancelled; its refund is shown on its own line.
   await expect(page.getByTestId("till-method-Cash")).toContainText("₦56,126.25");
   await expect(page.getByTestId("till-cash-refunded")).toHaveText("−₦500.00");
   // The accountant reviews, but does not count cash.
   await expect(page.getByTestId("recount-till-form")).toHaveCount(0);
   await page.goto("/activity");
-  await expect(page.getByText(/closed the till of T1 \(TS-000001\): counted ₦60,600.00, expected ₦60,626.25 — ₦26.25 SHORT/)).toBeVisible();
+  await expect(page.getByText(/closed the till of T1 \(TS-000001\): counted ₦61,600.00, expected ₦61,626.25 — ₦26.25 SHORT/)).toBeVisible();
   await signOut(page);
 
   // The manager counts the drawer again the same day; it is saved beside the cashier's count, not over it.
@@ -590,19 +704,19 @@ test("the cashier closes the till with a count and is not told the result; the m
   await page.getByTestId("till-row-1").getByRole("link", { name: "TS-000001" }).click();
   await expect(page.getByTestId("till-closing-result")).toHaveText("₦26.25 short");
   // How the cashier counted it, note by note.
-  await expect(page.getByTestId("till-closing-notes")).toHaveText("60 × ₦1,000 · 1 × ₦500 · 4 × ₦20 · Coins / other ₦20.00");
+  await expect(page.getByTestId("till-closing-notes")).toHaveText("61 × ₦1,000 · 1 × ₦500 · 4 × ₦20 · Coins / other ₦20.00");
   await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
   const recount = page.getByTestId("recount-till-form");
-  await recount.getByLabel("Cash you counted (₦)").fill("60626.25");
+  await recount.getByLabel("Cash you counted (₦)").fill("61626.25");
   await recount.getByLabel("Why it was counted again").fill("Coins were in the second tray");
   await recount.getByRole("button", { name: "Save recount" }).click();
 
-  await expect(page.getByTestId("till-recount-1")).toContainText("₦60,626.25");
+  await expect(page.getByTestId("till-recount-1")).toContainText("₦61,626.25");
   await expect(page.getByTestId("till-recount-1")).toContainText("Balanced");
   await expect(page.getByTestId("till-recount-1")).toContainText("Green Valley Manager");
   await expect(page.getByTestId("till-recount-1")).toContainText("Coins were in the second tray");
   // The cashier's closing count still stands as it was entered.
-  await expect(page.getByTestId("till-counted")).toHaveText("₦60,600.00");
+  await expect(page.getByTestId("till-counted")).toHaveText("₦61,600.00");
   await expect(page.getByTestId("till-closing-result")).toHaveText("₦26.25 short");
   await page.goto("/till/sessions");
   await expect(page.getByTestId("till-row-1")).toContainText("Balanced");

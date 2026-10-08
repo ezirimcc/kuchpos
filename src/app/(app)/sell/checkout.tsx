@@ -15,6 +15,7 @@ import { Decimal } from "@/lib/decimal";
 import { nairaFromText, plainNumber } from "@/lib/format";
 import { formatNaira, lineTotal, moneyToString, sumMoney } from "@/lib/money";
 import type { CheckoutCatalogue, CheckoutProduct } from "@/server/business/sales";
+import { quickCreateCustomerAction } from "../customers/actions";
 import { postSaleAction } from "../sales/actions";
 import { type HeldSale, holdSale, MAX_HELD_SALES, removeHeldSale, useHeldSales } from "./held-sales";
 
@@ -58,6 +59,12 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   ]);
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // The customer the sale is for ("" is a walk-in), and how much of it goes on their account.
+  const [customers, setCustomers] = useState(catalogue.customers);
+  const [customerText, setCustomerText] = useState("");
+  const [creditText, setCreditText] = useState("");
+  const [newCustomer, setNewCustomer] = useState<{ name: string; phone: string } | null>(null);
+  const [newCustomerError, setNewCustomerError] = useState<string | null>(null);
   const held = useHeldSales(cashierId);
   const searchBox = useRef<HTMLInputElement>(null);
   const cashBox = useRef<HTMLInputElement>(null);
@@ -145,6 +152,8 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     }
     setLines([]);
     setParts(freshPayment());
+    setCustomerText("");
+    setCreditText("");
     setMessage(null);
     setErrors({});
     searchBox.current?.focus();
@@ -218,6 +227,40 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const allValid = view.length > 0 && view.every((entry) => entry.amount !== null);
   const total = allValid ? sumMoney(view.map((entry) => entry.amount!)) : null;
 
+  // --- Who it is for, and how much goes on their account ------------------------------
+  const customerLabel = (customer: { name: string; phone: string }) => `${customer.name} — ${customer.phone}`;
+  const customer = customers.find((candidate) => customerLabel(candidate).toLowerCase() === customerText.trim().toLowerCase());
+  const unknownCustomer = customerText.trim() !== "" && !customer;
+  const owes = customer ? new Decimal(customer.balance) : null;
+  const limit = customer?.creditLimit ? new Decimal(customer.creditLimit) : null;
+  const room = owes && limit ? Decimal.max(limit.minus(owes), 0) : null;
+  const mayCredit = catalogue.canSellOnCredit && !!customer && !!limit;
+  const creditTyped = mayCredit ? creditText.trim() : "";
+  const credit = creditTyped === "" ? new Decimal(0) : isMoney(creditTyped) && new Decimal(creditTyped).greaterThan(0) ? new Decimal(creditTyped) : null;
+  const creditTooMuch = !!credit && !!total && credit.greaterThan(total);
+  const overLimit = !!credit && !!room && credit.greaterThan(room);
+  const creditSound = !!credit && !creditTooMuch && (!overLimit || catalogue.canAllowOverLimit);
+  // What is left to pay now, after what goes on credit.
+  const toPay = total && credit && !creditTooMuch ? total.minus(credit) : total;
+  const nothingToPay = !!toPay && toPay.isZero() && !!credit && credit.greaterThan(0);
+
+  function addCustomer() {
+    if (!newCustomer || pending) return;
+    setNewCustomerError(null);
+    startTransition(async () => {
+      const result = await quickCreateCustomerAction(newCustomer);
+      if (result.status === "success" && result.customerId) {
+        const phone = newCustomer.phone.replace(/[\s\-().]/g, "");
+        const added = { id: result.customerId, name: newCustomer.name.trim(), phone, balance: "0.00", creditLimit: null };
+        setCustomers((current) => [...current, added]);
+        setCustomerText(customerLabel(added));
+        setNewCustomer(null);
+      } else if (result.status === "error") {
+        setNewCustomerError(result.fieldErrors.name ?? result.fieldErrors.phone ?? result.message);
+      }
+    });
+  }
+
   // --- How it is paid ----------------------------------------------------------------
   const split = parts.length > 1;
   const methodOf = (part: PaymentPart) => catalogue.paymentMethods.find((method) => method.id === part.methodId);
@@ -225,7 +268,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     const method = methodOf(part);
     const isCash = method?.kind === "CASH";
     // A single payment is for the whole total; a split one is for what was typed.
-    const amount = split ? (isMoney(part.amount) && new Decimal(part.amount.trim()).greaterThan(0) ? new Decimal(part.amount.trim()) : null) : total;
+    const amount = split ? (isMoney(part.amount) && new Decimal(part.amount.trim()).greaterThan(0) ? new Decimal(part.amount.trim()) : null) : toPay;
     // Cash handed over. When the payment is split it may be left empty, meaning "exactly its amount".
     const typed = part.tendered.trim();
     const received = !isCash ? null : typed === "" ? (split ? amount : null) : isMoney(typed) ? new Decimal(typed) : null;
@@ -235,15 +278,16 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     return { part, method, isCash, amount, received, short, badCash, sound };
   });
   const paidSoFar = paid.every((entry) => entry.amount) ? sumMoney(paid.map((entry) => entry.amount!)) : null;
-  const leftToPay = total && paidSoFar ? total.minus(paidSoFar) : null;
+  const leftToPay = toPay && paidSoFar ? toPay.minus(paidSoFar) : null;
   const changeDue =
-    total && paid.every((entry) => entry.sound)
+    total && !nothingToPay && paid.every((entry) => entry.sound)
       ? sumMoney(paid.filter((entry) => entry.isCash).map((entry) => entry.received!.minus(entry.amount!)))
       : null;
-  const hasCash = paid.some((entry) => entry.isCash);
+  const hasCash = !nothingToPay && paid.some((entry) => entry.isCash);
   const terminal = catalogue.terminals.find((candidate) => candidate.id === terminalId);
   const tillClosed = !!terminal && !terminal.tillOpen;
-  const ready = !!total && paid.every((entry) => entry.sound) && !!leftToPay && leftToPay.isZero() && !!terminal && !tillClosed;
+  const paymentsSound = nothingToPay || (paid.every((entry) => entry.sound) && !!leftToPay && leftToPay.isZero());
+  const ready = !!total && !unknownCustomer && creditSound && paymentsSound && !!terminal && !tillClosed;
 
   function changePart(key: string, patch: Partial<PaymentPart>) {
     setErrors({});
@@ -274,12 +318,16 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
         terminalId,
         deviceTime: new Date().toISOString(),
         expectedTotal: moneyToString(total),
-        payments: paid.map(({ part, isCash, amount }) => ({
-          methodId: part.methodId,
-          amount: moneyToString(amount!),
-          tendered: isCash ? part.tendered.trim() : "",
-          reference: isCash ? "" : part.reference.trim(),
-        })),
+        customerId: customer?.id ?? "",
+        creditAmount: credit && credit.greaterThan(0) ? moneyToString(credit) : "",
+        payments: nothingToPay
+          ? []
+          : paid.map(({ part, isCash, amount }) => ({
+              methodId: part.methodId,
+              amount: moneyToString(amount!),
+              tendered: isCash ? part.tendered.trim() : "",
+              reference: isCash ? "" : part.reference.trim(),
+            })),
         lines: view.map(({ line, unit }) => ({
           productId: line.productId,
           unitId: line.unitId,
@@ -567,7 +615,116 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
             </Alert>
           )}
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2" data-testid="checkout-customer">
+            <datalist id="checkout-customers">
+              {customers.map((candidate) => (
+                <option key={candidate.id} value={customerLabel(candidate)} />
+              ))}
+            </datalist>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="customer">Customer</Label>
+              <Input
+                id="customer"
+                list="checkout-customers"
+                value={customerText}
+                onChange={(event) => {
+                  setCustomerText(event.target.value);
+                  setCreditText("");
+                  setErrors({});
+                }}
+                placeholder="Walk-in — or type a name or phone"
+                autoComplete="off"
+                aria-invalid={unknownCustomer || !!errors.customerId}
+              />
+              {errors.customerId && <p className="text-xs text-destructive">{errors.customerId}</p>}
+              {unknownCustomer && !errors.customerId && (
+                <p className="text-xs text-destructive">Choose a customer from the list, or clear the box for a walk-in.</p>
+              )}
+              {customer && (
+                <p className="text-xs text-muted-foreground" data-testid="customer-standing">
+                  Owes {nairaFromText(customer.balance)} ·{" "}
+                  {limit && room ? `limit ${formatNaira(limit)} · can still take ${formatNaira(room)} on credit` : "no credit"}
+                </p>
+              )}
+            </div>
+            {newCustomer === null ? (
+              <button
+                type="button"
+                onClick={() => setNewCustomer({ name: "", phone: "" })}
+                className="w-fit text-xs text-link underline-offset-4 hover:underline"
+              >
+                + New customer
+              </button>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-2xl border p-3">
+                <Input
+                  value={newCustomer.name}
+                  onChange={(event) => setNewCustomer({ ...newCustomer, name: event.target.value })}
+                  placeholder="Customer's name"
+                  aria-label="New customer's name"
+                  autoComplete="off"
+                />
+                <Input
+                  value={newCustomer.phone}
+                  onChange={(event) => setNewCustomer({ ...newCustomer, phone: event.target.value })}
+                  placeholder="Phone number"
+                  aria-label="New customer's phone number"
+                  inputMode="tel"
+                  autoComplete="off"
+                />
+                {newCustomerError && <p className="text-xs text-destructive">{newCustomerError}</p>}
+                <div className="flex gap-2">
+                  <Button type="button" size="sm" onClick={addCustomer} disabled={pending}>
+                    Add customer
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setNewCustomer(null)}>
+                    Not now
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {mayCredit && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="credit">Put on credit (₦)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="credit"
+                    value={creditText}
+                    onChange={(event) => {
+                      setCreditText(event.target.value);
+                      setErrors({});
+                    }}
+                    inputMode="decimal"
+                    autoComplete="off"
+                    aria-invalid={!creditSound || !!errors.creditAmount}
+                    className="text-right tabular-nums"
+                  />
+                  <Button type="button" variant="outline" className="shrink-0" disabled={!total} onClick={() => total && setCreditText(moneyToString(total))}>
+                    All of it
+                  </Button>
+                </div>
+                {errors.creditAmount && <p className="text-xs text-destructive">{errors.creditAmount}</p>}
+                {!errors.creditAmount && credit === null && <p className="text-xs text-destructive">Enter a plain amount greater than zero, or leave it empty.</p>}
+                {!errors.creditAmount && creditTooMuch && <p className="text-xs text-destructive">No more than the total can go on credit.</p>}
+                {!errors.creditAmount && overLimit && !creditTooMuch && (
+                  <p className={catalogue.canAllowOverLimit ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
+                    {catalogue.canAllowOverLimit
+                      ? "This takes the customer over their credit limit. You are allowed to let it through; it will be recorded."
+                      : `Over the customer's limit: only ${formatNaira(room!)} more can go on credit. A manager or admin can allow more.`}
+                  </p>
+                )}
+                {credit && credit.greaterThan(0) && toPay && !creditTooMuch && (
+                  <p className="text-xs text-muted-foreground" data-testid="to-pay-now">
+                    To pay now: {formatNaira(toPay)}
+                  </p>
+                )}
+              </div>
+            )}
+            {!mayCredit && errors.creditAmount && <p className="text-xs text-destructive">{errors.creditAmount}</p>}
+          </div>
+
+          <div className={nothingToPay ? "hidden" : "flex flex-col gap-3"}>
             {paid.map(({ part, isCash, amount, short, badCash }, index) => {
               const at = (field: string) => errors[`payments.${index}.${field}`];
               // The box the cursor goes to when the cashier moves on to paying.
@@ -630,7 +787,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
                           className={split ? "text-right tabular-nums" : "h-12 text-right text-lg tabular-nums"}
                         />
                         {!split && (
-                          <Button type="button" variant="outline" className="h-12 shrink-0" disabled={!total} onClick={() => total && changePart(part.key, { tendered: moneyToString(total) })}>
+                          <Button type="button" variant="outline" className="h-12 shrink-0" disabled={!toPay} onClick={() => toPay && changePart(part.key, { tendered: moneyToString(toPay) })}>
                             Exact
                           </Button>
                         )}

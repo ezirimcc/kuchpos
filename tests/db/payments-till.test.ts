@@ -146,7 +146,7 @@ describe("paying", () => {
 
   it("refuses payments that do not add up exactly to the total, in either direction, and saves nothing", async () => {
     const attempt = async (payments: Part[]) => (await refusal(postSale(world.a.as.CASHIER, sale(100, payments)))).fieldErrors;
-    expect((await attempt([cash("4000.00"), transfer("5999.99")])).payments).toBe("The payments add up to ₦9,999.99, but the total is ₦10,000.00. They must be exactly equal.");
+    expect((await attempt([cash("4000.00"), transfer("5999.99")])).payments).toBe("The payments add up to ₦9,999.99, but ₦10,000.00 is to be paid. They must be exactly equal.");
     expect(await attempt([cash("4000.00"), transfer("6000.01")])).toHaveProperty("payments");
     expect(await attempt([transfer("10000.01")])).toHaveProperty("payments");
     expect((await attempt([])).payments).toBe("Say how the ₦10,000.00 is paid.");

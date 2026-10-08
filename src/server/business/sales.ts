@@ -63,13 +63,19 @@ export type CheckoutCatalogue = {
   paymentMethods: { id: string; name: string; kind: PaymentKindValue }[];
   /** True when this person may take a line from the Storeroom instead of the Shelf. */
   canSellFromStoreroom: boolean;
+  /** Customers in use, by name, with what each owes and may owe. Empty means walk-in sales only. */
+  customers: { id: string; name: string; phone: string; balance: string; creditLimit: string | null }[];
+  /** True when this person may put part of a sale on a customer's account. */
+  canSellOnCredit: boolean;
+  /** True when this person may let a customer go over their credit limit. */
+  canAllowOverLimit: boolean;
   products: CheckoutProduct[];
 };
 
 export async function getCheckoutCatalogue(context: AppContext): Promise<CheckoutCatalogue> {
   authorize(context, "sale.create");
   const db = businessDb(context);
-  const [business, terminals, openTills, paymentMethods, locations, products] = await Promise.all([
+  const [business, terminals, openTills, paymentMethods, customers, locations, products] = await Promise.all([
     db.business.findFirst({ select: { name: true, taxRatePercent: true } }),
     db.terminal.findMany({ where: { deactivatedAt: null }, orderBy: { code: "asc" }, select: { id: true, code: true, name: true } }),
     db.tillSession.findMany({ where: { close: null }, select: { terminalId: true } }),
@@ -77,6 +83,11 @@ export async function getCheckoutCatalogue(context: AppContext): Promise<Checkou
       where: { deactivatedAt: null },
       orderBy: [{ builtIn: "desc" }, { name: "asc" }],
       select: { id: true, name: true, kind: true },
+    }),
+    db.customer.findMany({
+      where: { deactivatedAt: null },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: { id: true, name: true, phone: true, balance: true, creditLimit: true },
     }),
     db.location.findMany({ select: { id: true, kind: true } }),
     db.product.findMany({
@@ -109,6 +120,15 @@ export async function getCheckoutCatalogue(context: AppContext): Promise<Checkou
     })),
     paymentMethods,
     canSellFromStoreroom: can(context, "sale.fromStoreroom"),
+    customers: customers.map((customer) => ({
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone,
+      balance: customer.balance.toFixed(2),
+      creditLimit: customer.creditLimit?.toFixed(2) ?? null,
+    })),
+    canSellOnCredit: can(context, "sale.credit"),
+    canAllowOverLimit: can(context, "customer.setCreditLimit"),
     products: products.map((product) => ({
       id: product.id,
       name: product.name,
@@ -152,6 +172,10 @@ const saleSchema = z.object({
       }),
     )
     .max(MAX_PAYMENTS, `A sale can be split across at most ${MAX_PAYMENTS} payments.`),
+  /** The customer the sale is for. Left out for a walk-in. */
+  customerId: z.string().trim().optional().default(""),
+  /** The part of the total put on that customer's account instead of being paid now. Empty for none. */
+  creditAmount: z.string().trim().optional().default(""),
   lines: z
     .array(
       z.object({
@@ -338,7 +362,20 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
     }
   });
 
+  // --- The customer, if the sale is for one -----------------------------------------
+  let customer: { id: string; name: string; phone: string } | null = null;
+  if (data.customerId) {
+    const found = await db.customer.findFirst({
+      where: { id: data.customerId },
+      select: { id: true, name: true, phone: true, deactivatedAt: true },
+    });
+    if (!found) fieldErrors.customerId = "Choose the customer again: this one could not be found.";
+    else if (found.deactivatedAt) fieldErrors.customerId = `"${found.name}" is out of use. Choose another customer, or sell as a walk-in.`;
+    else customer = found;
+  }
+
   // --- Total and payments ----------------------------------------------------------
+  let credit = new Decimal(0);
   const total = sumMoney(checked.map((line) => line.lineTotal));
   const linesAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("lines."));
   const payments: CheckedPayment[] = [];
@@ -413,13 +450,27 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
         payments.push({ method, amount, tendered, change: tendered.minus(amount), reference: null });
       });
 
-      const paymentsAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("payments."));
+      // Credit: part (or all) of the total goes on the customer's account instead of being paid now.
+      if (data.creditAmount !== "") {
+        try {
+          credit = parseMoney(data.creditAmount);
+          if (!credit.greaterThan(0)) throw new Error("out of range");
+          if (!can(context, "sale.credit")) fieldErrors.creditAmount = "You are not allowed to sell on credit.";
+          else if (!data.customerId) fieldErrors.creditAmount = "Choose the customer first: a walk-in customer cannot buy on credit.";
+          else if (credit.greaterThan(total)) fieldErrors.creditAmount = `No more than the total, ${formatNaira(total)}, can go on credit.`;
+        } catch {
+          fieldErrors.creditAmount = "Enter the amount on credit as a plain number greater than zero, for example 5000 (no commas).";
+        }
+      }
+
+      const paymentsAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("payments.") && key !== "creditAmount");
       const paid = sumMoney(payments.map((payment) => payment.amount));
-      if (paymentsAreSound && !paid.equals(total)) {
+      const toPay = total.minus(credit);
+      if (paymentsAreSound && !paid.equals(toPay)) {
         fieldErrors.payments =
           data.payments.length === 0
-            ? `Say how the ${formatNaira(total)} is paid.`
-            : `The payments add up to ${formatNaira(paid)}, but the total is ${formatNaira(total)}. They must be exactly equal.`;
+            ? `Say how the ${formatNaira(toPay)} is paid.`
+            : `The payments add up to ${formatNaira(paid)}, but ${formatNaira(toPay)} is to be paid${credit.greaterThan(0) ? ` (the total less ${formatNaira(credit)} on credit)` : ""}. They must be exactly equal.`;
       }
     }
   }
@@ -459,6 +510,37 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           throw new ValidationError(`Nothing was sold: the till of ${terminal.code} is not open. Open the till, then complete the sale.`, {
             till: "The till is not open.",
           });
+        }
+
+        // Credit: the customer's "turn" comes before any product's. Their balance goes up in one
+        // statement, and the limit is checked against the balance that statement left.
+        let owedAfter: Decimal | null = null;
+        let overLimit = false;
+        if (customer && credit.greaterThan(0)) {
+          const account = await tx.customer.update({
+            where: { id: customer.id },
+            data: { balance: { increment: moneyToString(credit) } },
+            select: { balance: true, creditLimit: true },
+          });
+          owedAfter = new Decimal(account.balance.toFixed(2));
+          const owedBefore = owedAfter.minus(credit);
+          if (account.creditLimit === null) {
+            throw new ValidationError(NOTHING_SOLD, {
+              creditAmount: `${customer.name} cannot buy on credit yet. An admin or manager must first give them a credit limit.`,
+            });
+          }
+          const limit = new Decimal(account.creditLimit.toFixed(2));
+          if (owedAfter.greaterThan(limit)) {
+            if (!can(context, "customer.setCreditLimit")) {
+              const room = Decimal.max(limit.minus(owedBefore), 0);
+              throw new ValidationError(NOTHING_SOLD, {
+                creditAmount:
+                  `${customer.name} owes ${formatNaira(owedBefore)} and their limit is ${formatNaira(limit)}, so only ` +
+                  `${formatNaira(room)} more can go on credit. A manager or admin can allow more, or raise the limit.`,
+              });
+            }
+            overLimit = true;
+          }
         }
 
         // The tax rate at this moment; it is copied onto the sale and never looked up again.
@@ -529,8 +611,40 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             cashierName: context.actor.name,
             deviceTime: data.deviceTime ? new Date(data.deviceTime) : null,
             tillSessionId: till.id,
+            customerId: customer?.id ?? null,
+            customerName: customer?.name ?? null,
+            customerPhone: customer?.phone ?? null,
+            creditAmount: moneyToString(credit),
           },
         });
+        if (customer && owedAfter) {
+          await tx.customerAccountEntry.create({
+            data: {
+              businessId,
+              customerId: customer.id,
+              type: "CREDIT_SALE",
+              amount: moneyToString(credit),
+              balanceAfter: moneyToString(owedAfter),
+              saleId: sale.id,
+              documentNumber: receiptNumber,
+              note: overLimit ? `Over the credit limit, allowed by ${context.actor.name}.` : null,
+              createdByUserId: context.actor.userId,
+              createdByName: context.actor.name,
+            },
+          });
+          if (overLimit) {
+            await tx.activityLog.create({
+              data: activityRow(context, {
+                action: "sale.credit_over_limit",
+                summary:
+                  `${context.actor.name} let ${customer.name} go over their credit limit on sale ${receiptNumber}: ` +
+                  `${formatNaira(credit)} on credit, now owing ${formatNaira(owedAfter)}.`,
+                targetType: "customer",
+                targetId: customer.id,
+              }),
+            });
+          }
+        }
         await tx.saleLine.createMany({
           data: lines.map(({ line, ...extra }) => ({
             businessId,
@@ -633,6 +747,10 @@ export type SaleSummary = {
   receiptNumber: string;
   createdAt: Date;
   cashierName: string;
+  /** The customer's name as it was; null for a walk-in. */
+  customerName: string | null;
+  /** The part of the total that went on the customer's account. */
+  creditAmount: string;
   lineCount: number;
   /** The first few products, for recognising the sale in the list. */
   products: string[];
@@ -677,6 +795,7 @@ export async function listSales(
           OR: [
             { receiptNumber: { contains: search } },
             { cashierName: { contains: search } },
+            { customerName: { contains: search } },
             { lines: { some: { productName: { contains: search } } } },
           ],
         }
@@ -696,6 +815,8 @@ export async function listSales(
         receiptNumber: true,
         createdAt: true,
         cashierName: true,
+        customerName: true,
+        creditAmount: true,
         total: true,
         cancellation: { select: { id: true } },
         lines: { orderBy: { lineNumber: "asc" }, take: 3, select: { productName: true } },
@@ -711,6 +832,8 @@ export async function listSales(
       receiptNumber: row.receiptNumber,
       createdAt: row.createdAt,
       cashierName: row.cashierName,
+      customerName: row.customerName,
+      creditAmount: row.creditAmount.toFixed(2),
       lineCount: row._count.lines,
       products: row.lines.map((line) => line.productName),
       total: row.total.toFixed(2),
@@ -744,6 +867,11 @@ export type SaleDetail = {
   }[];
   /** Cash handed back to the customer in all. */
   change: string;
+  /** Who it was sold to, as they were named then; null for a walk-in. */
+  customer: { id: string; name: string; phone: string } | null;
+  /** The part of the total put on the customer's account, and what they owed straight afterwards. */
+  creditAmount: string;
+  owedAfter: string | null;
   /** Set when the sale was cancelled: who, when and why. The sale itself is never changed. */
   cancellation: { note: string; cancelledByName: string; createdAt: Date } | null;
   /** True when this person may cancel it now: allowed to, not yet cancelled, and made today. */
@@ -780,6 +908,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         lines: { orderBy: { lineNumber: "asc" } },
         payments: { orderBy: [{ kind: "asc" }, { methodName: "asc" }] },
         cancellation: { select: { note: true, cancelledByName: true, createdAt: true } },
+        accountEntries: { where: { type: "CREDIT_SALE" }, select: { balanceAfter: true } },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
       },
@@ -807,6 +936,9 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
       reference: payment.reference,
     })),
     change: moneyToString(sumMoney(row.payments.map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
+    customer: row.customerId ? { id: row.customerId, name: row.customerName ?? "", phone: row.customerPhone ?? "" } : null,
+    creditAmount: row.creditAmount.toFixed(2),
+    owedAfter: row.accountEntries[0]?.balanceAfter.toFixed(2) ?? null,
     cancellation: row.cancellation,
     canCancel: can(context, "sale.cancel") && row.cancellation === null && shopToday(row.createdAt) === shopToday(),
     printCount: row._count.receiptPrints,
@@ -935,11 +1067,15 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
         }
         if (hasCash && till) {
           // Cash cannot be handed back out of a drawer that does not hold it.
-          const [taken, paidBack] = await Promise.all([
+          const [taken, repaid, paidBack] = await Promise.all([
             tx.payment.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
+            tx.repayment.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
             tx.refund.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
           ]);
-          const inDrawer = new Decimal(till.openingFloat.toFixed(2)).plus(taken._sum.amount?.toFixed(2) ?? "0").minus(paidBack._sum.amount?.toFixed(2) ?? "0");
+          const inDrawer = new Decimal(till.openingFloat.toFixed(2))
+            .plus(taken._sum.amount?.toFixed(2) ?? "0")
+            .plus(repaid._sum.amount?.toFixed(2) ?? "0")
+            .minus(paidBack._sum.amount?.toFixed(2) ?? "0");
           if (inDrawer.lessThan(cashToRefund)) {
             throw new ValidationError(
               `Nothing was cancelled: ${formatNaira(cashToRefund)} in cash has to be given back, but the till of ${sale.terminalCode} should only hold ${formatNaira(inDrawer)}.`,
@@ -957,6 +1093,38 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
             cancelledByName: context.actor.name,
           },
         });
+
+        // A credit sale: what it put on the customer's account is taken off again. The customer's
+        // "turn" comes before any product's, as when the sale was made.
+        const credit = new Decimal(sale.creditAmount.toFixed(2));
+        if (sale.customerId && credit.greaterThan(0)) {
+          const lowered = await tx.customer.updateMany({
+            where: { id: sale.customerId, balance: { gte: moneyToString(credit) } },
+            data: { balance: { decrement: moneyToString(credit) } },
+          });
+          // Checked after taking the customer's turn, so a repayment cannot slip in between.
+          const repaid = await tx.repaymentAllocation.count({ where: { saleId: sale.id } });
+          if (repaid > 0 || lowered.count !== 1) {
+            throw new ValidationError(
+              "Nothing was cancelled: part of this sale's debt has already been repaid, so it cannot simply be cancelled. The goods must be returned instead.",
+            );
+          }
+          const now = await tx.customer.findFirst({ where: { id: sale.customerId }, select: { balance: true } });
+          await tx.customerAccountEntry.create({
+            data: {
+              businessId,
+              customerId: sale.customerId,
+              type: "SALE_CANCELLED",
+              amount: moneyToString(credit.negated()),
+              balanceAfter: now?.balance.toFixed(2) ?? "0.00",
+              saleId: sale.id,
+              documentNumber: sale.receiptNumber,
+              note: data.note,
+              createdByUserId: context.actor.userId,
+              createdByName: context.actor.name,
+            },
+          });
+        }
 
         // Always in the same order (product, then location), as for every other stock change.
         for (const productId of [...perProduct.keys()].sort()) {

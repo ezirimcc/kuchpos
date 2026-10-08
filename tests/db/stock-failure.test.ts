@@ -5,10 +5,11 @@ import { getReceipt, receiveGoods } from "@/server/business/stock";
 import { transferStock } from "@/server/business/transfers";
 import { cancelSale, postSale } from "@/server/business/sales";
 import { openTill } from "@/server/business/till";
+import { createCustomer, recordRepayment, setCreditLimit } from "@/server/business/customers";
 import { adjustFromCount, decideAdjustment, getAdjustment, recordAdjustment } from "@/server/business/adjustments";
 import { submitCount } from "@/server/business/counts";
 import { getDb } from "@/server/db/client";
-import { createWorld, expectBalancesMatchMovements, nextDocumentNumber, type World } from "../support/world";
+import { createWorld, expectBalancesMatchMovements, expectCustomerBalancesMatchEntries, nextDocumentNumber, type World } from "../support/world";
 
 /**
  * Forces a failure at the very last step of saving a delivery — after the document, its
@@ -288,5 +289,45 @@ describe("a failure halfway through cancelling a sale", () => {
     expect(await cancelSale(world.a.as.MANAGER, { saleId: sale.id, note: "Customer changed his mind" })).toMatchObject({ alreadyCancelled: false, refunded: "500.00" });
     expect(await db.refund.count()).toBe(1);
     await expectBalancesMatchMovements();
+  });
+});
+
+/** And for a repayment: the failure comes after the balance, the entry and the allocations are written. */
+describe("a failure halfway through recording a repayment", () => {
+  it("leaves the customer owing exactly what they owed, with no repayment and no number used up", async () => {
+    await receiveGoods(world.a.as.ADMIN, { ...delivery(), locationId: world.a.shelfId });
+    await openTill(world.a.as.CASHIER, { terminalId: world.a.terminalId, openingFloat: "0" });
+    const { id: customerId } = await createCustomer(world.a.as.ADMIN, { name: "Ada Okafor", phone: "08031234567" });
+    await setCreditLimit(world.a.as.ADMIN, { customerId, creditLimit: "5000" });
+    await postSale(world.a.as.CASHIER, {
+      requestId: randomUUID(),
+      terminalId: world.a.terminalId,
+      expectedTotal: "500.00",
+      payments: [],
+      customerId,
+      creditAmount: "500.00",
+      lines: [{ productId: world.a.product.id, unitId: world.a.product.baseUnitId, quantity: "5", unitPrice: "100.00" }],
+    });
+    const db = getDb();
+    const state = async () =>
+      JSON.stringify({
+        balance: (await db.customer.findUniqueOrThrow({ where: { id: customerId } })).balance,
+        entries: await db.customerAccountEntry.count(),
+        repayments: await db.repayment.count(),
+        allocations: await db.repaymentAllocation.count(),
+        number: await nextDocumentNumber(world.a.id, "REPAYMENT"),
+      });
+    const before = await state();
+    const request = { requestId: randomUUID(), customerId, amount: "200", methodId: world.a.cashMethodId, terminalId: world.a.terminalId };
+
+    failure.on = true;
+    await expect(recordRepayment(world.a.as.CASHIER, request)).rejects.toThrow("Simulated failure while saving");
+    expect(await state()).toBe(before);
+    await expectCustomerBalancesMatchEntries();
+
+    failure.on = false;
+    expect(await recordRepayment(world.a.as.CASHIER, request)).toMatchObject({ number: 1, balanceAfter: "300.00", alreadySaved: false });
+    expect(await recordRepayment(world.a.as.CASHIER, request)).toMatchObject({ number: 1, alreadySaved: true });
+    await expectCustomerBalancesMatchEntries();
   });
 });

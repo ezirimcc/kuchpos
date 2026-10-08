@@ -75,6 +75,11 @@ model Business {
   tillSessionRecounts TillSessionRecount[]
   saleCancellations SaleCancellation[]
   refunds       Refund[]
+  customers     Customer[]
+  customerAccountEntries CustomerAccountEntry[]
+  creditLimitChanges CreditLimitChange[]
+  repayments    Repayment[]
+  repaymentAllocations RepaymentAllocation[]
   sales         Sale[]
   saleLines     SaleLine[]
   payments      Payment[]
@@ -862,6 +867,13 @@ model Sale {
   deviceTime      DateTime? @db.DateTime(3)
   /// Server time when it was saved.
   createdAt       DateTime @default(now()) @db.DateTime(3)
+  /// The customer it was sold to, with their name and phone as they were. Empty for a walk-in.
+  customerId      String?  @db.Char(36)
+  customer        Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customerName    String?  @db.VarChar(120)
+  customerPhone   String?  @db.VarChar(30)
+  /// The part of the total put on the customer's account instead of being paid now.
+  creditAmount    Decimal  @default(0) @db.Decimal(14, 2)
   /// The till session it was sold in. Empty only for sales made before till sessions existed.
   tillSessionId   String?  @db.Char(36)
   tillSession     TillSession? @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -871,6 +883,8 @@ model Sale {
   receiptPrints   SaleReceiptPrint[]
   cancellation    SaleCancellation?
   refunds         Refund[]
+  accountEntries  CustomerAccountEntry[]
+  repaymentParts  RepaymentAllocation[]
 
   @@unique([businessId, requestId])
   @@unique([terminalId, sequence])
@@ -878,6 +892,7 @@ model Sale {
   @@index([businessId, createdAt])
   @@index([businessId, cashierUserId, createdAt])
   @@index([tillSessionId])
+  @@index([customerId, createdAt])
   @@map("sale")
 }
 
@@ -942,6 +957,7 @@ model PaymentMethod {
 
   payments      Payment[]
   refunds       Refund[]
+  repayments    Repayment[]
 
   @@unique([businessId, name])
   @@map("payment_method")
@@ -1002,6 +1018,7 @@ enum DocumentKind {
   STOCK_COUNT
   STOCK_ADJUSTMENT
   TILL_SESSION
+  REPAYMENT
 }
 
 /// The number the next document of each kind will get in a business (deliveries, transfers,
@@ -1042,6 +1059,7 @@ model TillSession {
   sales          Sale[]
   payments       Payment[]
   refunds        Refund[]
+  repayments     Repayment[]
   close          TillSessionClose?
   recounts       TillSessionRecount[]
 
@@ -1149,4 +1167,145 @@ model Refund {
   @@index([tillSessionId])
   @@index([businessId, createdAt])
   @@map("refund")
+}
+
+/// Someone the business sells to by name (SPEC C49). Belongs to one business. Never deleted
+/// once it exists; taken out of use instead. `balance` is what the customer owes: a running
+/// total that must always equal the sum of their account entries.
+model Customer {
+  id            String    @id @default(uuid()) @db.Char(36)
+  businessId    String    @db.Char(36)
+  business      Business  @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  name          String    @db.VarChar(120)
+  /// Digits only, with an optional leading "+". Unique within the business.
+  phone         String    @db.VarChar(30)
+  address       String?   @db.VarChar(200)
+  city          String?   @db.VarChar(60)
+  state         String?   @db.VarChar(60)
+  /// The most this customer may owe. Empty means this customer cannot buy on credit (SPEC C55).
+  creditLimit   Decimal?  @db.Decimal(14, 2)
+  /// What the customer owes now. Never negative: there are no advance deposits (SPEC C54).
+  balance       Decimal   @default(0) @db.Decimal(14, 2)
+  deactivatedAt DateTime? @db.DateTime(3)
+  createdAt     DateTime  @default(now()) @db.DateTime(3)
+  updatedAt     DateTime  @updatedAt @db.DateTime(3)
+
+  sales         Sale[]
+  entries       CustomerAccountEntry[]
+  limitChanges  CreditLimitChange[]
+  repayments    Repayment[]
+
+  @@unique([businessId, phone])
+  @@index([businessId, name])
+  @@map("customer")
+}
+
+enum AccountEntryType {
+  /// Part of a sale put on the account: the customer owes more.
+  CREDIT_SALE
+  /// Money received against the debt: the customer owes less.
+  REPAYMENT
+  /// A credit sale was cancelled: what it added is taken off again.
+  SALE_CANCELLED
+}
+
+/// One line of a customer's account. Add-only: the history of a debt is never rewritten.
+model CustomerAccountEntry {
+  id              String           @id @default(uuid()) @db.Char(36)
+  businessId      String           @db.Char(36)
+  business        Business         @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customerId      String           @db.Char(36)
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  type            AccountEntryType
+  /// Positive when the customer owes more, negative when they owe less. Never zero.
+  amount          Decimal          @db.Decimal(14, 2)
+  /// What the customer owed straight after this entry.
+  balanceAfter    Decimal          @db.Decimal(14, 2)
+  /// What it belongs to.
+  saleId          String?          @db.Char(36)
+  sale            Sale?            @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  repaymentId     String?          @unique @db.Char(36)
+  repayment       Repayment?       @relation(fields: [repaymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// The receipt or repayment number, for reading.
+  documentNumber  String           @db.VarChar(30)
+  note            String?          @db.VarChar(300)
+  createdByUserId String?
+  createdByName   String
+  createdAt       DateTime         @default(now()) @db.DateTime(3)
+
+  @@index([customerId, createdAt])
+  @@index([saleId])
+  @@map("customer_account_entry")
+}
+
+/// Every change of a customer's credit limit. Add-only.
+model CreditLimitChange {
+  id              String   @id @default(uuid()) @db.Char(36)
+  businessId      String   @db.Char(36)
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customerId      String   @db.Char(36)
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Empty means "no credit".
+  oldLimit        Decimal? @db.Decimal(14, 2)
+  newLimit        Decimal? @db.Decimal(14, 2)
+  changedByUserId String?
+  changedByName   String
+  createdAt       DateTime @default(now()) @db.DateTime(3)
+
+  @@index([customerId, createdAt])
+  @@map("credit_limit_change")
+}
+
+/// Money received from a customer against what they owe. Add-only.
+model Repayment {
+  id               String        @id @default(uuid()) @db.Char(36)
+  businessId       String        @db.Char(36)
+  business         Business      @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Made up by the browser, so the same repayment is never recorded twice.
+  requestId        String        @db.Char(36)
+  /// 1, 2, 3… within the business; shown as RP-000012.
+  number           Int
+  customerId       String        @db.Char(36)
+  customer         Customer      @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customerName     String        @db.VarChar(120)
+  amount           Decimal       @db.Decimal(14, 2)
+  methodId         String        @db.Char(36)
+  method           PaymentMethod @relation(fields: [methodId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  methodName       String        @db.VarChar(60)
+  kind             PaymentKind
+  reference        String?       @db.VarChar(60)
+  /// The till session the cash went into. Always set for cash.
+  tillSessionId    String?       @db.Char(36)
+  tillSession      TillSession?  @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  note             String?       @db.VarChar(300)
+  receivedByUserId String?
+  receivedByName   String
+  createdAt        DateTime      @default(now()) @db.DateTime(3)
+
+  entry            CustomerAccountEntry?
+  allocations      RepaymentAllocation[]
+
+  @@unique([businessId, requestId])
+  @@unique([businessId, number])
+  @@index([customerId, createdAt])
+  @@index([tillSessionId])
+  @@index([businessId, createdAt])
+  @@map("repayment")
+}
+
+/// Which credit sale a repayment (or part of it) pays off. Add-only. What is still owed on
+/// a sale is its credit amount less the allocations made to it.
+model RepaymentAllocation {
+  id          String    @id @default(uuid()) @db.Char(36)
+  businessId  String    @db.Char(36)
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  repaymentId String    @db.Char(36)
+  repayment   Repayment @relation(fields: [repaymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleId      String    @db.Char(36)
+  sale        Sale      @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  amount      Decimal   @db.Decimal(14, 2)
+
+  @@unique([repaymentId, saleId])
+  @@index([saleId])
+  @@map("repayment_allocation")
 }

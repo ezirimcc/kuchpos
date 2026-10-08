@@ -44,6 +44,11 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
         <p>Receipt: {sale.receiptNumber}</p>
         <p>Date: {formatDateTime(sale.createdAt)}</p>
         <p>Served by: {sale.cashierName}</p>
+        {sale.customer && (
+          <p data-testid="receipt-customer">
+            Customer: {sale.customer.name} ({sale.customer.phone})
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-1 border-t border-dashed border-black pt-1">
@@ -87,6 +92,20 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
             )}
           </div>
         ))}
+        {sale.creditAmount !== "0.00" && (
+          <div data-testid="receipt-credit">
+            <p className="flex flex-wrap justify-between gap-x-2 font-semibold">
+              <span>On credit (to pay later)</span>
+              <span className="ml-auto">{nairaFromText(sale.creditAmount)}</span>
+            </p>
+            {sale.owedAfter !== null && (
+              <p className="flex flex-wrap justify-between gap-x-2 pl-2">
+                <span>Owed after this sale</span>
+                <span className="ml-auto">{nairaFromText(sale.owedAfter)}</span>
+              </p>
+            )}
+          </div>
+        )}
         {sale.payments.some((payment) => payment.kind === "CASH") && (
           <p className="flex justify-between gap-2">
             <span>Change</span>

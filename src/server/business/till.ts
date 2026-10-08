@@ -23,8 +23,9 @@ import { authorize, can } from "@/server/permissions";
  * from opening it with a float to closing it with a count. A terminal has at most one open
  * session, and a sale can only be made at a terminal whose till is open (see postSale).
  *
- * Expected cash = the opening float + every CASH payment taken in the session − every CASH
- * refund paid out of it for a cancelled sale. (A payment's amount is what the sale was owed,
+ * Expected cash = the opening float + every CASH payment taken in the session + every CASH
+ * repayment of a customer's debt received in it − every CASH refund paid out of it for a
+ * cancelled sale. (A payment's amount is what the sale was owed,
  * so change given is already left out.)
  *
  * The count is "blind" (SPEC C51): the person who runs the till is never shown the expected
@@ -45,13 +46,19 @@ function ownOnly(context: AppContext): Prisma.TillSessionWhereInput {
   return can(context, "till.reviewAny") ? {} : { openedByUserId: context.actor.userId };
 }
 
-/** Cash that went into the drawer in a session, less cash refunded out of it (cancelled sales). */
-async function cashTakenIn(db: Pick<Db, "payment" | "refund">, sessionId: string): Promise<Decimal> {
-  const [taken, refunded] = await Promise.all([
+/**
+ * Cash that went into the drawer in a session — from sales and from customers repaying
+ * debts — less cash refunded out of it (cancelled sales).
+ */
+async function cashTakenIn(db: Pick<Db, "payment" | "refund" | "repayment">, sessionId: string): Promise<Decimal> {
+  const [taken, repaid, refunded] = await Promise.all([
     db.payment.aggregate({ where: { tillSessionId: sessionId, kind: "CASH" }, _sum: { amount: true } }),
+    db.repayment.aggregate({ where: { tillSessionId: sessionId, kind: "CASH" }, _sum: { amount: true } }),
     db.refund.aggregate({ where: { tillSessionId: sessionId, kind: "CASH" }, _sum: { amount: true } }),
   ]);
-  return new Decimal(taken._sum.amount?.toFixed(2) ?? "0").minus(refunded._sum.amount?.toFixed(2) ?? "0");
+  return new Decimal(taken._sum.amount?.toFixed(2) ?? "0")
+    .plus(repaid._sum.amount?.toFixed(2) ?? "0")
+    .minus(refunded._sum.amount?.toFixed(2) ?? "0");
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +516,8 @@ export type TillSessionDetail = TillSessionSummary & {
   byMethod: { methodName: string; kind: PaymentKindValue; count: number; amount: string }[];
   /** Cash paid back out of this till for cancelled sales. Only for those who may review any till. */
   cashRefunded: string | null;
+  /** Cash received in this till from customers repaying debts. Only for those who may review any till. */
+  cashRepaid: string | null;
   /** Float + cash taken; once closed, the figure stored at closing. Only for those who may review any till. */
   expectedCash: string | null;
   /** What was counted at closing. Shown to the person who closed it too. */
@@ -541,10 +550,11 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
   });
   if (!session) throw new NotFoundError("That till session could not be found.");
 
-  const [sales, cancelledCount, cashRefunds, groups] = await Promise.all([
+  const [sales, cancelledCount, cashRefunds, cashRepayments, groups] = await Promise.all([
     db.sale.aggregate({ where: { tillSessionId: session.id, cancellation: null }, _count: { _all: true }, _sum: { total: true } }),
     db.sale.count({ where: { tillSessionId: session.id, cancellation: { isNot: null } } }),
     db.refund.aggregate({ where: { tillSessionId: session.id, kind: "CASH" }, _sum: { amount: true } }),
+    db.repayment.aggregate({ where: { tillSessionId: session.id, kind: "CASH" }, _sum: { amount: true } }),
     db.payment.groupBy({
       by: ["methodName", "kind"],
       where: { tillSessionId: session.id },
@@ -561,9 +571,11 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
     }))
     .sort((a, b) => b.amount.comparedTo(a.amount) || a.methodName.localeCompare(b.methodName));
   const cashRefunded = new Decimal(cashRefunds._sum.amount?.toFixed(2) ?? "0");
+  const cashRepaid = new Decimal(cashRepayments._sum.amount?.toFixed(2) ?? "0");
   const cash = byMethod
     .filter((entry) => entry.kind === "CASH")
     .reduce((sum, entry) => sum.plus(entry.amount), ZERO)
+    .plus(cashRepaid)
     .minus(cashRefunded);
   const reviews = can(context, "till.reviewAny");
 
@@ -582,6 +594,7 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
     salesTotal: sales._sum.total?.toFixed(2) ?? "0.00",
     cancelledCount,
     cashRefunded: reviews ? moneyToString(cashRefunded) : null,
+    cashRepaid: reviews ? moneyToString(cashRepaid) : null,
     // What was taken in cash would give the expected figure away, so only reviewers see it.
     byMethod: byMethod.filter((entry) => reviews || entry.kind !== "CASH").map((entry) => ({ ...entry, amount: moneyToString(entry.amount) })),
     expectedCash: !reviews

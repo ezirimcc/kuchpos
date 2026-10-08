@@ -5,6 +5,7 @@ import * as activityLog from "@/server/business/activity-log";
 import * as adjustments from "@/server/business/adjustments";
 import * as catalog from "@/server/business/catalog";
 import * as counts from "@/server/business/counts";
+import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
 import * as paymentMethods from "@/server/business/payment-methods";
 import * as sales from "@/server/business/sales";
@@ -72,6 +73,10 @@ function selling(business: World["a"]) {
 let tillInA = "";
 let tillInB = "";
 
+/** A customer of each business who owes ₦300 from a credit sale. */
+let customerInA = "";
+let customerInB = "";
+
 /** And a transfer in each. */
 let transferInA = "";
 let transferInB = "";
@@ -125,6 +130,21 @@ beforeEach(async () => {
   tillInB = (await getDb().tillSession.findFirstOrThrow({ where: { businessId: world.b.id } })).id;
   saleInA = (await sales.postSale(world.a.as.CASHIER, selling(world.a))).id;
   saleInB = (await sales.postSale(world.b.as.CASHIER, selling(world.b))).id;
+  for (const business of [world.a, world.b]) {
+    const { id } = await customers.createCustomer(business.as.ADMIN, { name: "Ada Okafor", phone: "08031234567" });
+    await customers.setCreditLimit(business.as.ADMIN, { customerId: id, creditLimit: "100000" });
+    await sales.postSale(business.as.ADMIN, {
+      requestId: randomUUID(),
+      terminalId: business.terminalId,
+      expectedTotal: "300.00",
+      payments: [],
+      customerId: id,
+      creditAmount: "300.00",
+      lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "3", unitPrice: "100.00" }],
+    });
+    if (business === world.a) customerInA = id;
+    else customerInB = id;
+  }
   countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
   countInB = (await counts.submitCount(world.b.as.STOREKEEPER, counted(world.b))).id;
   waitingInA = (await adjustments.recordAdjustment(world.a.as.STOREKEEPER, adjusting(world.a))).id;
@@ -177,6 +197,7 @@ const DELIVERY_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT",
 const STOCK_MOVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
 const SELLERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "CASHIER"];
 const SALES_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
+const CUSTOMER_KEEPERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -484,6 +505,59 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => till.getTillSession(context, { sessionId: tillInB }),
   },
   {
+    name: "customers.listCustomers",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) => customers.listCustomers(context),
+  },
+  {
+    name: "customers.createCustomer",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) => customers.createCustomer(context, { name: "New Customer", phone: `0809${String(1000000 + ++counter)}` }),
+  },
+  {
+    name: "customers.updateCustomer",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) => customers.updateCustomer(context, { customerId: customerInA, name: "Ada O.", phone: "08031234567" }),
+    runAgainstB: (context) => customers.updateCustomer(context, { customerId: customerInB, name: "Ada O.", phone: "08031234567" }),
+  },
+  {
+    name: "customers.setCustomerActive",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) => customers.setCustomerActive(context, { customerId: customerInA, active: false }),
+    runAgainstB: (context) => customers.setCustomerActive(context, { customerId: customerInB, active: false }),
+  },
+  {
+    name: "customers.setCreditLimit",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => customers.setCreditLimit(context, { customerId: customerInA, creditLimit: "5000" }),
+    runAgainstB: (context) => customers.setCreditLimit(context, { customerId: customerInB, creditLimit: "5000" }),
+  },
+  {
+    name: "customers.getCustomer",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) => customers.getCustomer(context, { customerId: customerInA }),
+    runAgainstB: (context) => customers.getCustomer(context, { customerId: customerInB }),
+  },
+  {
+    name: "customers.getCustomerStatement",
+    allowed: ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT"],
+    run: (context) => customers.getCustomerStatement(context, { customerId: customerInA }),
+    runAgainstB: (context) => customers.getCustomerStatement(context, { customerId: customerInB }),
+  },
+  {
+    name: "customers.getRepaymentOptions",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) => customers.getRepaymentOptions(context),
+  },
+  {
+    name: "customers.recordRepayment",
+    allowed: CUSTOMER_KEEPERS,
+    run: (context) =>
+      customers.recordRepayment(context, { requestId: randomUUID(), customerId: customerInA, amount: "10", methodId: world.a.transferMethodId }),
+    runAgainstB: (context) =>
+      customers.recordRepayment(context, { requestId: randomUUID(), customerId: customerInB, amount: "10", methodId: world.a.transferMethodId }),
+  },
+  {
     name: "stock.listStockOnHand",
     allowed: EVERYONE_IN_A,
     run: (context) => stock.listStockOnHand(context),
@@ -737,6 +811,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(corrections).map((name) => `corrections.${name}`),
       ...Object.keys(transfers).map((name) => `transfers.${name}`),
       ...Object.keys(counts).map((name) => `counts.${name}`),
+      ...Object.keys(customers).map((name) => `customers.${name}`),
       ...Object.keys(sales).map((name) => `sales.${name}`),
       ...Object.keys(paymentMethods).map((name) => `paymentMethods.${name}`),
       ...Object.keys(till).map((name) => `till.${name}`),

@@ -245,7 +245,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 A cash sale cannot be cancelled while its terminal's till is closed, or when that till does not hold the cash to give back; a sale paid only by transfer or POS can.
 - 🤖 Cancelled sales are left out of sales totals, "sales today" and a till's sales figure; refunds are taken off "collected today" and off the till's expected cash.
 
-### M10 · Customers and credit
+### M10 · Customers and credit — built 2026-10-08, awaiting owner's check
 **Goal:** Debts are known precisely and can be explained line by line.
 - Customer records (per business): name and phone required; address, city and state optional (C49). Chosen at checkout; no customer means a walk-in. Credit as a payment method (full or as part of a split).
 - Add-only customer account history; balance = sum of history.
@@ -256,7 +256,13 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🧑 A sale of ₦10,000 with ₦4,000 cash and ₦6,000 credit raises the customer's balance by ₦6,000.
 - 🧑 A later repayment of ₦2,500 leaves ₦3,500 and appears on the statement and in collections.
 - 🧑 Credit without a selected customer is refused.
-- 🧑 A credit sale over the customer's limit is refused until a manager approves.
+- 🧑 A credit sale over the customer's limit is refused for a cashier; a manager can raise the limit or make the sale. *(Approval at the cashier's own screen comes with M11.)*
+- 🧑 A customer with no credit limit cannot buy on credit (C55); a repayment of more than is owed is refused (C54).
+- 🤖 Two credit sales at the same instant cannot together take a customer over the limit; two repayments that together exceed the debt: exactly one is taken.
+- 🤖 A cash repayment needs the checkout's till to be open and is added to its expected cash; a transfer does not.
+- 🤖 Cancelling a credit sale reverses its debt with its own statement line; it is refused once part of that debt was repaid.
+- 🤖 A failure halfway through a repayment leaves the balance, the statement and the repayment number as they were.
+- 🤖 A cashier sees a customer's balance but not the statement; a storekeeper sees no customers; business B sees none of A's.
 - 🤖 Two repayments submitted at the same instant are both recorded once and the balance is correct.
 - 🤖 The stored balance always equals the sum of the account history.
 

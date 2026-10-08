@@ -44,7 +44,7 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
 
       <Suspense>
         <div className="flex flex-wrap items-center gap-3">
-          <LiveSearch label="Search sales" placeholder="Receipt number, product or cashier" />
+          <LiveSearch label="Search sales" placeholder="Receipt number, product, customer or cashier" />
           <FilterDate name="from" label="From" />
           <FilterDate name="to" label="To" />
           {filtered && (
@@ -67,6 +67,7 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
                 <TableHead>Receipt</TableHead>
                 <TableHead>When</TableHead>
                 <TableHead>Products</TableHead>
+                <TableHead>Customer</TableHead>
                 <TableHead>Served by</TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
@@ -90,6 +91,10 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
                     {sale.lineCount > sale.products.length && (
                       <span className="text-muted-foreground"> and {sale.lineCount - sale.products.length} more</span>
                     )}
+                  </TableCell>
+                  <TableCell>
+                    {sale.customerName ?? <span className="text-muted-foreground">Walk-in</span>}
+                    {sale.creditAmount !== "0.00" && <span className="block text-xs text-muted-foreground">{nairaFromText(sale.creditAmount)} on credit</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{sale.cashierName}</TableCell>
                   <TableCell className={sale.cancelled ? "text-right text-muted-foreground tabular-nums line-through" : "text-right font-medium tabular-nums"}>

@@ -31,6 +31,8 @@ export type DashboardSnapshot = {
   salesToday: { count: number; total: string; ownOnly: boolean } | null;
   /** Money received since the start of the shop's day, and how much of it was cash — collections report readers. */
   collectedToday: { total: string; cash: string } | null;
+  /** What all customers owe the business now — customer-debt report readers. */
+  owedByCustomers: { total: string; customers: number } | null;
 };
 
 export async function getDashboard(context: AppContext): Promise<DashboardSnapshot> {
@@ -43,7 +45,7 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
   const seesAllSales = can(context, "report.sales.view");
   const seesSales = seesAllSales || can(context, "report.ownShift.view");
 
-  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday, collected, refunded] = await Promise.all([
+  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday, collected, refunded, repaid, owed] = await Promise.all([
     db.product.count({ where: { deactivatedAt: null } }),
     db.category.count(),
     db.business.findFirst({ select: { taxRatePercent: true } }),
@@ -74,11 +76,19 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     can(context, "report.collections.view")
       ? db.refund.groupBy({ by: ["kind"], where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } })
       : null,
+    can(context, "report.collections.view")
+      ? db.repayment.groupBy({ by: ["kind"], where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } })
+      : null,
+    can(context, "report.customerDebt.view")
+      ? db.customer.aggregate({ where: { balance: { gt: 0 } }, _sum: { balance: true }, _count: { _all: true } })
+      : null,
   ]);
 
-  // Money received today less money given back today for cancelled sales.
+  // Money received today — for sales and against debts — less money given back today for cancelled sales.
   const net = (kinds: (kind: string) => boolean) =>
-    sumMoney((collected ?? []).filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))).minus(
+    sumMoney(
+      [...(collected ?? []), ...(repaid ?? [])].filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0")),
+    ).minus(
       sumMoney((refunded ?? []).filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))),
     );
 
@@ -98,5 +108,6 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
       ? { count: salesToday._count._all, total: salesToday._sum.total?.toFixed(2) ?? "0.00", ownOnly: !seesAllSales }
       : null,
     collectedToday,
+    owedByCustomers: owed ? { total: owed._sum.balance?.toFixed(2) ?? "0.00", customers: owed._count._all } : null,
   };
 }

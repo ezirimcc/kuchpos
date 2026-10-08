@@ -228,7 +228,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 A cashier sees and closes only the till they opened; the accountant reviews all but cannot open or close; a storekeeper sees none.
 - 🤖 Payments made before this milestone are carried onto each business's Cash method by the database update.
 
-### M9b · Pending sales and cancelling a sale — built 2026-10-08, awaiting owner's check (added 2026-10-07 at the owner's request)
+### M9b · Pending sales and cancelling a sale ✅ (verified 2026-10-08, tag `m9b`; added 2026-10-07 at the owner's request)
 **Goal:** A cashier is never stuck behind one customer, and a changed mind can be put right the same day.
 - Pending sales (C47): park the sale in progress, start another, pick the parked one up again. Kept on that computer for that cashier, up to 10; no stock reserved; checked again on completion.
 - Cancel a sale (C48): admin or manager, whole sale, same business day, note required. Stock returns by new movements; the refund is recorded in the till session; the sale is marked "Cancelled" and printed receipts of it say so.

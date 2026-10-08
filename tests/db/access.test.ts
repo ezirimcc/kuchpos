@@ -70,6 +70,18 @@ function selling(business: World["a"]) {
   };
 }
 
+/** A discount a cashier of each business has sent to be approved. */
+let requestInA = "";
+let requestInB = "";
+function asking(business: World["a"]) {
+  return {
+    kind: "DISCOUNT" as const,
+    saleRequestId: randomUUID(),
+    lines: selling(business).lines,
+    discount: { amount: "10.00", percent: "10", reason: "Loyal customer" },
+  };
+}
+
 /** The open till session of each business's terminal (opened by its cashier), and its transfer payment method. */
 let tillInA = "";
 let tillInB = "";
@@ -146,6 +158,8 @@ beforeEach(async () => {
     if (business === world.a) customerInA = id;
     else customerInB = id;
   }
+  requestInA = (await approvals.requestApproval(world.a.as.CASHIER, asking(world.a))).requestId;
+  requestInB = (await approvals.requestApproval(world.b.as.CASHIER, asking(world.b))).requestId;
   countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
   countInB = (await counts.submitCount(world.b.as.STOREKEEPER, counted(world.b))).id;
   waitingInA = (await adjustments.recordAdjustment(world.a.as.STOREKEEPER, adjusting(world.a))).id;
@@ -440,6 +454,35 @@ const OPERATIONS: Operation[] = [
         username: "a.manager",
         password: TEST_PASSWORD,
       }),
+  },
+  {
+    name: "approvals.requestApproval",
+    allowed: SELLERS,
+    run: (context) => approvals.requestApproval(context, asking(world.a)),
+  },
+  {
+    name: "approvals.getApprovalRequest",
+    allowed: SELLERS,
+    // Only the sender may ask after a request, so each asks after one of their own.
+    run: async (context) => approvals.getApprovalRequest(context, { requestId: (await approvals.requestApproval(context, asking(world.a))).requestId }),
+    runAgainstB: (context) => approvals.getApprovalRequest(context, { requestId: requestInB }),
+  },
+  {
+    name: "approvals.withdrawApprovalRequest",
+    allowed: SELLERS,
+    run: async (context) => approvals.withdrawApprovalRequest(context, { requestId: (await approvals.requestApproval(context, asking(world.a))).requestId }),
+    runAgainstB: (context) => approvals.withdrawApprovalRequest(context, { requestId: requestInB }),
+  },
+  {
+    name: "approvals.listWaitingApprovals",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => approvals.listWaitingApprovals(context),
+  },
+  {
+    name: "approvals.decideApprovalRequest",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => approvals.decideApprovalRequest(context, { requestId: requestInA, approve: true }),
+    runAgainstB: (context) => approvals.decideApprovalRequest(context, { requestId: requestInB, approve: true }),
   },
   {
     name: "approvals.listApprovals",

@@ -16,6 +16,8 @@ const TABLES = [
   "till_session_close",
   "approval_use",
   "approval",
+  "approval_request_decision",
+  "approval_request",
   "repayment_allocation",
   "customer_account_entry",
   "repayment",

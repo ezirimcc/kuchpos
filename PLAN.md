@@ -270,7 +270,8 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ### M11 · Extra discounts with manager approval (built 2026-10-08; waiting for the owner's check)
 **Goal:** Requirement C11, enforced by the server.
-- Discount on the whole sale, entered as a percentage or a Naira amount (C28), with reason. Approval at the cashier's screen (manager's own username and password). *Not built, for the owner to decide (C56): discounts on single lines, and approval from the manager's own computer.*
+- Discount on the whole sale, entered as a percentage or a Naira amount (C28), with reason. Approval at the cashier's screen (manager's own username and password). Or the cashier sends it and the manager approves from their own computer (C57). Discounts on single lines are not wanted (C56).
+- Customer list with city/state, total purchases, visits, filters and sorting (C58; asked for by the owner while trying M11).
 - The same approval at the screen lets a customer go over their credit limit (owed from M10).
 - Approval bound to the sale ID and exact discount; single use; expires after 10 minutes.
 - Discounts & approvals report.
@@ -324,6 +325,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 **Goal:** Requirement C12.
 - Per business: sales, collections, stock on hand, stock movement, customer debt (with ageing), discounts & approvals, expiring soon, offline exceptions, activity log. Date and other filters. CSV export.
 - Owner overview: every business side by side (sales, collections, outstanding debt).
+- KPIs the owner asked for on 2026-10-08 (C59): agree each definition with the owner first, then build.
 
 **Accept when:**
 - 🧑 For a sample day, the sales report total equals the sum of that day's receipts; the collections report equals the sum of payments by method.

@@ -2,11 +2,12 @@ import { Building2 } from "lucide-react";
 import { cookies } from "next/headers";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { AppShell } from "@/components/app-shell";
+import { ApprovalsWaiting } from "@/components/approvals-waiting";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 import { requirePageContext } from "@/server/auth/request";
 import { menuFor } from "@/server/navigation";
-import { ROLE_LABELS } from "@/server/permissions";
+import { can, ROLE_LABELS } from "@/server/permissions";
 import { closeBusinessAction } from "./owner/businesses/actions";
 
 export default async function AppLayout({ children }: LayoutProps<"/">) {
@@ -47,6 +48,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       }
       topRight={
         <>
+          {(can(context, "discount.approve") || can(context, "customer.setCreditLimit")) && <ApprovalsWaiting />}
           <ThemeToggle startDark={choices.get("kuchpos_theme")?.value === "dark"} />
           <UserMenu name={context.actor.name} username={context.actor.username} roleLabel={ROLE_LABELS[context.actor.role]} />
         </>

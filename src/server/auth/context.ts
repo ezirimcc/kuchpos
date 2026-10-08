@@ -26,7 +26,7 @@ export type AppContext = {
  * else the browser sends. Re-checked on every request, so a disabled account or
  * a deactivated business is locked out immediately.
  */
-export async function resolveContext(headers: Headers): Promise<AppContext> {
+export async function resolveContext(headers: Headers, options: { passive?: boolean } = {}): Promise<AppContext> {
   const session = await getAuth().api.getSession({ headers });
   if (!session) throw new NotSignedInError();
 
@@ -73,7 +73,9 @@ export async function resolveContext(headers: Headers): Promise<AppContext> {
     await db.session.deleteMany({ where: { id: row.id } });
     throw new NotSignedInError("You were signed out because the screen was not used for a while.", "idle");
   }
-  if (idleFor > LAST_ACTIVE_WRITE_INTERVAL_MS) {
+  // A "passive" request is the screen checking for news by itself (is an approval waiting?).
+  // Nobody touched anything, so it must not put off the automatic sign-out.
+  if (!options.passive && idleFor > LAST_ACTIVE_WRITE_INTERVAL_MS) {
     await db.session.updateMany({ where: { id: row.id }, data: { lastActiveAt: new Date() } });
   }
 

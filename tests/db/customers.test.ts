@@ -477,3 +477,65 @@ describe("cancelling a credit sale", () => {
     expect(await getDb().saleCancellation.count()).toBe(0);
   });
 });
+
+describe("the customer list's purchases and visits (C58)", () => {
+  it("shows total purchases and visits, leaves out cancelled sales, and filters and sorts by them", async () => {
+    await updateCustomer(world.a.as.MANAGER, { customerId: ada, name: "Ada Okafor", phone: "08031234567", city: "Aba", state: "Abia" });
+    await updateCustomer(world.a.as.MANAGER, { customerId: bola, name: "Bola Ade", phone: "08055550000", city: "Ikeja", state: "Lagos" });
+    const chidi = (await createCustomer(world.a.as.CASHIER, { name: "Chidi Eze", phone: "08090000000", city: "Aba", state: "Abia" })).id;
+    await sell(10, { customerId: ada, cash: "1000.00" });
+    await sell(5, { customerId: ada, credit: "500.00" });
+    const undone = await sell(20, { customerId: ada, cash: "2000.00" });
+    await cancelSale(world.a.as.MANAGER, { saleId: undone.id, note: "Customer changed his mind" });
+    await sell(40, { customerId: bola, cash: "4000.00" });
+    await sell(3, { cash: "300.00" }); // A walk-in belongs to nobody.
+
+    const list = (input: Record<string, string> = {}) => listCustomers(world.a.as.ACCOUNTANT, input);
+    const rows = async (input: Record<string, string> = {}) =>
+      (await list(input)).customers.map((customer) => [customer.name, customer.purchases, customer.visits]);
+
+    expect(await rows()).toEqual([
+      ["Ada Okafor", "1500.00", 2],
+      ["Bola Ade", "4000.00", 1],
+      ["Chidi Eze", "0.00", 0],
+    ]);
+    expect(await list()).toMatchObject({ total: 3, totalPurchases: "5500.00", totalOwed: "500.00", states: ["Abia", "Lagos"], showsPurchases: true });
+    expect((await list()).customers[0]).toMatchObject({ city: "Aba", state: "Abia" });
+
+    expect((await rows({ sort: "purchases" })).map((row) => row[0])).toEqual(["Bola Ade", "Ada Okafor", "Chidi Eze"]);
+    expect((await rows({ sort: "visits" })).map((row) => row[0])).toEqual(["Ada Okafor", "Bola Ade", "Chidi Eze"]);
+    expect((await rows({ sort: "owes" })).map((row) => row[0])).toEqual(["Ada Okafor", "Bola Ade", "Chidi Eze"]);
+    expect((await rows({ sort: "nonsense" })).map((row) => row[0])).toEqual(["Ada Okafor", "Bola Ade", "Chidi Eze"]);
+
+    expect((await rows({ state: "Abia" })).map((row) => row[0])).toEqual(["Ada Okafor", "Chidi Eze"]);
+    expect((await rows({ search: "lagos" })).map((row) => row[0])).toEqual(["Bola Ade"]);
+    expect((await rows({ min: "1000" })).map((row) => row[0])).toEqual(["Ada Okafor", "Bola Ade"]);
+    expect((await rows({ min: "1000", max: "2000" })).map((row) => row[0])).toEqual(["Ada Okafor"]);
+    expect((await rows({ max: "0" })).map((row) => row[0])).toEqual(["Chidi Eze"]);
+    expect(await list({ min: "1000", max: "2000" })).toMatchObject({ total: 1, totalPurchases: "1500.00" });
+    // An amount that is not a plain number is ignored rather than guessed at.
+    expect(await rows({ min: "1,000" })).toHaveLength(3);
+
+    // Within dates: only customers who bought in them, with what they bought in them.
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos" }).format(new Date());
+    expect(await rows({ from: today, to: today })).toEqual([
+      ["Ada Okafor", "1500.00", 2],
+      ["Bola Ade", "4000.00", 1],
+    ]);
+    expect(await rows({ from: "2020-01-01", to: "2020-12-31" })).toEqual([]);
+    expect(await rows({ to: "2020-12-31" })).toEqual([]);
+    expect(chidi).toBeTruthy();
+  });
+
+  it("is not shown to a cashier, whose filters by purchases are ignored; business B sees none of it", async () => {
+    await sell(10, { customerId: ada, cash: "1000.00" });
+    const seen = await listCustomers(world.a.as.CASHIER, { sort: "purchases", min: "5000", from: "2020-01-01", to: "2020-01-02" });
+    expect(seen).toMatchObject({ showsPurchases: false, totalPurchases: null, total: 2 });
+    expect(seen.customers.map((customer) => [customer.name, customer.purchases, customer.visits])).toEqual([
+      ["Ada Okafor", null, null],
+      ["Bola Ade", null, null],
+    ]);
+    await createCustomer(world.b.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" });
+    expect((await listCustomers(world.b.as.ADMIN)).customers.map((customer) => [customer.purchases, customer.visits])).toEqual([["0.00", 0]]);
+  });
+});

@@ -82,6 +82,8 @@ model Business {
   repaymentAllocations RepaymentAllocation[]
   approvals     Approval[]
   approvalUses  ApprovalUse[]
+  approvalRequests ApprovalRequest[]
+  approvalRequestDecisions ApprovalRequestDecision[]
   sales         Sale[]
   saleLines     SaleLine[]
   payments      Payment[]
@@ -1332,6 +1334,57 @@ enum ApprovalMethod {
   AT_SCREEN
   /// The person making the sale may approve such things themselves.
   OWN_SALE
+  /// The cashier sent a request and a manager or admin approved it from their own computer.
+  REMOTE
+}
+
+enum ApprovalRequestOutcome {
+  APPROVED
+  REFUSED
+  /// Taken back by the person who asked.
+  WITHDRAWN
+}
+
+/// A cashier's request for approval, waiting to be answered from a manager's own computer.
+/// Add-only: it is waiting while it has no decision row and its time has not run out.
+model ApprovalRequest {
+  id                String                   @id @default(uuid()) @db.Char(36)
+  businessId        String                   @db.Char(36)
+  business          Business                 @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  kind              ApprovalKind
+  saleRequestId     String                   @db.Char(36)
+  fingerprint       String                   @db.Char(64)
+  amount            Decimal                  @db.Decimal(14, 2)
+  basis             Decimal                  @db.Decimal(14, 2)
+  reason            String?                  @db.VarChar(300)
+  /// What the approver is shown, as it was when asked: the items, and the customer if any (JSON text).
+  details           String                   @db.Text
+  requestedByUserId String?
+  requestedByName   String
+  createdAt         DateTime                 @default(now()) @db.DateTime(3)
+  expiresAt         DateTime                 @db.DateTime(3)
+
+  decision          ApprovalRequestDecision?
+  approval          Approval?
+
+  @@index([businessId, createdAt])
+  @@map("approval_request")
+}
+
+/// The one answer to a request. Add-only; written first in its transaction (it is the lock).
+model ApprovalRequestDecision {
+  id              String                 @id @default(uuid()) @db.Char(36)
+  businessId      String                 @db.Char(36)
+  business        Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  requestId       String                 @unique @db.Char(36)
+  request         ApprovalRequest        @relation(fields: [requestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outcome         ApprovalRequestOutcome
+  note            String?                @db.VarChar(300)
+  decidedByUserId String?
+  decidedByName   String
+  createdAt       DateTime               @default(now()) @db.DateTime(3)
+
+  @@map("approval_request_decision")
 }
 
 /// A manager's or admin's yes to one particular thing on one particular sale (SPEC §4.5).
@@ -1360,6 +1413,9 @@ model Approval {
   approvedByName    String
   createdAt         DateTime       @default(now()) @db.DateTime(3)
   expiresAt         DateTime       @db.DateTime(3)
+  /// The request this answers, when it was approved from the manager's own computer.
+  requestId         String?        @unique @db.Char(36)
+  request           ApprovalRequest? @relation(fields: [requestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   use               ApprovalUse?
 

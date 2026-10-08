@@ -721,6 +721,71 @@ test("a cashier's discount needs a manager's approval at the screen; changing th
   await expect(page.getByText(/tried with the username "gv.cashier" and refused/)).toBeVisible();
 });
 
+test("a cashier sends a discount to the manager's own computer; the manager approves one and refuses another, and the cashier's screen shows each answer by itself", async ({ page, browser }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("2");
+  await page.getByTestId("add-discount").click();
+  const discount = page.getByTestId("checkout-discount");
+  await discount.getByLabel("Discount on the whole sale").fill("100");
+  await discount.getByLabel("Reason for the discount").fill("Old stock");
+  await expect(page.getByTestId("cart-total")).toHaveText("₦900.00");
+  await page.getByTestId("send-discount-approval").click();
+  await expect(page.getByTestId("discount-sent")).toBeVisible();
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+
+  // The manager, at another computer, is told on whatever screen they are on.
+  const office = await browser.newContext();
+  const manager = await office.newPage();
+  await signIn(manager, "gv.manager");
+  await expectSignedInAs(manager, "Manager");
+  await expect(manager.getByTestId("approvals-waiting")).toHaveText("1 request is waiting for approval");
+  await manager.getByTestId("approvals-waiting").click();
+  await expect(manager.getByRole("heading", { name: "Waiting for approval" })).toBeVisible();
+  const request = manager.getByTestId("waiting-request");
+  await expect(request).toContainText("Discount of ₦100.00 on ₦1,000.00");
+  await expect(request).toContainText("Reason: Old stock");
+  await expect(request).toContainText("Asked by Green Valley Cashier");
+  await expect(request).toContainText("Tomato Seed Sachet — 2 sachet × ₦500.00");
+  await expect(manager.locator("html")).toHaveAttribute("data-ready", "true");
+  await request.getByLabel("Note (optional)").fill("Agreed");
+  await request.getByRole("button", { name: "Approve" }).click();
+  await expect(manager.getByTestId("decision-message")).toContainText("Approved: Green Valley Cashier's request");
+  await expect(manager.getByTestId("nothing-waiting")).toBeVisible();
+  await expect(manager.getByTestId("approvals-waiting")).toHaveCount(0);
+
+  // The cashier touched nothing: the answer arrives by itself, and the sale can be completed.
+  await expect(page.getByTestId("discount-approved")).toContainText("Approved by Green Valley Manager");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦900.00");
+  await expect(page.getByTestId("discount-notice")).toContainText("approved by Green Valley Manager. Reason given: Old stock");
+
+  // A second request, which the manager refuses. Their list shows it without reloading.
+  await page.getByTestId("new-sale").click();
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("2");
+  await page.getByTestId("add-discount").click();
+  await discount.getByLabel("Discount on the whole sale").fill("500");
+  await discount.getByLabel("Reason for the discount").fill("A friend");
+  await page.getByTestId("send-discount-approval").click();
+  await expect(page.getByTestId("discount-sent")).toBeVisible();
+  await expect(request).toContainText("Discount of ₦500.00 on ₦1,000.00");
+  await request.getByLabel("Note (optional)").fill("Too much");
+  await request.getByRole("button", { name: "Refuse" }).click();
+  await expect(manager.getByTestId("nothing-waiting")).toBeVisible();
+  await expect(page.getByTestId("discount-not-approved")).toHaveText("Refused by Green Valley Manager: Too much");
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+  await office.close();
+
+  // A cashier has no "Waiting for approval" page.
+  await page.goto("/approvals");
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");

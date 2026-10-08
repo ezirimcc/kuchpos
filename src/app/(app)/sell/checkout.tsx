@@ -16,7 +16,7 @@ import { nairaFromText, plainNumber } from "@/lib/format";
 import { formatNaira, lineTotal, moneyToString, percentOf, sumMoney } from "@/lib/money";
 import type { CheckoutCatalogue, CheckoutProduct } from "@/server/business/sales";
 import { quickCreateCustomerAction } from "../customers/actions";
-import { approveAtScreenAction, postSaleAction } from "../sales/actions";
+import { approveAtScreenAction, postSaleAction, requestApprovalAction, withdrawApprovalRequestAction } from "../sales/actions";
 import { ApprovalBox } from "./approval-box";
 import { type HeldSale, holdSale, MAX_HELD_SALES, removeHeldSale, useHeldSales } from "./held-sales";
 
@@ -36,6 +36,10 @@ const isPercent = (text: string) => /^\d{1,3}(\.\d{1,2})?$/.test(text.trim());
 
 /** An approval a manager gave at this screen, and exactly what it was given for. */
 type Approval = { id: string; by: string; for: string };
+type ApprovalKind = "DISCOUNT" | "CREDIT_OVER_LIMIT";
+/** A request sent to a manager's own computer, and what has become of it. */
+type SentRequest = { kind: ApprovalKind; requestId: string; for: string; state: "waiting" | "refused" | "expired"; text?: string };
+const REQUEST_POLL_MS = 3000;
 
 /**
  * The checkout. Everything on it is worked out here from the copy of the catalogue the page
@@ -79,6 +83,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const [creditApproval, setCreditApproval] = useState<Approval | null>(null);
   const [asking, setAsking] = useState<"DISCOUNT" | "CREDIT_OVER_LIMIT" | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [sent, setSent] = useState<SentRequest | null>(null);
   const held = useHeldSales(cashierId);
   const searchBox = useRef<HTMLInputElement>(null);
   const cashBox = useRef<HTMLInputElement>(null);
@@ -159,6 +164,13 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     setDiscountReason("");
     setAsking(null);
     setApprovalError(null);
+    takeBack();
+  }
+
+  /** Takes back a request that is still waiting at a manager's computer. */
+  function takeBack() {
+    if (sent?.state === "waiting") void withdrawApprovalRequestAction(sent.requestId);
+    setSent(null);
   }
 
   /** Parks the sale in progress so another customer can be served. Nothing is saved on the server. */
@@ -350,6 +362,72 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     reason: discountReason.trim(),
   });
 
+  const whatIsAsked = (kind: ApprovalKind) => ({
+    kind,
+    saleRequestId: requestId,
+    lines: saleLines(),
+    ...(kind === "DISCOUNT" ? { discount: discountToSend() } : { customerId: customer?.id ?? "", creditAmount: moneyToString(credit!) }),
+  });
+
+  /** Sends the discount (or the credit) to be approved from a manager's own computer. */
+  function sendForApproval(kind: ApprovalKind) {
+    if (pending || !subtotal) return;
+    const approvedFor = kind === "DISCOUNT" ? discountKey : creditKey;
+    setApprovalError(null);
+    setAsking(null);
+    startTransition(async () => {
+      const result = await requestApprovalAction(whatIsAsked(kind));
+      if (result.status === "success" && result.requestId) {
+        setSent({ kind, requestId: result.requestId, for: approvedFor, state: "waiting" });
+      } else if (result.status === "error") {
+        setMessage(result.message);
+        setErrors(result.fieldErrors);
+      }
+    });
+  }
+
+  // While a request is waiting, this screen asks every few seconds what has become of it.
+  const waitingFor = sent?.state === "waiting" ? sent : null;
+  const waitingStillFits = !!waitingFor && waitingFor.for === (waitingFor.kind === "DISCOUNT" ? discountKey : creditKey);
+  // What is shown about a request counts only while the sale is still what was sent.
+  const sentNow = sent && sent.for === (sent.kind === "DISCOUNT" ? discountKey : creditKey) ? sent : null;
+  useEffect(() => {
+    if (!waitingFor) return;
+    // The sale was changed after sending: the request is for something else now.
+    if (!waitingStillFits) {
+      void withdrawApprovalRequestAction(waitingFor.requestId);
+      return;
+    }
+    let stopped = false;
+    async function look() {
+      try {
+        const response = await fetch(`/api/approvals/requests/${waitingFor!.requestId}`, { cache: "no-store" });
+        if (stopped || !response.ok) return;
+        const answer = (await response.json()) as { status: string; approvalId?: string; approvedByName?: string; refusedByName?: string; note?: string | null };
+        if (stopped) return;
+        if (answer.status === "APPROVED" && answer.approvalId) {
+          const approval = { id: answer.approvalId, by: answer.approvedByName ?? "", for: waitingFor!.for };
+          if (waitingFor!.kind === "DISCOUNT") setDiscountApproval(approval);
+          else setCreditApproval(approval);
+          setSent(null);
+        } else if (answer.status === "REFUSED") {
+          setSent({ ...waitingFor!, state: "refused", text: `Refused by ${answer.refusedByName}${answer.note ? `: ${answer.note}` : "."}` });
+        } else if (answer.status === "WITHDRAWN") {
+          setSent(null);
+        } else if (answer.status === "EXPIRED") {
+          setSent({ ...waitingFor!, state: "expired", text: "Nobody answered within 10 minutes. Send it again, or ask a manager to approve here." });
+        }
+      } catch {
+        // No connection just now; try again next time.
+      }
+    }
+    const timer = window.setInterval(look, REQUEST_POLL_MS);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [waitingFor, waitingStillFits]);
+
   /** A manager has typed their username and password: ask the server for the approval. */
   function approve(username: string, password: string) {
     if (pending || !asking || !subtotal) return;
@@ -357,19 +435,13 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     const approvedFor = kind === "DISCOUNT" ? discountKey : creditKey;
     setApprovalError(null);
     startTransition(async () => {
-      const result = await approveAtScreenAction({
-        kind,
-        saleRequestId: requestId,
-        lines: saleLines(),
-        ...(kind === "DISCOUNT" ? { discount: discountToSend() } : { customerId: customer?.id ?? "", creditAmount: moneyToString(credit!) }),
-        username,
-        password,
-      });
+      const result = await approveAtScreenAction({ ...whatIsAsked(kind), username, password });
       if (result.status === "success" && result.approval) {
         const approval = { id: result.approval.id, by: result.approval.approvedByName, for: approvedFor };
         if (kind === "DISCOUNT") setDiscountApproval(approval);
         else setCreditApproval(approval);
         setAsking(null);
+        if (sent?.kind === kind) takeBack();
       } else if (result.status === "error") {
         const { password: wrong, ...others } = result.fieldErrors;
         setApprovalError(wrong ?? Object.values(others)[0] ?? result.message);
@@ -789,26 +861,57 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
                     onCancel={() => setAsking(null)}
                   />
                 ) : (
-                  <div className="flex gap-2">
-                    {discounted && !catalogue.canApproveDiscount && !discountApproved && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={!reasonGiven}
-                        title={reasonGiven ? undefined : "Give the reason first"}
-                        onClick={() => {
-                          setApprovalError(null);
-                          setAsking("DISCOUNT");
-                        }}
-                        data-testid="ask-discount-approval"
-                      >
-                        Get approval
-                      </Button>
+                  <>
+                    {sentNow?.kind === "DISCOUNT" && sentNow.state === "waiting" && (
+                      <p className="text-xs font-medium" data-testid="discount-sent">
+                        Sent. Waiting for a manager to approve it on their own computer…
+                      </p>
                     )}
-                    <Button type="button" size="sm" variant="ghost" onClick={clearDiscount}>
-                      No discount
-                    </Button>
-                  </div>
+                    {sentNow?.kind === "DISCOUNT" && sentNow.state !== "waiting" && (
+                      <p className="text-xs text-destructive" data-testid="discount-not-approved">
+                        {sentNow.text}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {discounted && !catalogue.canApproveDiscount && !discountApproved && (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={!reasonGiven}
+                            title={reasonGiven ? undefined : "Give the reason first"}
+                            onClick={() => {
+                              setApprovalError(null);
+                              setAsking("DISCOUNT");
+                            }}
+                            data-testid="ask-discount-approval"
+                          >
+                            Approve here
+                          </Button>
+                          {sentNow?.kind === "DISCOUNT" && sentNow.state === "waiting" ? (
+                            <Button type="button" size="sm" variant="outline" onClick={takeBack}>
+                              Take the request back
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!reasonGiven || pending}
+                              title={reasonGiven ? undefined : "Give the reason first"}
+                              onClick={() => sendForApproval("DISCOUNT")}
+                              data-testid="send-discount-approval"
+                            >
+                              Send to a manager
+                            </Button>
+                          )}
+                        </>
+                      )}
+                      <Button type="button" size="sm" variant="ghost" onClick={clearDiscount}>
+                        No discount
+                      </Button>
+                    </div>
+                  </>
                 )}
               </div>
             ))}
@@ -927,18 +1030,36 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
                       onCancel={() => setAsking(null)}
                     />
                   ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="w-fit"
-                      onClick={() => {
-                        setApprovalError(null);
-                        setAsking("CREDIT_OVER_LIMIT");
-                      }}
-                      data-testid="ask-credit-approval"
-                    >
-                      Get approval
-                    </Button>
+                    <>
+                      {sentNow?.kind === "CREDIT_OVER_LIMIT" && sentNow.state === "waiting" && (
+                        <p className="text-xs font-medium" data-testid="credit-sent">
+                          Sent. Waiting for a manager to approve it on their own computer…
+                        </p>
+                      )}
+                      {sentNow?.kind === "CREDIT_OVER_LIMIT" && sentNow.state !== "waiting" && <p className="text-xs text-destructive">{sentNow.text}</p>}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            setApprovalError(null);
+                            setAsking("CREDIT_OVER_LIMIT");
+                          }}
+                          data-testid="ask-credit-approval"
+                        >
+                          Approve here
+                        </Button>
+                        {sentNow?.kind === "CREDIT_OVER_LIMIT" && sentNow.state === "waiting" ? (
+                          <Button type="button" size="sm" variant="outline" onClick={takeBack}>
+                            Take the request back
+                          </Button>
+                        ) : (
+                          <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => sendForApproval("CREDIT_OVER_LIMIT")} data-testid="send-credit-approval">
+                            Send to a manager
+                          </Button>
+                        )}
+                      </div>
+                    </>
                   ))}
                 {credit && credit.greaterThan(0) && toPay && !creditTooMuch && (
                   <p className="text-xs text-muted-foreground" data-testid="to-pay-now">

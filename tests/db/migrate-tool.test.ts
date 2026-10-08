@@ -88,6 +88,8 @@ describe("database update tool for the hosting server", () => {
       "repayment_allocation",
       "approval",
       "approval_use",
+      "approval_request",
+      "approval_request_decision",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -146,6 +148,7 @@ describe("database update tool for the hosting server", () => {
         "sale_discount_check",
         "sale_line_discount_check",
         "approval_amounts_check",
+        "approval_request_amounts_check",
       ]),
     );
   });

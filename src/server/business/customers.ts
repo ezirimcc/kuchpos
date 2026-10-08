@@ -2,8 +2,8 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { repaymentNumber } from "@/lib/format";
-import { formatNaira, moneyToString, parseMoney } from "@/lib/money";
+import { repaymentNumber, shopDayEnd, shopDayStart } from "@/lib/format";
+import { formatNaira, moneyToString, parseMoney, sumMoney } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
@@ -69,60 +69,147 @@ export type CustomerSummary = {
   name: string;
   phone: string;
   city: string | null;
+  state: string | null;
   /** What the customer owes now. */
   balance: string;
   /** Empty means this customer cannot buy on credit. */
   creditLimit: string | null;
   active: boolean;
+  /**
+   * What the customer has bought (sales not cancelled; within the dates asked for, if any)
+   * and on how many sales. Null for people who may not read customer statements.
+   */
+  purchases: string | null;
+  visits: number | null;
 };
+
+const CUSTOMER_SORTS = ["name", "purchases", "visits", "owes"] as const;
 
 const listSchema = z.object({
   search: z.string().trim().max(120).optional().default(""),
   /** "1" to show only customers who owe something. */
   owing: z.string().optional().default(""),
+  state: z.string().trim().max(60).optional().default(""),
+  /** Purchases and visits are counted within these shop days; only customers who bought in them are shown. */
+  from: z.string().trim().optional().default(""),
+  to: z.string().trim().optional().default(""),
+  /** Total purchases at least / at most this much. */
+  min: z.string().trim().optional().default(""),
+  max: z.string().trim().optional().default(""),
+  sort: z.string().trim().optional().default("name"),
   page: pageNumber,
 });
 
-/** One page of customers by name, with what each owes and the total owed by all who match. */
+/** A typed amount for a "from … to …" filter; anything that is not a plain amount is ignored. */
+function amountOrNull(text: string): Decimal | null {
+  try {
+    return text === "" ? null : parseMoney(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One page of customers with what each owes — and, for those who may read statements, what
+ * each has bought and how often — plus the totals for all who match.
+ */
 export async function listCustomers(
   context: AppContext,
   input: unknown = {},
-): Promise<{ customers: CustomerSummary[]; totalOwed: string; canManage: boolean } & Paged> {
+): Promise<
+  {
+    customers: CustomerSummary[];
+    totalOwed: string;
+    /** Total bought by all who match; null when purchases are not shown to this person. */
+    totalPurchases: string | null;
+    /** The states customers are recorded in, for the filter. */
+    states: string[];
+    canManage: boolean;
+    showsPurchases: boolean;
+  } & Paged
+> {
   authorize(context, "customer.balance.view");
-  const { search, owing, page } = parseInput(listSchema, input);
+  const data = parseInput(listSchema, input);
+  const { search, owing, page } = data;
   const digits = search.replace(/[\s\-().]/g, "");
+  const showsPurchases = can(context, "customer.statement.view");
 
   const where: Prisma.CustomerWhereInput = {
     ...(owing === "1" ? { balance: { gt: 0 } } : {}),
+    ...(data.state ? { state: data.state } : {}),
     ...(search
-      ? { OR: [{ name: { contains: search } }, { city: { contains: search } }, ...(/^\+?\d+$/.test(digits) ? [{ phone: { contains: digits } }] : [])] }
+      ? {
+          OR: [
+            { name: { contains: search } },
+            { city: { contains: search } },
+            { state: { contains: search } },
+            ...(/^\+?\d+$/.test(digits) ? [{ phone: { contains: digits } }] : []),
+          ],
+        }
       : {}),
   };
   const db = businessDb(context);
-  const [total, owed, rows] = await Promise.all([
-    db.customer.count({ where }),
-    db.customer.aggregate({ where, _sum: { balance: true } }),
+  const [rows, stateRows] = await Promise.all([
     db.customer.findMany({
       where,
       orderBy: [{ name: "asc" }, { id: "asc" }],
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-      select: { id: true, name: true, phone: true, city: true, balance: true, creditLimit: true, deactivatedAt: true },
+      select: { id: true, name: true, phone: true, city: true, state: true, balance: true, creditLimit: true, deactivatedAt: true },
     }),
+    db.customer.findMany({ where: { state: { not: null } }, distinct: ["state"], orderBy: { state: "asc" }, select: { state: true } }),
   ]);
+
+  // What each has bought: the sales that still stand, within the dates asked for.
+  const from = showsPurchases ? shopDayStart(data.from) : null;
+  const to = showsPurchases ? shopDayEnd(data.to) : null;
+  const bought = new Map<string, { purchases: Decimal; visits: number }>();
+  if (showsPurchases && rows.length > 0) {
+    const sums = await db.sale.groupBy({
+      by: ["customerId"],
+      where: {
+        customerId: { not: null },
+        cancellation: null,
+        ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
+      },
+      _sum: { total: true },
+      _count: { _all: true },
+    });
+    for (const sum of sums) {
+      if (sum.customerId) bought.set(sum.customerId, { purchases: new Decimal((sum._sum.total ?? new Decimal(0)).toFixed(2)), visits: sum._count._all });
+    }
+  }
+  const nothing = { purchases: new Decimal(0), visits: 0 };
+  const min = showsPurchases ? amountOrNull(data.min) : null;
+  const max = showsPurchases ? amountOrNull(data.max) : null;
+  let matching = rows.map((row) => ({ row, ...(bought.get(row.id) ?? nothing) }));
+  if (from || to) matching = matching.filter((entry) => entry.visits > 0);
+  if (min) matching = matching.filter((entry) => entry.purchases.greaterThanOrEqualTo(min));
+  if (max) matching = matching.filter((entry) => entry.purchases.lessThanOrEqualTo(max));
+
+  // Already in name order; the other orders put the biggest first and keep names as the tie-break.
+  const sort = (CUSTOMER_SORTS as readonly string[]).includes(data.sort) ? data.sort : "name";
+  if (sort === "purchases" && showsPurchases) matching.sort((one, other) => other.purchases.comparedTo(one.purchases));
+  if (sort === "visits" && showsPurchases) matching.sort((one, other) => other.visits - one.visits);
+  if (sort === "owes") matching.sort((one, other) => new Decimal(other.row.balance.toFixed(2)).comparedTo(one.row.balance.toFixed(2)));
+
   return {
     canManage: can(context, "customer.manage"),
-    totalOwed: owed._sum.balance?.toFixed(2) ?? "0.00",
-    customers: rows.map((row) => ({
+    showsPurchases,
+    states: stateRows.map((entry) => entry.state).filter((state): state is string => !!state),
+    totalOwed: moneyToString(sumMoney(matching.map((entry) => new Decimal(entry.row.balance.toFixed(2))))),
+    totalPurchases: showsPurchases ? moneyToString(sumMoney(matching.map((entry) => entry.purchases))) : null,
+    customers: matching.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(({ row, purchases, visits }) => ({
       id: row.id,
       name: row.name,
       phone: row.phone,
       city: row.city,
+      state: row.state,
       balance: row.balance.toFixed(2),
       creditLimit: row.creditLimit?.toFixed(2) ?? null,
       active: row.deactivatedAt === null,
+      purchases: showsPurchases ? moneyToString(purchases) : null,
+      visits: showsPurchases ? visits : null,
     })),
-    ...paged(total, page),
+    ...paged(matching.length, page),
   };
 }
 
@@ -279,7 +366,7 @@ export async function setCreditLimit(context: AppContext, input: unknown): Promi
 // One customer: details, what is unpaid, and the statement
 // ---------------------------------------------------------------------------
 
-export type CustomerDetail = CustomerSummary & {
+export type CustomerDetail = Omit<CustomerSummary, "purchases" | "visits"> & {
   address: string | null;
   state: string | null;
   /** How much more the customer may take on credit; null when they have no credit. */

@@ -1,6 +1,6 @@
 import "server-only";
 import { z } from "zod";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
 import { shopDayEnd, shopDayStart } from "@/lib/format";
 import { formatNaira, moneyToString, parseMoney, sumMoney } from "@/lib/money";
@@ -8,7 +8,8 @@ import { verifyApprover } from "@/server/auth/approver";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
-import { ValidationError } from "@/server/errors";
+import { activityRow } from "@/server/activity";
+import { NotFoundError, ValidationError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize, can, ROLE_LABELS } from "@/server/permissions";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
@@ -28,7 +29,7 @@ const MAX_REFUSALS = 5;
 
 const NOT_APPROVED = "Not approved. Please correct what is marked.";
 
-const approveSchema = z.object({
+const askSchema = z.object({
   kind: z.enum(["DISCOUNT", "CREDIT_OVER_LIMIT"]),
   /** The ID the checkout gave the sale. The approval is good for that sale only. */
   saleRequestId: z.string().uuid("This sale has expired. Start a new sale."),
@@ -42,10 +43,106 @@ const approveSchema = z.object({
     .optional(),
   customerId: z.string().trim().optional().default(""),
   creditAmount: z.string().trim().optional().default(""),
+});
+
+const approveSchema = askSchema.extend({
   /** The approver's own sign-in details, typed by them. Used once here and kept nowhere. */
   username: z.string().trim().min(1, "The approver enters their username.").max(100),
   password: z.string().min(1, "The approver enters their password.").max(200),
 });
+
+/** What an approver is shown about the sale, kept with a request as it was when asked. */
+export type ApprovalDetails = {
+  lines: { productName: string; quantity: string; unitName: string; unitPrice: string; lineTotal: string }[];
+  subtotal: string;
+  discountPercent: string | null;
+  customer: { name: string; owes: string; creditLimit: string } | null;
+};
+
+type Asked = {
+  permission: "discount.approve" | "customer.setCreditLimit";
+  fingerprint: string;
+  amount: Decimal;
+  basis: Decimal;
+  reason: string | null;
+  summary: string;
+  details: ApprovalDetails;
+};
+
+/**
+ * Works out, from the server's own prices, exactly what is being asked for — and checks that
+ * the person asking may ask. Shared by approving at the screen and by sending a request.
+ */
+async function workOutWhatIsAsked(context: AppContext, data: z.infer<typeof askSchema>): Promise<Asked> {
+  const db = businessDb(context);
+  const fieldErrors: Record<string, string> = {};
+  const { checked } = await checkSaleLines(db, context, data.lines, fieldErrors);
+  if (Object.keys(fieldErrors).length > 0) {
+    throw new ValidationError("The sale itself has a problem. Correct what is marked before asking for approval.", fieldErrors);
+  }
+  const subtotal = sumMoney(checked.map((line) => line.lineTotal));
+  const lines = checked.map((line) => ({
+    productName: line.productName,
+    quantity: line.quantity,
+    unitName: line.unitName,
+    unitPrice: moneyToString(line.unitPrice),
+    lineTotal: moneyToString(line.lineTotal),
+  }));
+
+  if (data.kind === "DISCOUNT") {
+    authorize(context, "discount.request");
+    if (!data.discount) throw new ValidationError(NOT_APPROVED, { "discount.amount": "Enter the discount first." });
+    const { discount, percent } = checkDiscount(subtotal, data.discount, fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) throw new ValidationError(NOT_APPROVED, fieldErrors);
+    return {
+      permission: "discount.approve",
+      fingerprint: discountFingerprint(data.saleRequestId, checked, discount),
+      amount: discount,
+      basis: subtotal,
+      reason: data.discount.reason,
+      summary: `a discount of ${formatNaira(discount)} on a sale of ${formatNaira(subtotal)}`,
+      details: { lines, subtotal: moneyToString(subtotal), discountPercent: percent ? percent.toFixed(2) : null, customer: null },
+    };
+  }
+
+  authorize(context, "sale.credit");
+  const customer = data.customerId
+    ? await db.customer.findFirst({
+        where: { id: data.customerId, deactivatedAt: null },
+        select: { id: true, name: true, balance: true, creditLimit: true },
+      })
+    : null;
+  if (!customer) throw new ValidationError(NOT_APPROVED, { creditAmount: "Choose the customer first." });
+  if (customer.creditLimit === null) {
+    throw new ValidationError(NOT_APPROVED, {
+      creditAmount: `${customer.name} cannot buy on credit yet. An admin or manager must first give them a credit limit.`,
+    });
+  }
+  let credit: Decimal;
+  try {
+    credit = parseMoney(data.creditAmount);
+    if (!credit.greaterThan(0) || credit.greaterThan(subtotal)) throw new Error("out of range");
+  } catch {
+    throw new ValidationError(NOT_APPROVED, { creditAmount: "Enter the amount on credit as a plain number, no more than the total." });
+  }
+  const owes = new Decimal(customer.balance.toFixed(2));
+  const limit = new Decimal(customer.creditLimit.toFixed(2));
+  const owedAfter = owes.plus(credit);
+  return {
+    permission: "customer.setCreditLimit",
+    fingerprint: creditFingerprint(data.saleRequestId, customer.id, credit),
+    amount: credit,
+    basis: owedAfter,
+    reason: null,
+    summary: `${formatNaira(credit)} on credit for ${customer.name}, who would then owe ${formatNaira(owedAfter)} against a limit of ${formatNaira(limit)}`,
+    details: {
+      lines,
+      subtotal: moneyToString(subtotal),
+      discountPercent: null,
+      customer: { name: customer.name, owes: moneyToString(owes), creditLimit: moneyToString(limit) },
+    },
+  };
+}
 
 export type ApprovalGiven = {
   approvalId: string;
@@ -64,62 +161,8 @@ export async function approveAtScreen(context: AppContext, input: unknown): Prom
   const data = parseInput(approveSchema, input);
   const db = businessDb(context);
   const businessId = businessIdOf(context);
-  const fieldErrors: Record<string, string> = {};
-
-  const { checked } = await checkSaleLines(db, context, data.lines, fieldErrors);
-  if (Object.keys(fieldErrors).length > 0) {
-    throw new ValidationError("The sale itself has a problem. Correct what is marked before asking for approval.", fieldErrors);
-  }
-  const subtotal = sumMoney(checked.map((line) => line.lineTotal));
-
-  let what: { fingerprint: string; amount: Decimal; basis: Decimal; reason: string | null; summary: string };
-  let permission: "discount.approve" | "customer.setCreditLimit";
-  if (data.kind === "DISCOUNT") {
-    authorize(context, "discount.request");
-    permission = "discount.approve";
-    if (!data.discount) throw new ValidationError(NOT_APPROVED, { "discount.amount": "Enter the discount first." });
-    const { discount } = checkDiscount(subtotal, data.discount, fieldErrors);
-    if (Object.keys(fieldErrors).length > 0) throw new ValidationError(NOT_APPROVED, fieldErrors);
-    what = {
-      fingerprint: discountFingerprint(data.saleRequestId, checked, discount),
-      amount: discount,
-      basis: subtotal,
-      reason: data.discount.reason,
-      summary: `a discount of ${formatNaira(discount)} on a sale of ${formatNaira(subtotal)}`,
-    };
-  } else {
-    authorize(context, "sale.credit");
-    permission = "customer.setCreditLimit";
-    const customer = data.customerId
-      ? await db.customer.findFirst({
-          where: { id: data.customerId, deactivatedAt: null },
-          select: { id: true, name: true, balance: true, creditLimit: true },
-        })
-      : null;
-    if (!customer) throw new ValidationError(NOT_APPROVED, { creditAmount: "Choose the customer first." });
-    if (customer.creditLimit === null) {
-      throw new ValidationError(NOT_APPROVED, {
-        creditAmount: `${customer.name} cannot buy on credit yet. An admin or manager must first give them a credit limit.`,
-      });
-    }
-    let credit: Decimal;
-    try {
-      credit = parseMoney(data.creditAmount);
-      if (!credit.greaterThan(0) || credit.greaterThan(subtotal)) throw new Error("out of range");
-    } catch {
-      throw new ValidationError(NOT_APPROVED, { creditAmount: "Enter the amount on credit as a plain number, no more than the total." });
-    }
-    const owedAfter = new Decimal(customer.balance.toFixed(2)).plus(credit);
-    what = {
-      fingerprint: creditFingerprint(data.saleRequestId, customer.id, credit),
-      amount: credit,
-      basis: owedAfter,
-      reason: null,
-      summary:
-        `${formatNaira(credit)} on credit for ${customer.name}, who would then owe ${formatNaira(owedAfter)} ` +
-        `against a limit of ${formatNaira(new Decimal(customer.creditLimit.toFixed(2)))}`,
-    };
-  }
+  const what = await workOutWhatIsAsked(context, data);
+  const permission = what.permission;
 
   // A few wrong guesses and no more are taken for a while — from this person, or against that username.
   const username = data.username.toLowerCase();
@@ -213,6 +256,8 @@ export type ApprovalRow = {
   kind: "DISCOUNT" | "CREDIT_OVER_LIMIT";
   /** True when the seller approved it themselves, as someone allowed to. */
   ownSale: boolean;
+  /** True when it was approved from the approver's own computer, not at the cashier's screen. */
+  remote: boolean;
   /** The discount, or the amount put on credit. */
   amount: string;
   /** The sale before the discount, or what the customer would owe afterwards. */
@@ -278,6 +323,7 @@ export async function listApprovals(
       id: row.id,
       kind: row.kind,
       ownSale: row.method === "OWN_SALE",
+      remote: row.method === "REMOTE",
       amount: row.amount.toFixed(2),
       basis: row.basis.toFixed(2),
       reason: row.reason,
@@ -291,4 +337,238 @@ export async function listApprovals(
     })),
     ...paged(total, page),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Approval from the manager's own computer (C57)
+// ---------------------------------------------------------------------------
+
+const ALREADY_ANSWERED = "That request has already been answered or taken back.";
+
+/**
+ * The cashier sends a discount — or credit over a customer's limit — to be approved by
+ * someone at another computer. Asking again for exactly the same thing while the first
+ * request is still waiting gives that request back.
+ */
+export async function requestApproval(context: AppContext, input: unknown): Promise<{ requestId: string; expiresAt: Date }> {
+  authorize(context, "sale.create");
+  const data = parseInput(askSchema, input);
+  const what = await workOutWhatIsAsked(context, data);
+  const db = businessDb(context);
+  const businessId = businessIdOf(context);
+
+  const waiting = await db.approvalRequest.findFirst({
+    where: {
+      kind: data.kind,
+      saleRequestId: data.saleRequestId,
+      fingerprint: what.fingerprint,
+      requestedByUserId: context.actor.userId,
+      decision: null,
+      expiresAt: { gt: new Date() },
+    },
+    select: { id: true, expiresAt: true },
+  });
+  if (waiting) return { requestId: waiting.id, expiresAt: waiting.expiresAt };
+
+  const expiresAt = new Date(Date.now() + APPROVAL_MINUTES * 60_000);
+  const created = await db.approvalRequest.create({
+    data: {
+      businessId,
+      kind: data.kind,
+      saleRequestId: data.saleRequestId,
+      fingerprint: what.fingerprint,
+      amount: moneyToString(what.amount),
+      basis: moneyToString(what.basis),
+      reason: what.reason,
+      details: JSON.stringify(what.details),
+      requestedByUserId: context.actor.userId,
+      requestedByName: context.actor.name,
+      expiresAt,
+    },
+    select: { id: true },
+  });
+  return { requestId: created.id, expiresAt };
+}
+
+const requestIdSchema = z.object({ requestId: z.string().uuid("That request could not be found.") });
+
+export type ApprovalRequestStatus =
+  | { status: "WAITING"; expiresAt: Date }
+  | { status: "APPROVED"; approvalId: string; approvedByName: string }
+  | { status: "REFUSED"; refusedByName: string; note: string | null }
+  | { status: "WITHDRAWN" }
+  | { status: "EXPIRED" };
+
+/** What has become of a request. Only the person who sent it may ask. */
+export async function getApprovalRequest(context: AppContext, input: unknown): Promise<ApprovalRequestStatus> {
+  authorize(context, "sale.create");
+  const { requestId } = parseInput(requestIdSchema, input);
+  const request = await businessDb(context).approvalRequest.findFirst({
+    where: { id: requestId, requestedByUserId: context.actor.userId },
+    select: { expiresAt: true, decision: { select: { outcome: true, note: true, decidedByName: true } }, approval: { select: { id: true, approvedByName: true } } },
+  });
+  if (!request) throw new NotFoundError("That request could not be found.");
+  if (request.decision?.outcome === "APPROVED" && request.approval) {
+    return { status: "APPROVED", approvalId: request.approval.id, approvedByName: request.approval.approvedByName };
+  }
+  if (request.decision?.outcome === "REFUSED") {
+    return { status: "REFUSED", refusedByName: request.decision.decidedByName, note: request.decision.note };
+  }
+  if (request.decision) return { status: "WITHDRAWN" };
+  if (request.expiresAt.getTime() <= Date.now()) return { status: "EXPIRED" };
+  return { status: "WAITING", expiresAt: request.expiresAt };
+}
+
+/** The person who sent a request takes it back. Nothing happens if it was already answered. */
+export async function withdrawApprovalRequest(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "sale.create");
+  const { requestId } = parseInput(requestIdSchema, input);
+  const db = businessDb(context);
+  const request = await db.approvalRequest.findFirst({
+    where: { id: requestId, requestedByUserId: context.actor.userId },
+    select: { id: true, decision: { select: { id: true } } },
+  });
+  if (!request) throw new NotFoundError("That request could not be found.");
+  if (request.decision) return;
+  try {
+    await db.approvalRequestDecision.create({
+      data: {
+        businessId: businessIdOf(context),
+        requestId: request.id,
+        outcome: "WITHDRAWN",
+        decidedByUserId: context.actor.userId,
+        decidedByName: context.actor.name,
+      },
+    });
+  } catch (error) {
+    // Answered at the same instant: the answer stands.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
+    throw error;
+  }
+}
+
+/** The kinds of request this person may answer. */
+function kindsAnswerable(context: AppContext): ("DISCOUNT" | "CREDIT_OVER_LIMIT")[] {
+  return [
+    ...(can(context, "discount.approve") ? (["DISCOUNT"] as const) : []),
+    ...(can(context, "customer.setCreditLimit") ? (["CREDIT_OVER_LIMIT"] as const) : []),
+  ];
+}
+
+export type WaitingApproval = {
+  id: string;
+  kind: "DISCOUNT" | "CREDIT_OVER_LIMIT";
+  amount: string;
+  basis: string;
+  reason: string | null;
+  details: ApprovalDetails;
+  requestedByName: string;
+  requestedAt: Date;
+  expiresAt: Date;
+};
+
+/** The requests waiting for an answer that this person may give, oldest first. */
+export async function listWaitingApprovals(context: AppContext): Promise<{ requests: WaitingApproval[] }> {
+  if (!can(context, "customer.setCreditLimit")) authorize(context, "discount.approve");
+  const rows = await businessDb(context).approvalRequest.findMany({
+    where: { kind: { in: kindsAnswerable(context) }, decision: null, expiresAt: { gt: new Date() } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: 50,
+  });
+  return {
+    requests: rows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      amount: row.amount.toFixed(2),
+      basis: row.basis.toFixed(2),
+      reason: row.reason,
+      details: JSON.parse(row.details) as ApprovalDetails,
+      requestedByName: row.requestedByName,
+      requestedAt: row.createdAt,
+      expiresAt: row.expiresAt,
+    })),
+  };
+}
+
+const decideSchema = z.object({
+  requestId: z.string().uuid("That request could not be found."),
+  approve: z.boolean(),
+  note: z.string().trim().max(300, "The note is too long (300 characters at most).").optional().default(""),
+});
+
+/**
+ * A manager, admin or owner answers a waiting request from their own computer. Approving
+ * writes the approval the cashier's sale will spend; refusing writes only the answer.
+ */
+export async function decideApprovalRequest(context: AppContext, input: unknown): Promise<void> {
+  if (!can(context, "customer.setCreditLimit")) authorize(context, "discount.approve");
+  const data = parseInput(decideSchema, input);
+  const db = businessDb(context);
+  const businessId = businessIdOf(context);
+
+  const request = await db.approvalRequest.findFirst({ where: { id: data.requestId }, include: { decision: { select: { id: true } } } });
+  if (!request) throw new NotFoundError("That request could not be found.");
+  authorize(context, request.kind === "DISCOUNT" ? "discount.approve" : "customer.setCreditLimit");
+  if (request.decision) throw new ValidationError(ALREADY_ANSWERED);
+  if (request.expiresAt.getTime() <= Date.now()) {
+    throw new ValidationError(`That request has run out: it waits ${APPROVAL_MINUTES} minutes. The cashier can send it again.`);
+  }
+
+  const amount = new Decimal(request.amount.toFixed(2));
+  const basis = new Decimal(request.basis.toFixed(2));
+  const what =
+    request.kind === "DISCOUNT"
+      ? `a discount of ${formatNaira(amount)} on a sale of ${formatNaira(basis)}`
+      : `${formatNaira(amount)} on credit over a customer's limit (owing ${formatNaira(basis)} afterwards)`;
+  try {
+    await db.$transaction(async (tx) => {
+      // The answer first: there can be only one, so a second answerer stops here.
+      await tx.approvalRequestDecision.create({
+        data: {
+          businessId,
+          requestId: request.id,
+          outcome: data.approve ? "APPROVED" : "REFUSED",
+          note: data.note || null,
+          decidedByUserId: context.actor.userId,
+          decidedByName: context.actor.name,
+        },
+      });
+      let approvalId: string | null = null;
+      if (data.approve) {
+        const approval = await tx.approval.create({
+          data: {
+            businessId,
+            kind: request.kind,
+            method: "REMOTE",
+            saleRequestId: request.saleRequestId,
+            fingerprint: request.fingerprint,
+            amount: request.amount,
+            basis: request.basis,
+            reason: request.reason,
+            requestedByUserId: request.requestedByUserId,
+            requestedByName: request.requestedByName,
+            approvedByUserId: context.actor.userId,
+            approvedByName: context.actor.name,
+            expiresAt: new Date(Date.now() + APPROVAL_MINUTES * 60_000),
+            requestId: request.id,
+          },
+          select: { id: true },
+        });
+        approvalId = approval.id;
+      }
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: data.approve ? "approval.given" : "approval.turned_down",
+          summary:
+            `${context.actor.name} (${ROLE_LABELS[context.actor.role]}) ${data.approve ? "approved" : "refused"} ${what}, asked for by ${request.requestedByName}` +
+            `${request.reason ? `. Reason: ${request.reason}` : ""}${data.note ? `. Note: ${data.note}` : ""}.`,
+          targetType: data.approve ? "approval" : "approval_request",
+          targetId: approvalId ?? request.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new ValidationError(ALREADY_ANSWERED);
+    throw error;
+  }
 }

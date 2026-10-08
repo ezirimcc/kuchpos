@@ -56,6 +56,8 @@ const ADD_ONLY_TABLES = [
   "repayment_allocation",
   "approval",
   "approval_use",
+  "approval_request",
+  "approval_request_decision",
 ];
 
 /**
@@ -114,6 +116,7 @@ const REQUIRED_CHECKS = [
   "sale_discount_check",
   "sale_line_discount_check",
   "approval_amounts_check",
+  "approval_request_amounts_check",
 ];
 
 function readAppVersion(): string {

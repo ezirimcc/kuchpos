@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { approveAtScreen, listApprovals } from "@/server/business/approvals";
+import {
+  approveAtScreen,
+  decideApprovalRequest,
+  getApprovalRequest,
+  listApprovals,
+  listWaitingApprovals,
+  requestApproval,
+  withdrawApprovalRequest,
+} from "@/server/business/approvals";
 import { createCustomer, getCustomer, setCreditLimit } from "@/server/business/customers";
 import { getCheckoutCatalogue, getSale, postSale } from "@/server/business/sales";
 import { setTaxRate } from "@/server/business/settings";
@@ -8,7 +16,9 @@ import { receiveGoods } from "@/server/business/stock";
 import { openTill } from "@/server/business/till";
 import type { AppContext } from "@/server/auth/context";
 import { getDb } from "@/server/db/client";
-import { ForbiddenError, ValidationError } from "@/server/errors";
+import { getAuth } from "@/server/auth/auth";
+import { resolveContext } from "@/server/auth/context";
+import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { createWorld, expectBalancesMatchMovements, expectCustomerBalancesMatchEntries, TEST_PASSWORD, type World } from "../support/world";
 
 /** Extra discounts, and approval by a manager at the cashier's screen (also for credit over the limit). */
@@ -367,5 +377,168 @@ describe("credit over a customer's limit", () => {
     expect(report.rows[0]).toMatchObject({ kind: "CREDIT_OVER_LIMIT", amount: "1200.00", basis: "1200.00", approvedByName: "Test a.manager", sale: { receiptNumber: saved.receiptNumber } });
     // It is not counted as a discount.
     expect(report).toMatchObject({ discountTotal: "0.00", discountCount: 0 });
+  });
+});
+
+describe("approval from the manager's own computer", () => {
+  /** The cashier sends the cart's discount to be approved. */
+  const send = (sale: Cart, as: AppContext = world.a.as.CASHIER) =>
+    requestApproval(as, { kind: "DISCOUNT", saleRequestId: sale.requestId, lines: sale.lines, discount: sale.discount });
+
+  it("a cashier sends a discount; the manager sees the items and approves; the cashier's sale then goes through, once", async () => {
+    const sale = cart(TEN_PERCENT);
+    const { requestId } = await send(sale);
+    expect(await getApprovalRequest(world.a.as.CASHIER, { requestId })).toMatchObject({ status: "WAITING" });
+    // Sending the very same thing again does not make a second request.
+    expect((await send(sale)).requestId).toBe(requestId);
+
+    const { requests } = await listWaitingApprovals(world.a.as.MANAGER);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      id: requestId,
+      kind: "DISCOUNT",
+      amount: "120.00",
+      basis: "1200.00",
+      reason: "Loyal customer",
+      requestedByName: "Test a.cashier",
+      details: {
+        subtotal: "1200.00",
+        discountPercent: "10.00",
+        customer: null,
+        lines: [
+          { productName: "A Seed Sachet", quantity: "1.000", unitName: "pack", unitPrice: "900.00", lineTotal: "900.00" },
+          { productName: "A Seed Sachet", quantity: "3.000", unitName: "single", unitPrice: "100.00", lineTotal: "300.00" },
+        ],
+      },
+    });
+    // Until it is answered, the sale cannot be completed.
+    expect((await refusal(complete(sale, "1080.00"))).fieldErrors).toHaveProperty("discount.approvalId");
+
+    await decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: true, note: "Fine for this customer" });
+    const answer = await getApprovalRequest(world.a.as.CASHIER, { requestId });
+    expect(answer).toMatchObject({ status: "APPROVED", approvedByName: "Test a.manager" });
+    expect((await listWaitingApprovals(world.a.as.MANAGER)).requests).toEqual([]);
+
+    const approvalId = (answer as { approvalId: string }).approvalId;
+    const saved = await complete(sale, "1080.00", approvalId);
+    expect(await getSale(world.a.as.ADMIN, { saleId: saved.id })).toMatchObject({ discountAmount: "120.00", discountApprovedBy: "Test a.manager" });
+    // The approval that came from it obeys the same rules: one sale, once.
+    expect((await refusal(complete({ ...sale, requestId: randomUUID() }, "1080.00", approvalId))).fieldErrors).toHaveProperty("discount.approvalId");
+
+    const report = await listApprovals(world.a.as.ACCOUNTANT);
+    expect(report.rows[0]).toMatchObject({ remote: true, ownSale: false, requestedByName: "Test a.cashier", approvedByName: "Test a.manager", sale: { receiptNumber: saved.receiptNumber } });
+    const log = await getDb().activityLog.findFirstOrThrow({ where: { action: "approval.given" } });
+    expect(log.summary).toBe(
+      "Test a.manager (Manager) approved a discount of ₦120.00 on a sale of ₦1,200.00, asked for by Test a.cashier. Reason: Loyal customer. Note: Fine for this customer.",
+    );
+  });
+
+  it("a refusal reaches the cashier with the note, and gives no approval; a request is answered only once", async () => {
+    const sale = cart(TEN_PERCENT);
+    const { requestId } = await send(sale);
+    await decideApprovalRequest(world.a.as.ADMIN, { requestId, approve: false, note: "Too much" });
+    expect(await getApprovalRequest(world.a.as.CASHIER, { requestId })).toEqual({ status: "REFUSED", refusedByName: "Test a.admin", note: "Too much" });
+    expect(await getDb().approval.count()).toBe(0);
+    expect((await refusal(decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: true }))).message).toMatch(/already been answered/);
+    expect(await getDb().approval.count()).toBe(0);
+    // The cashier may ask again: that is a new request.
+    expect((await send(sale)).requestId).not.toBe(requestId);
+  });
+
+  it("two managers answering at the same instant give exactly one answer", async () => {
+    const { requestId } = await send(cart(TEN_PERCENT));
+    const answers = await Promise.allSettled([
+      decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: true }),
+      decideApprovalRequest(world.a.as.ADMIN, { requestId, approve: true }),
+      decideApprovalRequest(world.ownerInA, { requestId, approve: false }),
+    ]);
+    expect(answers.filter((answer) => answer.status === "fulfilled")).toHaveLength(1);
+    expect(await getDb().approvalRequestDecision.count()).toBe(1);
+    expect(await getDb().approval.count()).toBeLessThanOrEqual(1);
+  });
+
+  it("a request waits ten minutes, can be taken back, and after either cannot be approved", async () => {
+    const first = await send(cart(TEN_PERCENT));
+    await withdrawApprovalRequest(world.a.as.CASHIER, { requestId: first.requestId });
+    expect(await getApprovalRequest(world.a.as.CASHIER, { requestId: first.requestId })).toEqual({ status: "WITHDRAWN" });
+    expect((await refusal(decideApprovalRequest(world.a.as.MANAGER, { requestId: first.requestId, approve: true }))).message).toMatch(/already been answered/);
+    // Taking it back twice is harmless.
+    await withdrawApprovalRequest(world.a.as.CASHIER, { requestId: first.requestId });
+
+    const second = await send(cart(TEN_PERCENT));
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 10 * 60_000 + 1000 });
+    expect(await getApprovalRequest(world.a.as.CASHIER, { requestId: second.requestId })).toEqual({ status: "EXPIRED" });
+    expect((await listWaitingApprovals(world.a.as.MANAGER)).requests).toEqual([]);
+    expect((await refusal(decideApprovalRequest(world.a.as.MANAGER, { requestId: second.requestId, approve: true }))).message).toMatch(/has run out/);
+    vi.useRealTimers();
+    expect(await getDb().approval.count()).toBe(0);
+  });
+
+  it("only those who may approve see or answer requests, and only their own business's; only the sender may ask after or take back a request", async () => {
+    const { requestId } = await send(cart(TEN_PERCENT));
+    for (const role of ["CASHIER", "ACCOUNTANT", "STOREKEEPER"] as const) {
+      await expect(listWaitingApprovals(world.a.as[role]), role).rejects.toBeInstanceOf(ForbiddenError);
+      await expect(decideApprovalRequest(world.a.as[role], { requestId, approve: true }), role).rejects.toBeInstanceOf(ForbiddenError);
+    }
+    expect((await listWaitingApprovals(world.b.as.MANAGER)).requests).toEqual([]);
+    await expect(decideApprovalRequest(world.b.as.MANAGER, { requestId, approve: true })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(getApprovalRequest(world.b.as.CASHIER, { requestId })).rejects.toBeInstanceOf(NotFoundError);
+    // Another person of the same business who sells cannot read or take back someone else's request.
+    await expect(getApprovalRequest(world.a.as.MANAGER, { requestId })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(withdrawApprovalRequest(world.a.as.ADMIN, { requestId })).rejects.toBeInstanceOf(NotFoundError);
+    // Those who may not sell cannot send one.
+    await expect(send(cart(TEN_PERCENT), world.a.as.STOREKEEPER)).rejects.toBeInstanceOf(ForbiddenError);
+    expect((await listWaitingApprovals(world.ownerInA)).requests).toHaveLength(1);
+  });
+
+  it("works for credit over a customer's limit too, showing the manager what the customer owes", async () => {
+    const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
+    await setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "500" });
+    const sale = cart();
+    const { requestId } = await requestApproval(world.a.as.CASHIER, {
+      kind: "CREDIT_OVER_LIMIT",
+      saleRequestId: sale.requestId,
+      lines: sale.lines,
+      customerId: ada,
+      creditAmount: "1200.00",
+    });
+    const [waiting] = (await listWaitingApprovals(world.a.as.MANAGER)).requests;
+    expect(waiting).toMatchObject({ kind: "CREDIT_OVER_LIMIT", amount: "1200.00", basis: "1200.00", details: { customer: { name: "Ada Okafor", owes: "0.00", creditLimit: "500.00" } } });
+    await decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: true });
+    const answer = (await getApprovalRequest(world.a.as.CASHIER, { requestId })) as { approvalId: string };
+    await postSale(world.a.as.CASHIER, {
+      requestId: sale.requestId,
+      terminalId: world.a.terminalId,
+      expectedTotal: "1200.00",
+      payments: [],
+      customerId: ada,
+      creditAmount: "1200.00",
+      lines: sale.lines,
+      creditApprovalId: answer.approvalId,
+    });
+    expect((await getCustomer(world.a.as.ADMIN, { customerId: ada })).balance).toBe("1200.00");
+  });
+
+  it("requests and their answers cannot be changed or removed in the database", async () => {
+    const { requestId } = await send(cart(TEN_PERCENT));
+    await decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: false });
+    const db = getDb();
+    await expect(db.approvalRequest.update({ where: { id: requestId }, data: { amount: "1.00" } })).rejects.toThrow();
+    await expect(db.approvalRequest.deleteMany({})).rejects.toThrow();
+    await expect(db.approvalRequestDecision.updateMany({ data: { outcome: "APPROVED" } })).rejects.toThrow();
+    await expect(db.approvalRequestDecision.deleteMany({})).rejects.toThrow();
+  });
+
+  it("a screen checking for news by itself does not put off the automatic sign-out", async () => {
+    const db = getDb();
+    const signedIn = await getAuth().api.signInUsername({ body: { username: "a.manager", password: TEST_PASSWORD }, returnHeaders: true });
+    const headers = new Headers({ cookie: signedIn.headers.getSetCookie().map((cookie) => cookie.split(";")[0]).join("; ") });
+    const session = { id: (await resolveContext(headers)).actor.sessionId };
+    const longAgo = new Date(Date.now() - 20 * 60_000);
+    await db.session.update({ where: { id: session.id }, data: { lastActiveAt: longAgo } });
+    await resolveContext(headers, { passive: true });
+    expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).lastActiveAt.getTime()).toBe(longAgo.getTime());
+    await resolveContext(headers);
+    expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).lastActiveAt.getTime()).toBeGreaterThan(longAgo.getTime());
   });
 });

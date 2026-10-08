@@ -4,21 +4,25 @@ import { Calculator } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { type CashBreakdown, NAIRA_NOTES as NOTES } from "@/lib/cash-notes";
 import { Decimal } from "@/lib/decimal";
 import { formatNaira, moneyToString } from "@/lib/money";
-
-/** Naira notes, largest first. */
-const NOTES = ["1000", "500", "200", "100", "50", "20", "10", "5"] as const;
 
 const isCount = (text: string) => /^\d{1,7}$/.test(text.trim());
 const isMoney = (text: string) => /^\d+(\.\d{1,2})?$/.test(text.trim());
 
 /**
- * Helps count cash: how many of each note, plus any coins or loose amount. The total is
- * worked out here and handed to the form's amount box through `onTotal` each time a number
- * changes. It is only a helper — what is saved is the amount in the box.
+ * Helps count cash: how many of each note, plus any coins or loose amount. Each time a number
+ * changes, the total and the count behind it are handed to the form through `onTotal`: the
+ * total goes in the amount box, and the count is saved with it for the manager to see.
  */
-export function CashCounter({ idPrefix, onTotal }: { idPrefix: string; onTotal: (amount: string) => void }) {
+export function CashCounter({
+  idPrefix,
+  onTotal,
+}: {
+  idPrefix: string;
+  onTotal: (amount: string, breakdown: CashBreakdown) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [other, setOther] = useState("");
@@ -42,7 +46,7 @@ export function CashCounter({ idPrefix, onTotal }: { idPrefix: string; onTotal: 
     setCounts(nextCounts);
     setOther(nextOther);
     const total = totalOf(nextCounts, nextOther);
-    if (total) onTotal(moneyToString(total));
+    if (total) onTotal(moneyToString(total), { notes: nextCounts, other: nextOther });
   }
 
   const total = totalOf(counts, other);
@@ -104,7 +108,10 @@ export function CashCounter({ idPrefix, onTotal }: { idPrefix: string; onTotal: 
           {total ? formatNaira(total) : "Check the numbers above"}
         </span>
       </p>
-      <p className="text-xs text-muted-foreground">The total is put in the amount box for you. You can still change it there.</p>
+      <p className="text-xs text-muted-foreground">
+        The total is put in the amount box for you, and this count is saved with it. If you then change the amount by
+        hand, only the amount is saved.
+      </p>
     </div>
   );
 }

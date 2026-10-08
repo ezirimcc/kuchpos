@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
+import { breakdownTotal, type CashBreakdown, describeBreakdown, NAIRA_NOTES, storeBreakdown } from "@/lib/cash-notes";
 import { Decimal } from "@/lib/decimal";
 import { shopDayEnd, shopDayStart, shopToday, tillSessionNumber } from "@/lib/format";
 import { formatNaira, moneyToString, parseMoney } from "@/lib/money";
@@ -123,9 +124,42 @@ function parseAmount(text: string, fieldErrors: Record<string, string>, field: s
   }
 }
 
+/** How the cash was counted, note by note — sent only when the person used "Count by notes". */
+const breakdownSchema = z
+  .object({
+    notes: z.partialRecord(z.enum(NAIRA_NOTES), z.string().trim().max(8)),
+    other: z.string().trim().max(15).optional().default(""),
+  })
+  .optional();
+
+/**
+ * Checks a note-by-note count against the amount it is meant to explain and returns it in
+ * the form it is stored in. A breakdown that does not add up to the amount is refused, not
+ * dropped: it would mean the screen and what is being saved disagree.
+ */
+function checkedBreakdown(
+  breakdown: z.infer<typeof breakdownSchema>,
+  amount: Decimal | null,
+  fieldErrors: Record<string, string>,
+): string | null {
+  if (!breakdown || !amount) return null;
+  const counted: CashBreakdown = { notes: breakdown.notes, other: breakdown.other };
+  const total = breakdownTotal(counted);
+  if (!total) {
+    fieldErrors.breakdown = "Check the numbers under \"Count by notes\": each must be a whole number of notes.";
+    return null;
+  }
+  if (!total.equals(amount)) {
+    fieldErrors.breakdown = `The notes add up to ${formatNaira(total)}, but the amount typed is ${formatNaira(amount)}. Count again, or correct the amount.`;
+    return null;
+  }
+  return storeBreakdown(counted);
+}
+
 const openSchema = z.object({
   terminalId: z.string().uuid("Choose the checkout terminal."),
   openingFloat: z.string().trim(),
+  breakdown: breakdownSchema,
 });
 
 /**
@@ -148,6 +182,7 @@ export async function openTill(context: AppContext, input: unknown): Promise<{ i
   const terminal = await db.terminal.findFirst({ where: { id: data.terminalId }, select: { id: true, code: true, deactivatedAt: true } });
   if (!terminal) fieldErrors.terminalId = "Choose the checkout terminal.";
   else if (terminal.deactivatedAt) fieldErrors.terminalId = "This checkout terminal is out of use.";
+  const floatBreakdown = checkedBreakdown(data.breakdown, float, fieldErrors);
   if (!terminal || !float || Object.keys(fieldErrors).length > 0) {
     throw new ValidationError("The till was not opened. Please correct the highlighted fields.", fieldErrors);
   }
@@ -174,6 +209,7 @@ export async function openTill(context: AppContext, input: unknown): Promise<{ i
           terminalId: terminal.id,
           terminalCode: terminal.code,
           openingFloat: moneyToString(float),
+          floatBreakdown,
           openedByUserId: context.actor.userId,
           openedByName: context.actor.name,
         },
@@ -196,6 +232,7 @@ export async function openTill(context: AppContext, input: unknown): Promise<{ i
 const closeSchema = z.object({
   sessionId: z.string().uuid("That till session could not be found."),
   countedCash: z.string().trim(),
+  breakdown: breakdownSchema,
   note: optionalText(300, "The note is too long (300 characters at most).").optional().default(""),
 });
 
@@ -240,7 +277,10 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
     "countedCash",
     "Enter the cash you counted in the drawer as a plain amount, for example 48500 (0 if there is none).",
   );
-  if (!counted) throw new ValidationError("The till was not closed. Please correct the highlighted field.", fieldErrors);
+  const breakdown = checkedBreakdown(data.breakdown, counted, fieldErrors);
+  if (!counted || Object.keys(fieldErrors).length > 0) {
+    throw new ValidationError("The till was not closed. Please correct the highlighted field.", fieldErrors);
+  }
 
   try {
     return await db.$transaction(
@@ -256,6 +296,7 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
             expectedCash: moneyToString(expected),
             countedCash: moneyToString(counted),
             difference: moneyToString(difference),
+            breakdown,
             note: data.note || null,
             closedByUserId: context.actor.userId,
             closedByName: context.actor.name,
@@ -298,6 +339,7 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
 const recountSchema = z.object({
   sessionId: z.string().uuid("That till session could not be found."),
   countedCash: z.string().trim(),
+  breakdown: breakdownSchema,
   note: z.string().trim().min(5, "Say why the till was counted again.").max(300, "The note is too long (300 characters at most)."),
 });
 
@@ -330,7 +372,10 @@ export async function recountTill(context: AppContext, input: unknown): Promise<
     "countedCash",
     "Enter the cash you counted as a plain amount, for example 48500 (0 if there is none).",
   );
-  if (!counted) throw new ValidationError("The recount was not saved. Please correct the highlighted field.", fieldErrors);
+  const breakdown = checkedBreakdown(data.breakdown, counted, fieldErrors);
+  if (!counted || Object.keys(fieldErrors).length > 0) {
+    throw new ValidationError("The recount was not saved. Please correct the highlighted field.", fieldErrors);
+  }
 
   const expected = new Decimal(session.close.expectedCash.toFixed(2));
   const difference = counted.minus(expected);
@@ -342,6 +387,7 @@ export async function recountTill(context: AppContext, input: unknown): Promise<
         expectedCash: moneyToString(expected),
         countedCash: moneyToString(counted),
         difference: moneyToString(difference),
+        breakdown,
         note: data.note,
         recountedByUserId: context.actor.userId,
         recountedByName: context.actor.name,
@@ -461,8 +507,14 @@ export type TillSessionDetail = TillSessionSummary & {
   /** The closing count against the expected cash. Only for those who may review any till. */
   closingDifference: string | null;
   closingNote: string | null;
+  /**
+   * How the float and the closing cash were counted, note by note ("60 × ₦1,000", …), when
+   * "Count by notes" was used. Only for those who may review any till.
+   */
+  floatBreakdown: string[];
+  closingBreakdown: string[];
   /** Counts made again after closing, oldest first. Only for those who may review any till. */
-  recounts: { id: string; countedCash: string; difference: string; note: string; recountedByName: string; createdAt: Date }[];
+  recounts: { id: string; countedCash: string; difference: string; breakdown: string[]; note: string; recountedByName: string; createdAt: Date }[];
   /** True when this person may close it now. */
   canClose: boolean;
   /** True when this person may recount it now: closed today, and they both review and run tills. */
@@ -523,11 +575,14 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
     countedCash: session.close?.countedCash.toFixed(2) ?? null,
     closingDifference: reviews ? (session.close?.difference.toFixed(2) ?? null) : null,
     closingNote: session.close?.note ?? null,
+    floatBreakdown: reviews ? describeBreakdown(session.floatBreakdown) : [],
+    closingBreakdown: reviews ? describeBreakdown(session.close?.breakdown ?? null) : [],
     recounts: reviews
       ? session.recounts.map((recount) => ({
           id: recount.id,
           countedCash: recount.countedCash.toFixed(2),
           difference: recount.difference.toFixed(2),
+          breakdown: describeBreakdown(recount.breakdown),
           note: recount.note,
           recountedByName: recount.recountedByName,
           createdAt: recount.createdAt,

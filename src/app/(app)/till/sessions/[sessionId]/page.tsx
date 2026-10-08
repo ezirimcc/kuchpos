@@ -119,6 +119,11 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
               <span className="text-muted-foreground">Opening float</span>
               <span>{nairaFromText(session.openingFloat)}</span>
             </p>
+            {session.floatBreakdown.length > 0 && (
+              <p className="-mt-1 text-xs text-muted-foreground" data-testid="till-float-notes">
+                {session.floatBreakdown.join(" · ")}
+              </p>
+            )}
             {reviewer && (
               <p className="flex justify-between gap-3 text-sm">
                 <span className="text-muted-foreground">Should be there (float + cash sales − change)</span>
@@ -129,6 +134,11 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
               <span className="text-muted-foreground">Counted at closing{session.closedByName ? ` by ${session.closedByName}` : ""}</span>
               <span data-testid="till-counted">{session.countedCash === null ? "Not counted yet" : nairaFromText(session.countedCash)}</span>
             </p>
+            {session.closingBreakdown.length > 0 && (
+              <p className="-mt-1 text-xs text-muted-foreground" data-testid="till-closing-notes">
+                {session.closingBreakdown.join(" · ")}
+              </p>
+            )}
             {session.closingDifference !== null && (
               <p className="flex items-center justify-between gap-3 border-t pt-2 text-sm font-medium">
                 <span>Result of the closing count</span>
@@ -148,6 +158,7 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
                 <p className="text-xs text-muted-foreground">
                   {recount.recountedByName}, {formatDateTime(recount.createdAt)} · {recount.note}
                 </p>
+                {recount.breakdown.length > 0 && <p className="text-xs text-muted-foreground">{recount.breakdown.join(" · ")}</p>}
               </div>
             ))}
             {!reviewer && !open && (

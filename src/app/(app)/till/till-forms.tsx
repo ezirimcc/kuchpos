@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import type { CashBreakdown } from "@/lib/cash-notes";
 import { closeTillAction, openTillAction, recountTillAction } from "./actions";
 import { CashCounter } from "./cash-counter";
 
@@ -54,6 +55,8 @@ export function TerminalChooser({ terminals, current }: { terminals: Terminal[];
 export function OpenTillForm({ terminalId, terminalCode }: { terminalId: string; terminalCode: string }) {
   const [pending, startTransition] = useTransition();
   const [openingFloat, setOpeningFloat] = useState("");
+  // The note-by-note count behind the amount, while the amount is still the one it produced.
+  const [breakdown, setBreakdown] = useState<CashBreakdown | undefined>();
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -64,7 +67,7 @@ export function OpenTillForm({ terminalId, terminalCode }: { terminalId: string;
     setErrors({});
     startTransition(async () => {
       // On success the page is drawn again by the server and shows the open till.
-      const result = await openTillAction({ terminalId, openingFloat: openingFloat.trim() });
+      const result = await openTillAction({ terminalId, openingFloat: openingFloat.trim(), breakdown });
       if (result.status === "error") {
         setMessage(result.message);
         setErrors(result.fieldErrors);
@@ -79,7 +82,10 @@ export function OpenTillForm({ terminalId, terminalCode }: { terminalId: string;
         <Input
           id="openingFloat"
           value={openingFloat}
-          onChange={(event) => setOpeningFloat(event.target.value)}
+          onChange={(event) => {
+            setOpeningFloat(event.target.value);
+            setBreakdown(undefined);
+          }}
           inputMode="decimal"
           autoComplete="off"
           aria-invalid={!!errors.openingFloat}
@@ -93,7 +99,14 @@ export function OpenTillForm({ terminalId, terminalCode }: { terminalId: string;
           <p className="text-xs text-muted-foreground">The float you start with for giving change. Type 0 if the drawer is empty.</p>
         )}
       </div>
-      <CashCounter idPrefix="open" onTotal={setOpeningFloat} />
+      <CashCounter
+        idPrefix="open"
+        onTotal={(amount, counted) => {
+          setOpeningFloat(amount);
+          setBreakdown(counted);
+        }}
+      />
+      {errors.breakdown && <p className="text-xs text-destructive">{errors.breakdown}</p>}
       {message && <Alert variant="destructive">{message}</Alert>}
       {errors.terminalId && <Alert variant="destructive">{errors.terminalId}</Alert>}
       <div>
@@ -109,6 +122,8 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [countedCash, setCountedCash] = useState("");
+  // The note-by-note count behind the amount, while the amount is still the one it produced.
+  const [breakdown, setBreakdown] = useState<CashBreakdown | undefined>();
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -119,7 +134,7 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
     setMessage(null);
     setErrors({});
     startTransition(async () => {
-      const result = await closeTillAction({ sessionId, countedCash: countedCash.trim(), note });
+      const result = await closeTillAction({ sessionId, countedCash: countedCash.trim(), breakdown, note });
       if (result.status === "success" && result.sessionId) {
         router.push(`/till/sessions/${result.sessionId}`);
       } else if (result.status === "error") {
@@ -143,7 +158,10 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
         <Input
           id="countedCash"
           value={countedCash}
-          onChange={(event) => setCountedCash(event.target.value)}
+          onChange={(event) => {
+            setCountedCash(event.target.value);
+            setBreakdown(undefined);
+          }}
           inputMode="decimal"
           autoComplete="off"
           aria-invalid={!!errors.countedCash}
@@ -152,7 +170,14 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
         />
         {errors.countedCash && <p className="text-xs text-destructive">{errors.countedCash}</p>}
       </div>
-      <CashCounter idPrefix="close" onTotal={setCountedCash} />
+      <CashCounter
+        idPrefix="close"
+        onTotal={(amount, counted) => {
+          setCountedCash(amount);
+          setBreakdown(counted);
+        }}
+      />
+      {errors.breakdown && <p className="text-xs text-destructive">{errors.breakdown}</p>}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="closing-note">Note (optional)</Label>
         <Input id="closing-note" value={note} onChange={(event) => setNote(event.target.value)} autoComplete="off" maxLength={300} />
@@ -172,6 +197,8 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
 export function RecountTillForm({ sessionId }: { sessionId: string }) {
   const [pending, startTransition] = useTransition();
   const [countedCash, setCountedCash] = useState("");
+  // The note-by-note count behind the amount, while the amount is still the one it produced.
+  const [breakdown, setBreakdown] = useState<CashBreakdown | undefined>();
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -182,10 +209,11 @@ export function RecountTillForm({ sessionId }: { sessionId: string }) {
     setMessage(null);
     setErrors({});
     startTransition(async () => {
-      const result = await recountTillAction({ sessionId, countedCash: countedCash.trim(), note });
+      const result = await recountTillAction({ sessionId, countedCash: countedCash.trim(), breakdown, note });
       if (result.status === "success") {
         // The page is drawn again by the server and lists the new recount.
         setCountedCash("");
+        setBreakdown(undefined);
         setNote("");
       } else if (result.status === "error") {
         setMessage(result.message);
@@ -207,7 +235,10 @@ export function RecountTillForm({ sessionId }: { sessionId: string }) {
         <Input
           id="recountedCash"
           value={countedCash}
-          onChange={(event) => setCountedCash(event.target.value)}
+          onChange={(event) => {
+            setCountedCash(event.target.value);
+            setBreakdown(undefined);
+          }}
           inputMode="decimal"
           autoComplete="off"
           aria-invalid={!!errors.countedCash}
@@ -216,7 +247,14 @@ export function RecountTillForm({ sessionId }: { sessionId: string }) {
         />
         {errors.countedCash && <p className="text-xs text-destructive">{errors.countedCash}</p>}
       </div>
-      <CashCounter idPrefix="recount" onTotal={setCountedCash} />
+      <CashCounter
+        idPrefix="recount"
+        onTotal={(amount, counted) => {
+          setCountedCash(amount);
+          setBreakdown(counted);
+        }}
+      />
+      {errors.breakdown && <p className="text-xs text-destructive">{errors.breakdown}</p>}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="recount-note">Why it was counted again</Label>
         <Input id="recount-note" value={note} onChange={(event) => setNote(event.target.value)} aria-invalid={!!errors.note} autoComplete="off" maxLength={300} required />

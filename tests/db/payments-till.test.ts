@@ -348,6 +348,59 @@ describe("the till", () => {
     await expect(db.tillSessionRecount.create({ data: { ...recount, id: randomUUID(), note: " " } })).rejects.toThrow();
   });
 
+  it("keeps the note-by-note count with the float, the closing and a recount — for those who review tills only", async () => {
+    const opened = await openTill(world.a.as.CASHIER, {
+      terminalId: world.a.terminalId,
+      openingFloat: "5000",
+      breakdown: { notes: { "1000": "4", "500": "2" }, other: "" },
+    });
+    await closeTill(world.a.as.CASHIER, {
+      sessionId: opened.id,
+      countedCash: "4970.00",
+      breakdown: { notes: { "1000": "4", "500": "1", "200": "2", "20": "3" }, other: "10" },
+    });
+    await recountTill(world.a.as.MANAGER, {
+      sessionId: opened.id,
+      countedCash: "5000",
+      breakdown: { notes: { "1000": "5" }, other: "" },
+      note: "Counted again with the cashier",
+    });
+
+    const detail = await getTillSession(world.a.as.MANAGER, { sessionId: opened.id });
+    expect(detail.floatBreakdown).toEqual(["4 × ₦1,000", "2 × ₦500"]);
+    expect(detail.closingBreakdown).toEqual(["4 × ₦1,000", "1 × ₦500", "2 × ₦200", "3 × ₦20", "Coins / other ₦10.00"]);
+    expect(detail.recounts[0].breakdown).toEqual(["5 × ₦1,000"]);
+    // The cashier is shown none of it afterwards.
+    expect(await getTillSession(world.a.as.CASHIER, { sessionId: opened.id })).toMatchObject({ floatBreakdown: [], closingBreakdown: [], recounts: [] });
+
+    // Without "Count by notes" there is simply no breakdown.
+    const plain = await openA("100", world.a.as.MANAGER);
+    expect((await getTillSession(world.a.as.MANAGER, { sessionId: plain.id })).floatBreakdown).toEqual([]);
+  });
+
+  it("refuses a note count that does not add up to the amount, or is not made of whole numbers, and saves nothing", async () => {
+    const open = (breakdown: unknown, openingFloat = "5000") => refusal(openTill(world.a.as.CASHIER, { terminalId: world.a.terminalId, openingFloat, breakdown }));
+    expect((await open({ notes: { "1000": "4" }, other: "" })).fieldErrors.breakdown).toBe(
+      "The notes add up to ₦4,000.00, but the amount typed is ₦5,000.00. Count again, or correct the amount.",
+    );
+    expect((await open({ notes: { "1000": "4.5" }, other: "" })).fieldErrors).toHaveProperty("breakdown");
+    expect((await open({ notes: { "1000": "5" }, other: "some" })).fieldErrors).toHaveProperty("breakdown");
+    // There is no ₦2,000 note.
+    expect(Object.keys((await open({ notes: { "2000": "1" }, other: "" })).fieldErrors)).toEqual(["breakdown.notes"]);
+    expect(await getDb().tillSession.count()).toBe(0);
+
+    const opened = await openA("0");
+    const close = await refusal(closeTill(world.a.as.CASHIER, { sessionId: opened.id, countedCash: "100", breakdown: { notes: { "50": "1" }, other: "" } }));
+    expect(close.fieldErrors).toHaveProperty("breakdown");
+    expect(await getDb().tillSessionClose.count()).toBe(0);
+    await closeTill(world.a.as.CASHIER, { sessionId: opened.id, countedCash: "0" });
+    const recount = await refusal(
+      recountTill(world.a.as.MANAGER, { sessionId: opened.id, countedCash: "0", note: "Second look", breakdown: { notes: { "5": "1" }, other: "" } }),
+    );
+    expect(recount.fieldErrors).toHaveProperty("breakdown");
+    expect(await getDb().tillSessionRecount.count()).toBe(0);
+  });
+
   it("refuses bad amounts, an unknown or foreign terminal, and a terminal out of use", async () => {
     const attempt = async (input: Record<string, unknown>) => Object.keys((await refusal(openTill(world.a.as.CASHIER, input))).fieldErrors);
     for (const openingFloat of ["", "-1", "a lot", "1,000", "10.005"]) {

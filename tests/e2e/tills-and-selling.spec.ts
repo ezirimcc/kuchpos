@@ -447,6 +447,7 @@ test("the cashier closes the till with a count and is not told the result; the m
   await expect(page.getByTestId("till-expected")).toHaveCount(0);
   await expect(page.getByTestId("till-difference")).toHaveCount(0);
   await expect(page.getByTestId("till-method-Cash")).toHaveCount(0);
+  await expect(page.getByTestId("till-closing-notes")).toHaveCount(0);
   await expect(page.getByTestId("recount-till-form")).toHaveCount(0);
   await expect(page.getByText("Note at closing: Counted twice")).toBeVisible();
   await page.goto("/till/sessions");
@@ -480,6 +481,8 @@ test("the cashier closes the till with a count and is not told the result; the m
   await page.goto("/till/sessions");
   await page.getByTestId("till-row-1").getByRole("link", { name: "TS-000001" }).click();
   await expect(page.getByTestId("till-closing-result")).toHaveText("₦26.25 short");
+  // How the cashier counted it, note by note.
+  await expect(page.getByTestId("till-closing-notes")).toHaveText("60 × ₦1,000 · 1 × ₦500 · 4 × ₦20 · Coins / other ₦20.00");
   await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
   const recount = page.getByTestId("recount-till-form");
   await recount.getByLabel("Cash you counted (₦)").fill("60626.25");

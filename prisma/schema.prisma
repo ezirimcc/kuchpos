@@ -1024,6 +1024,8 @@ model TillSession {
   terminalCode   String   @db.VarChar(6)
   /// Cash put in the drawer at the start, for giving change.
   openingFloat   Decimal  @db.Decimal(14, 2)
+  /// How the float was counted, note by note, if the person used "Count by notes" (see src/lib/cash-notes.ts).
+  floatBreakdown String?  @db.VarChar(300)
   openedByUserId String?
   openedByName   String
   openedAt       DateTime @default(now()) @db.DateTime(3)
@@ -1051,6 +1053,8 @@ model TillSessionClose {
   countedCash    Decimal     @db.Decimal(14, 2)
   /// Counted minus expected: negative means cash is short.
   difference     Decimal     @db.Decimal(14, 2)
+  /// How the cash was counted, note by note, if "Count by notes" was used.
+  breakdown      String?     @db.VarChar(300)
   note           String?     @db.VarChar(300)
   closedByUserId String?
   closedByName   String
@@ -1073,6 +1077,8 @@ model TillSessionRecount {
   countedCash       Decimal     @db.Decimal(14, 2)
   /// Counted minus expected: negative means cash is short.
   difference        Decimal     @db.Decimal(14, 2)
+  /// How the cash was counted, note by note, if "Count by notes" was used.
+  breakdown         String?     @db.VarChar(300)
   note              String      @db.VarChar(300)
   recountedByUserId String?
   recountedByName   String

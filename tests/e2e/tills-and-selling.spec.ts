@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { expectSignedInAs, gotoReady, openFromMenu, signIn, signOut } from "./helpers";
+import { expectSignedInAs, gotoReady, openFromMenu, SAMPLE_PASSWORD, signIn, signOut } from "./helpers";
 
 // These tests build on each other, and on the stock left by stock.spec.ts (which runs first:
 // files run in alphabetical order). They run one after another.
@@ -625,6 +625,100 @@ test("a customer is added, given a credit limit, buys partly on credit, and repa
   await expectSignedInAs(page, "Manager");
   await page.goto("/customers");
   await expect(page.getByText(/No customers yet/)).toBeVisible();
+});
+
+test("a cashier's discount needs a manager's approval at the screen; changing the sale needs a new one; it is on the receipt and the report", async ({ page }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("4");
+  await expect(page.getByTestId("cart-total")).toHaveText("₦2,000.00");
+
+  // 10% off, with a reason. Nothing can be completed until someone allowed to has approved it.
+  await page.getByTestId("add-discount").click();
+  const discount = page.getByTestId("checkout-discount");
+  await discount.getByLabel("Discount typed as").selectOption("percent");
+  await discount.getByLabel("Discount on the whole sale").fill("10");
+  await expect(page.getByTestId("cart-total")).toHaveText("₦1,800.00");
+  await expect(page.getByTestId("cart-discount")).toHaveText("₦2,000.00 less a discount of ₦200.00");
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+  await expect(page.getByTestId("ask-discount-approval")).toBeDisabled();
+  await discount.getByLabel("Reason for the discount").fill("Bulk buyer");
+  await page.getByTestId("ask-discount-approval").click();
+
+  // The cashier's own username and password are not enough.
+  const approval = page.getByTestId("approval-box");
+  await approval.getByLabel("Approver's username").fill("gv.cashier");
+  await approval.getByLabel("Approver's password").fill(SAMPLE_PASSWORD);
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByTestId("approval-error")).toHaveText("That username and password were not accepted, or that person is not allowed to approve this.");
+  await expect(approval.getByLabel("Approver's password")).toHaveValue("");
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+
+  // The manager comes over and types theirs. Enter approves; it does not complete the sale.
+  await approval.getByLabel("Approver's username").fill("gv.manager");
+  await approval.getByLabel("Approver's password").fill(SAMPLE_PASSWORD);
+  await approval.getByLabel("Approver's password").press("Enter");
+  await expect(page.getByTestId("discount-approved")).toContainText("Approved by Green Valley Manager");
+  await expect(page.getByTestId("approval-box")).toHaveCount(0);
+  await expect(page).toHaveURL(/\/sell$/);
+
+  // One more in the cart: the approval no longer fits, and a new one is needed.
+  await page.getByLabel(/^How many: /).fill("5");
+  await expect(page.getByTestId("cart-total")).toHaveText("₦2,250.00");
+  await expect(page.getByTestId("discount-approved")).toHaveCount(0);
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+  // Back to what was approved, and it counts again.
+  await page.getByLabel(/^How many: /).fill("4");
+  await expect(page.getByTestId("discount-approved")).toBeVisible();
+
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦1,800.00");
+  await expect(page.getByTestId("receipt-discount")).toHaveText("Discount (10%)-₦200.00");
+  await expect(page.getByTestId("discount-notice")).toContainText(
+    "A discount of ₦200.00 (10%) was taken off ₦2,000.00, approved by Green Valley Manager. Reason given: Bulk buyer",
+  );
+  const receiptNumber = (await page.getByRole("heading", { name: /^Sale T1-/ }).innerText()).replace("Sale ", "").trim();
+
+  // Credit over a customer's limit is approved the same way. Chief Okoro can take ₦2,000 more.
+  await page.getByTestId("new-sale").click();
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("6");
+  await page.getByLabel("Customer", { exact: true }).fill("Chief Okoro — 08031112222");
+  await page.getByLabel("Put on credit (₦)").fill("3000");
+  await expect(page.getByTestId("complete-sale")).toBeDisabled();
+  await page.getByTestId("ask-credit-approval").click();
+  await approval.getByLabel("Approver's username").fill("gv.manager");
+  await approval.getByLabel("Approver's password").fill(SAMPLE_PASSWORD);
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByTestId("credit-approved")).toContainText("allowed by Green Valley Manager");
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-credit")).toContainText("₦3,000.00");
+  // A cashier has no discounts report.
+  await page.goto("/sales");
+  await expect(page.getByRole("link", { name: "Discounts and approvals" })).toHaveCount(0);
+  await signOut(page);
+
+  // The accountant reads who asked, who approved, why and how much.
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  await openFromMenu(page, "Sales");
+  await page.getByRole("link", { name: "Discounts and approvals" }).click();
+  await expect(page.getByRole("heading", { name: "Discounts and approvals" })).toBeVisible();
+  const row = page.getByTestId("approval-row").filter({ hasText: receiptNumber });
+  await expect(row).toContainText("Discount");
+  await expect(row).toContainText("₦200.00");
+  await expect(row).toContainText("Bulk buyer");
+  await expect(row).toContainText("Green Valley Cashier");
+  await expect(row).toContainText("Green Valley Manager");
+  await expect(page.getByTestId("approval-row").filter({ hasText: "Credit over the limit" })).toContainText("₦3,000.00");
+  await expect(page.getByTestId("discounts-sum")).toHaveText("₦200.00");
+  await page.goto("/activity");
+  await expect(page.getByText(/Green Valley Manager \(Manager\) approved a discount of ₦200.00 on a sale of ₦2,000.00, asked for by Green Valley Cashier/)).toBeVisible();
+  await expect(page.getByText(/tried with the username "gv.cashier" and refused/)).toBeVisible();
 });
 
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {

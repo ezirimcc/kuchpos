@@ -105,3 +105,36 @@ export function correctedAverageCost(input: {
   const value = quantityNow.times(averageNow).plus(quantityPart).plus(pricePart);
   return roundCost(Decimal.max(value, zero).dividedBy(quantityAfter));
 }
+
+/**
+ * Shares a discount on a whole sale out over its lines, in proportion to each line's total,
+ * so that each line knows what was really charged for it (for tax and for profit).
+ * Each share is rounded to the kobo; the last line that has any total takes whatever is left
+ * over, so the shares always add up to exactly the discount. No share exceeds its line.
+ */
+export function shareDiscount(lineTotals: Decimal[], discount: Decimal): Decimal[] {
+  const subtotal = sumMoney(lineTotals);
+  if (discount.isNegative() || discount.greaterThan(subtotal)) {
+    throw new InvalidDecimalError("A discount cannot be negative or more than the total of the lines.");
+  }
+  const zero = new Decimal(0);
+  if (discount.isZero()) return lineTotals.map(() => zero);
+
+  let last = -1;
+  lineTotals.forEach((total, index) => {
+    if (total.greaterThan(0)) last = index;
+  });
+  let left = discount;
+  return lineTotals.map((total, index) => {
+    if (index === last) return left;
+    // Never more than the line, and never more than is left to share.
+    const share = Decimal.min(roundMoney(discount.times(total).dividedBy(subtotal)), total, left);
+    left = left.minus(share);
+    return share;
+  });
+}
+
+/** A percentage of an amount, rounded to the kobo: 5% of ₦10,000.00 is ₦500.00. */
+export function percentOf(amount: Decimal, percent: Decimal): Decimal {
+  return roundMoney(amount.times(percent).dividedBy(100));
+}

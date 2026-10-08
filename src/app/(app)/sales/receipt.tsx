@@ -67,6 +67,18 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
       </div>
 
       <div className="border-t border-dashed border-black pt-1 tabular-nums">
+        {sale.discountAmount !== "0.00" && (
+          <>
+            <p className="flex justify-between gap-2">
+              <span>Subtotal</span>
+              <span>{nairaFromText(sale.subtotal)}</span>
+            </p>
+            <p className="flex justify-between gap-2" data-testid="receipt-discount">
+              <span>Discount{sale.discountPercent ? ` (${plainNumber(sale.discountPercent)}%)` : ""}</span>
+              <span>-{nairaFromText(sale.discountAmount)}</span>
+            </p>
+          </>
+        )}
         <p className="flex justify-between gap-2 text-[1.25em] font-bold">
           <span>TOTAL</span>
           <span data-testid="receipt-total-amount">{nairaFromText(sale.total)}</span>

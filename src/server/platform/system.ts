@@ -54,6 +54,8 @@ const ADD_ONLY_TABLES = [
   "credit_limit_change",
   "repayment",
   "repayment_allocation",
+  "approval",
+  "approval_use",
 ];
 
 /**
@@ -109,6 +111,9 @@ const REQUIRED_CHECKS = [
   "customer_account_entry_amounts_check",
   "repayment_amounts_check",
   "repayment_allocation_amount_check",
+  "sale_discount_check",
+  "sale_line_discount_check",
+  "approval_amounts_check",
 ];
 
 function readAppVersion(): string {

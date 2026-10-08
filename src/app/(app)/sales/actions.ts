@@ -2,6 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { runAction } from "@/server/action";
+import { type ApprovalGiven, approveAtScreen } from "@/server/business/approvals";
 import { cancelSale, postSale, recordReceiptPrint, type SaleResult } from "@/server/business/sales";
 
 /** Saves a sale sent whole from the checkout screen. On success the answer carries the saved sale. */
@@ -25,4 +26,16 @@ export async function recordReceiptPrintAction(saleId: string): Promise<FormStat
 /** Cancels a whole sale: goods back to stock, payments refunded, the sale marked as cancelled. */
 export async function cancelSaleAction(input: unknown): Promise<FormState> {
   return runAction({ success: "Sale cancelled." }, (context) => cancelSale(context, input));
+}
+
+/**
+ * A manager approves a discount, or credit over a customer's limit, at the cashier's screen.
+ * On success the answer carries the approval to send with the sale.
+ */
+export async function approveAtScreenAction(input: unknown): Promise<FormState & { approval?: { id: string; approvedByName: string } }> {
+  let given: ApprovalGiven | undefined;
+  const result = await runAction({ success: "Approved." }, async (context) => {
+    given = await approveAtScreen(context, input);
+  });
+  return result.status === "success" && given ? { ...result, approval: { id: given.approvalId, approvedByName: given.approvedByName } } : result;
 }

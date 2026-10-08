@@ -13,10 +13,11 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Decimal } from "@/lib/decimal";
 import { nairaFromText, plainNumber } from "@/lib/format";
-import { formatNaira, lineTotal, moneyToString, sumMoney } from "@/lib/money";
+import { formatNaira, lineTotal, moneyToString, percentOf, sumMoney } from "@/lib/money";
 import type { CheckoutCatalogue, CheckoutProduct } from "@/server/business/sales";
 import { quickCreateCustomerAction } from "../customers/actions";
-import { postSaleAction } from "../sales/actions";
+import { approveAtScreenAction, postSaleAction } from "../sales/actions";
+import { ApprovalBox } from "./approval-box";
 import { type HeldSale, holdSale, MAX_HELD_SALES, removeHeldSale, useHeldSales } from "./held-sales";
 
 type CartLine = { key: string; productId: string; unitId: string; quantity: string; fromStoreroom: boolean };
@@ -31,6 +32,10 @@ const MAX_MATCHES = 8;
 
 const isQuantity = (text: string) => /^\d+(\.\d{1,3})?$/.test(text.trim()) && new Decimal(text.trim()).greaterThan(0);
 const isMoney = (text: string) => /^\d+(\.\d{1,2})?$/.test(text.trim());
+const isPercent = (text: string) => /^\d{1,3}(\.\d{1,2})?$/.test(text.trim());
+
+/** An approval a manager gave at this screen, and exactly what it was given for. */
+type Approval = { id: string; by: string; for: string };
 
 /**
  * The checkout. Everything on it is worked out here from the copy of the catalogue the page
@@ -65,6 +70,15 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const [creditText, setCreditText] = useState("");
   const [newCustomer, setNewCustomer] = useState<{ name: string; phone: string } | null>(null);
   const [newCustomerError, setNewCustomerError] = useState<string | null>(null);
+  // An extra discount on the whole sale: typed as Naira or as a percentage, with a reason.
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [discountText, setDiscountText] = useState("");
+  const [discountAs, setDiscountAs] = useState<"naira" | "percent">("naira");
+  const [discountReason, setDiscountReason] = useState("");
+  const [discountApproval, setDiscountApproval] = useState<Approval | null>(null);
+  const [creditApproval, setCreditApproval] = useState<Approval | null>(null);
+  const [asking, setAsking] = useState<"DISCOUNT" | "CREDIT_OVER_LIMIT" | null>(null);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
   const held = useHeldSales(cashierId);
   const searchBox = useRef<HTMLInputElement>(null);
   const cashBox = useRef<HTMLInputElement>(null);
@@ -139,6 +153,14 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     { key: crypto.randomUUID(), methodId: catalogue.paymentMethods[0]?.id ?? "", amount: "", tendered: "", reference: "" },
   ];
 
+  function clearDiscount() {
+    setDiscountOpen(false);
+    setDiscountText("");
+    setDiscountReason("");
+    setAsking(null);
+    setApprovalError(null);
+  }
+
   /** Parks the sale in progress so another customer can be served. Nothing is saved on the server. */
   function hold(): boolean {
     if (lines.length === 0) return true;
@@ -154,6 +176,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     setParts(freshPayment());
     setCustomerText("");
     setCreditText("");
+    clearDiscount();
     setMessage(null);
     setErrors({});
     searchBox.current?.focus();
@@ -225,7 +248,28 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     return { line, product, unit, amount, baseQuantity };
   });
   const allValid = view.length > 0 && view.every((entry) => entry.amount !== null);
-  const total = allValid ? sumMoney(view.map((entry) => entry.amount!)) : null;
+  const subtotal = allValid ? sumMoney(view.map((entry) => entry.amount!)) : null;
+
+  // --- The extra discount -------------------------------------------------------------
+  const discountTyped = discountOpen ? discountText.trim() : "";
+  const discount =
+    discountTyped === "" || !subtotal
+      ? new Decimal(0)
+      : discountAs === "percent"
+        ? isPercent(discountTyped) && new Decimal(discountTyped).greaterThan(0) && new Decimal(discountTyped).lessThanOrEqualTo(100)
+          ? percentOf(subtotal, new Decimal(discountTyped))
+          : null
+        : isMoney(discountTyped) && new Decimal(discountTyped).greaterThan(0) && new Decimal(discountTyped).lessThanOrEqualTo(subtotal)
+          ? new Decimal(discountTyped)
+          : null;
+  const discounted = !!discount && discount.greaterThan(0);
+  const reasonGiven = discountReason.trim().length >= 3;
+  const linesKey = JSON.stringify(view.map(({ line }) => [line.productId, line.unitId, line.quantity.trim(), line.fromStoreroom]));
+  // An approval counts only while the sale is still exactly what was approved.
+  const discountKey = `${requestId}|${linesKey}|${discount ? moneyToString(discount) : ""}`;
+  const discountApproved = discounted && discountApproval?.for === discountKey;
+  const discountSound = !!discount && (!discounted || (reasonGiven && (catalogue.canApproveDiscount || discountApproved)));
+  const total = subtotal && discount ? subtotal.minus(discount) : subtotal;
 
   // --- Who it is for, and how much goes on their account ------------------------------
   const customerLabel = (customer: { name: string; phone: string }) => `${customer.name} — ${customer.phone}`;
@@ -239,7 +283,9 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const credit = creditTyped === "" ? new Decimal(0) : isMoney(creditTyped) && new Decimal(creditTyped).greaterThan(0) ? new Decimal(creditTyped) : null;
   const creditTooMuch = !!credit && !!total && credit.greaterThan(total);
   const overLimit = !!credit && !!room && credit.greaterThan(room);
-  const creditSound = !!credit && !creditTooMuch && (!overLimit || catalogue.canAllowOverLimit);
+  const creditKey = `${requestId}|${customer?.id ?? ""}|${credit ? moneyToString(credit) : ""}`;
+  const creditApproved = overLimit && creditApproval?.for === creditKey;
+  const creditSound = !!credit && !creditTooMuch && (!overLimit || catalogue.canAllowOverLimit || creditApproved);
   // What is left to pay now, after what goes on credit.
   const toPay = total && credit && !creditTooMuch ? total.minus(credit) : total;
   const nothingToPay = !!toPay && toPay.isZero() && !!credit && credit.greaterThan(0);
@@ -287,7 +333,50 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const terminal = catalogue.terminals.find((candidate) => candidate.id === terminalId);
   const tillClosed = !!terminal && !terminal.tillOpen;
   const paymentsSound = nothingToPay || (paid.every((entry) => entry.sound) && !!leftToPay && leftToPay.isZero());
-  const ready = !!total && !unknownCustomer && creditSound && paymentsSound && !!terminal && !tillClosed;
+  const nothingCharged = !!total && total.isZero();
+  const ready = !!total && !unknownCustomer && discountSound && creditSound && (paymentsSound || nothingCharged) && !!terminal && !tillClosed;
+
+  const saleLines = () =>
+    view.map(({ line, unit }) => ({
+      productId: line.productId,
+      unitId: line.unitId,
+      quantity: line.quantity.trim(),
+      unitPrice: unit!.price,
+      fromStoreroom: line.fromStoreroom,
+    }));
+  const discountToSend = () => ({
+    amount: moneyToString(discount!),
+    percent: discountAs === "percent" ? discountTyped : "",
+    reason: discountReason.trim(),
+  });
+
+  /** A manager has typed their username and password: ask the server for the approval. */
+  function approve(username: string, password: string) {
+    if (pending || !asking || !subtotal) return;
+    const kind = asking;
+    const approvedFor = kind === "DISCOUNT" ? discountKey : creditKey;
+    setApprovalError(null);
+    startTransition(async () => {
+      const result = await approveAtScreenAction({
+        kind,
+        saleRequestId: requestId,
+        lines: saleLines(),
+        ...(kind === "DISCOUNT" ? { discount: discountToSend() } : { customerId: customer?.id ?? "", creditAmount: moneyToString(credit!) }),
+        username,
+        password,
+      });
+      if (result.status === "success" && result.approval) {
+        const approval = { id: result.approval.id, by: result.approval.approvedByName, for: approvedFor };
+        if (kind === "DISCOUNT") setDiscountApproval(approval);
+        else setCreditApproval(approval);
+        setAsking(null);
+      } else if (result.status === "error") {
+        const { password: wrong, ...others } = result.fieldErrors;
+        setApprovalError(wrong ?? Object.values(others)[0] ?? result.message);
+        setErrors(others);
+      }
+    });
+  }
 
   function changePart(key: string, patch: Partial<PaymentPart>) {
     setErrors({});
@@ -320,7 +409,9 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
         expectedTotal: moneyToString(total),
         customerId: customer?.id ?? "",
         creditAmount: credit && credit.greaterThan(0) ? moneyToString(credit) : "",
-        payments: nothingToPay
+        ...(discounted ? { discount: { ...discountToSend(), approvalId: discountApproved ? discountApproval!.id : "" } } : {}),
+        ...(creditApproved ? { creditApprovalId: creditApproval!.id } : {}),
+        payments: nothingToPay || nothingCharged
           ? []
           : paid.map(({ part, isCash, amount }) => ({
               methodId: part.methodId,
@@ -328,13 +419,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
               tendered: isCash ? part.tendered.trim() : "",
               reference: isCash ? "" : part.reference.trim(),
             })),
-        lines: view.map(({ line, unit }) => ({
-          productId: line.productId,
-          unitId: line.unitId,
-          quantity: line.quantity.trim(),
-          unitPrice: unit!.price,
-          fromStoreroom: line.fromStoreroom,
-        })),
+        lines: saleLines(),
       });
       if (result.status === "success" && result.sale) {
         setRequestId(crypto.randomUUID());
@@ -601,6 +686,11 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
             <p className="text-4xl font-semibold tracking-tight tabular-nums" data-testid="cart-total">
               {total ? formatNaira(total) : "—"}
             </p>
+            {discounted && subtotal && (
+              <p className="mt-0.5 text-xs text-muted-foreground" data-testid="cart-discount">
+                {formatNaira(subtotal)} less a discount of {formatNaira(discount!)}
+              </p>
+            )}
             {catalogue.taxRatePercent !== "0.00" && (
               <p className="mt-0.5 text-xs text-muted-foreground">Prices include tax at {plainNumber(catalogue.taxRatePercent)}% where it applies.</p>
             )}
@@ -614,6 +704,114 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
               </Link>
             </Alert>
           )}
+
+          {catalogue.canDiscount &&
+            (!discountOpen ? (
+              <button
+                type="button"
+                onClick={() => setDiscountOpen(true)}
+                className="w-fit text-xs text-link underline-offset-4 hover:underline"
+                data-testid="add-discount"
+              >
+                + Discount
+              </button>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-2xl border p-3" data-testid="checkout-discount">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="discount">Discount on the whole sale</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="discount"
+                      value={discountText}
+                      onChange={(event) => {
+                        setDiscountText(event.target.value);
+                        setErrors({});
+                      }}
+                      inputMode="decimal"
+                      autoComplete="off"
+                      aria-invalid={discount === null || !!errors["discount.amount"] || !!errors["discount.percent"]}
+                      className="text-right tabular-nums"
+                    />
+                    <NativeSelect
+                      aria-label="Discount typed as"
+                      value={discountAs}
+                      onChange={(event) => {
+                        setDiscountAs(event.target.value === "percent" ? "percent" : "naira");
+                        setErrors({});
+                      }}
+                      className="w-24 shrink-0"
+                    >
+                      <option value="naira">₦</option>
+                      <option value="percent">%</option>
+                    </NativeSelect>
+                  </div>
+                  {discount === null && (
+                    <p className="text-xs text-destructive">
+                      {discountAs === "percent"
+                        ? "Enter a percentage above 0 and up to 100, for example 5 or 7.5."
+                        : "Enter a plain amount above zero and no more than the items come to, for example 500."}
+                    </p>
+                  )}
+                  {(errors["discount.amount"] ?? errors["discount.percent"]) && (
+                    <p className="text-xs text-destructive">{errors["discount.amount"] ?? errors["discount.percent"]}</p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="discount-reason">Reason for the discount</Label>
+                  <Input
+                    id="discount-reason"
+                    value={discountReason}
+                    onChange={(event) => {
+                      setDiscountReason(event.target.value);
+                      setErrors({});
+                    }}
+                    maxLength={300}
+                    autoComplete="off"
+                    aria-invalid={!!errors["discount.reason"]}
+                  />
+                  {errors["discount.reason"] && <p className="text-xs text-destructive">{errors["discount.reason"]}</p>}
+                </div>
+                {discounted && !catalogue.canApproveDiscount && discountApproved && (
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400" data-testid="discount-approved">
+                    Approved by {discountApproval!.by}. Complete the sale within 10 minutes; changing the items or the discount needs a new approval.
+                  </p>
+                )}
+                {discounted && catalogue.canApproveDiscount && (
+                  <p className="text-xs text-muted-foreground">You are allowed to approve this yourself; it will be recorded under your name.</p>
+                )}
+                {errors["discount.approvalId"] && <p className="text-xs text-destructive">{errors["discount.approvalId"]}</p>}
+                {asking === "DISCOUNT" && discounted && subtotal ? (
+                  <ApprovalBox
+                    what={`a discount of ${formatNaira(discount!)} on ${formatNaira(subtotal)}`}
+                    busy={pending}
+                    error={approvalError}
+                    onApprove={approve}
+                    onCancel={() => setAsking(null)}
+                  />
+                ) : (
+                  <div className="flex gap-2">
+                    {discounted && !catalogue.canApproveDiscount && !discountApproved && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!reasonGiven}
+                        title={reasonGiven ? undefined : "Give the reason first"}
+                        onClick={() => {
+                          setApprovalError(null);
+                          setAsking("DISCOUNT");
+                        }}
+                        data-testid="ask-discount-approval"
+                      >
+                        Get approval
+                      </Button>
+                    )}
+                    <Button type="button" size="sm" variant="ghost" onClick={clearDiscount}>
+                      No discount
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
 
           <div className="flex flex-col gap-2" data-testid="checkout-customer">
             <datalist id="checkout-customers">
@@ -707,13 +905,41 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
                 {errors.creditAmount && <p className="text-xs text-destructive">{errors.creditAmount}</p>}
                 {!errors.creditAmount && credit === null && <p className="text-xs text-destructive">Enter a plain amount greater than zero, or leave it empty.</p>}
                 {!errors.creditAmount && creditTooMuch && <p className="text-xs text-destructive">No more than the total can go on credit.</p>}
-                {!errors.creditAmount && overLimit && !creditTooMuch && (
+                {!errors.creditAmount && overLimit && !creditTooMuch && !creditApproved && (
                   <p className={catalogue.canAllowOverLimit ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
                     {catalogue.canAllowOverLimit
                       ? "This takes the customer over their credit limit. You are allowed to let it through; it will be recorded."
                       : `Over the customer's limit: only ${formatNaira(room!)} more can go on credit. A manager or admin can allow more.`}
                   </p>
                 )}
+                {creditApproved && (
+                  <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400" data-testid="credit-approved">
+                    Over the limit, allowed by {creditApproval!.by}. Complete the sale within 10 minutes.
+                  </p>
+                )}
+                {overLimit && !creditTooMuch && !catalogue.canAllowOverLimit && !creditApproved && subtotal &&
+                  (asking === "CREDIT_OVER_LIMIT" ? (
+                    <ApprovalBox
+                      what={`${formatNaira(credit!)} on credit for ${customer!.name}, over their limit`}
+                      busy={pending}
+                      error={approvalError}
+                      onApprove={approve}
+                      onCancel={() => setAsking(null)}
+                    />
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="w-fit"
+                      onClick={() => {
+                        setApprovalError(null);
+                        setAsking("CREDIT_OVER_LIMIT");
+                      }}
+                      data-testid="ask-credit-approval"
+                    >
+                      Get approval
+                    </Button>
+                  ))}
                 {credit && credit.greaterThan(0) && toPay && !creditTooMuch && (
                   <p className="text-xs text-muted-foreground" data-testid="to-pay-now">
                     To pay now: {formatNaira(toPay)}
@@ -724,7 +950,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
             {!mayCredit && errors.creditAmount && <p className="text-xs text-destructive">{errors.creditAmount}</p>}
           </div>
 
-          <div className={nothingToPay ? "hidden" : "flex flex-col gap-3"}>
+          <div className={nothingToPay || nothingCharged ? "hidden" : "flex flex-col gap-3"}>
             {paid.map(({ part, isCash, amount, short, badCash }, index) => {
               const at = (field: string) => errors[`payments.${index}.${field}`];
               // The box the cursor goes to when the cashier moves on to paying.

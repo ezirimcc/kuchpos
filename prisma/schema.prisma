@@ -80,6 +80,8 @@ model Business {
   creditLimitChanges CreditLimitChange[]
   repayments    Repayment[]
   repaymentAllocations RepaymentAllocation[]
+  approvals     Approval[]
+  approvalUses  ApprovalUse[]
   sales         Sale[]
   saleLines     SaleLine[]
   payments      Payment[]
@@ -854,8 +856,13 @@ model Sale {
   /// The terminal's running number, and the receipt number built from it: "T1-000012".
   sequence        Int
   receiptNumber   String   @db.VarChar(20)
-  /// What the customer owed: the sum of the lines. Tax is already inside it.
+  /// What the customer owed: the sum of the lines less any discount. Tax is already inside it.
   total           Decimal  @db.Decimal(14, 2)
+  /// An extra discount on the whole sale, in Naira, with the percentage it was typed as (if it
+  /// was) and the reason given. Shared out over the lines in SaleLine.discountAmount.
+  discountAmount  Decimal  @default(0) @db.Decimal(14, 2)
+  discountPercent Decimal? @db.Decimal(5, 2)
+  discountReason  String?  @db.VarChar(300)
   /// The business's tax rate at the moment of sale, and the tax contained in the total.
   taxRatePercent  Decimal  @db.Decimal(5, 2)
   taxTotal        Decimal  @db.Decimal(14, 2)
@@ -885,6 +892,7 @@ model Sale {
   refunds         Refund[]
   accountEntries  CustomerAccountEntry[]
   repaymentParts  RepaymentAllocation[]
+  approvalUses    ApprovalUse[]
 
   @@unique([businessId, requestId])
   @@unique([terminalId, sequence])
@@ -916,7 +924,9 @@ model SaleLine {
   /// The preset price of one unit (tax included) and quantity × price rounded to the kobo.
   unitPrice      Decimal  @db.Decimal(14, 2)
   lineTotal      Decimal  @db.Decimal(14, 2)
-  /// Whether the product was taxable, the rate applied (0 if not), and the tax inside lineTotal.
+  /// This line's share of the sale's discount. What was charged for the line is lineTotal less this.
+  discountAmount Decimal  @default(0) @db.Decimal(14, 2)
+  /// Whether the product was taxable, the rate applied (0 if not), and the tax inside what was charged.
   taxable        Boolean
   taxRatePercent Decimal  @db.Decimal(5, 2)
   taxAmount      Decimal  @db.Decimal(14, 2)
@@ -1308,4 +1318,67 @@ model RepaymentAllocation {
   @@unique([repaymentId, saleId])
   @@index([saleId])
   @@map("repayment_allocation")
+}
+
+enum ApprovalKind {
+  /// An extra discount on a sale.
+  DISCOUNT
+  /// Letting a customer go over their credit limit on a sale.
+  CREDIT_OVER_LIMIT
+}
+
+enum ApprovalMethod {
+  /// A manager or admin typed their own username and password on the cashier's screen.
+  AT_SCREEN
+  /// The person making the sale may approve such things themselves.
+  OWN_SALE
+}
+
+/// A manager's or admin's yes to one particular thing on one particular sale (SPEC §4.5).
+/// It is tied to the sale's own ID and to a fingerprint of exactly what was approved, can be
+/// used once (ApprovalUse), and lapses ten minutes after it was given. Add-only.
+model Approval {
+  id                String         @id @default(uuid()) @db.Char(36)
+  businessId        String         @db.Char(36)
+  business          Business       @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  kind              ApprovalKind
+  method            ApprovalMethod
+  /// The ID the checkout gave the sale before sending it. The approval is good for that sale only.
+  saleRequestId     String         @db.Char(36)
+  /// A fingerprint of exactly what was approved (the items and the discount, or the customer
+  /// and the credit). If any of it changes, the fingerprint no longer matches.
+  fingerprint       String         @db.Char(64)
+  /// The discount, or the amount put on credit.
+  amount            Decimal        @db.Decimal(14, 2)
+  /// What the approver was shown beside it: the sale's total before the discount, or what
+  /// the customer would owe afterwards.
+  basis             Decimal        @db.Decimal(14, 2)
+  reason            String?        @db.VarChar(300)
+  requestedByUserId String?
+  requestedByName   String
+  approvedByUserId  String?
+  approvedByName    String
+  createdAt         DateTime       @default(now()) @db.DateTime(3)
+  expiresAt         DateTime       @db.DateTime(3)
+
+  use               ApprovalUse?
+
+  @@index([businessId, createdAt])
+  @@index([businessId, saleRequestId])
+  @@map("approval")
+}
+
+/// The one use of an approval: the sale it was spent on. Add-only.
+model ApprovalUse {
+  id         String   @id @default(uuid()) @db.Char(36)
+  businessId String   @db.Char(36)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  approvalId String   @unique @db.Char(36)
+  approval   Approval @relation(fields: [approvalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleId     String   @db.Char(36)
+  sale       Sale     @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+
+  @@index([saleId])
+  @@map("approval_use")
 }

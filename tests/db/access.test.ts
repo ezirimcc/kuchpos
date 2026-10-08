@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "@/server/auth/context";
 import * as activityLog from "@/server/business/activity-log";
 import * as adjustments from "@/server/business/adjustments";
+import * as approvals from "@/server/business/approvals";
 import * as catalog from "@/server/business/catalog";
 import * as counts from "@/server/business/counts";
 import * as customers from "@/server/business/customers";
@@ -22,7 +23,7 @@ import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
 import * as owners from "@/server/platform/owners";
 import * as system from "@/server/platform/system";
-import { createUser, createWorld, type World } from "../support/world";
+import { createUser, createWorld, TEST_PASSWORD, type World } from "../support/world";
 
 /**
  * Calls every server operation directly — no screens involved — as each kind
@@ -428,6 +429,24 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => sales.getSale(context, { saleId: saleInB }),
   },
   {
+    name: "approvals.approveAtScreen",
+    allowed: SELLERS,
+    run: (context) =>
+      approvals.approveAtScreen(context, {
+        kind: "DISCOUNT",
+        saleRequestId: randomUUID(),
+        lines: selling(world.a).lines,
+        discount: { amount: "10.00", percent: "10", reason: "Loyal customer" },
+        username: "a.manager",
+        password: TEST_PASSWORD,
+      }),
+  },
+  {
+    name: "approvals.listApprovals",
+    allowed: ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT"],
+    run: (context) => approvals.listApprovals(context),
+  },
+  {
     name: "sales.cancelSale",
     allowed: PRODUCT_MANAGERS,
     run: (context) => sales.cancelSale(context, { saleId: saleInA, note: "Customer changed his mind" }),
@@ -816,6 +835,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(paymentMethods).map((name) => `paymentMethods.${name}`),
       ...Object.keys(till).map((name) => `till.${name}`),
       ...Object.keys(adjustments).map((name) => `adjustments.${name}`),
+      ...Object.keys(approvals).map((name) => `approvals.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

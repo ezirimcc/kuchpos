@@ -80,6 +80,7 @@ How to read this document:
 | C53 | **Counting cash by notes** (owner, 2026-10-08): wherever cash in a till is typed — opening float, closing count, recount — a helper lets the person enter how many ₦1000, ₦500, ₦200, ₦100, ₦50, ₦20, ₦10 and ₦5 notes there are, plus coins or a loose amount, and puts the total in the amount box. The note-by-note count is **saved with the amount** (owner, 2026-10-08) and shown to those who review tills; it must add up to the amount, and if the amount is then changed by hand only the amount is saved. |
 | C54 | **No advance deposits** (owner, 2026-10-08; answers Q16): a customer cannot leave money with the shop to spend later, so a repayment can never be more than what the customer owes. |
 | C55 | **No credit limit set means no credit** (owner, 2026-10-08; answers Q21): a customer can buy on credit only after an admin or manager gives them a credit limit. A credit sale that would take the customer over the limit is refused unless a manager or admin allows it. |
+| C56 | **How discounts and approvals work, as built at M11** (2026-10-08; chosen by the assistant from C11 and C28, owner to confirm): the discount is on the **whole sale** (not on single lines), typed as a percentage or a Naira amount, always with a reason. A cashier needs a manager, admin or owner to type their own username and password **at the cashier's screen**; a manager or admin who is selling approves their own, and that is recorded too. An approval fits one sale and one exact discount, is used once, and runs out after 10 minutes. Five wrong tries stop further tries for 10 minutes. The same approval at the screen lets a customer go over their credit limit (C55). The discount is shared over the sale's lines in proportion, and tax is worked out on what was really charged. **Not built — for the owner to decide:** approval from the manager's own computer ("waiting for approval" list), and discounts on single lines. |
 | C26 | **Zero extra hosting budget.** The app is hosted on the existing HOSTAFRICA web hosting account at **`pos.kuch99.com`**, and uses the **MariaDB** database included in that plan. |
 
 ## 3. Out of scope for version 1
@@ -160,9 +161,9 @@ Rules:
 ### 4.5 Extra discounts and manager approval
 
 - A preset unit price (including a cheaper carton price) is **not** a discount and needs no approval.
-- An **extra discount** is any reduction below the preset price, on one line or on the whole sale. It can be typed as a **percentage** or as a **Naira amount**; the system works out and stores the Naira amount.
+- An **extra discount** is any reduction below the preset price. As built (C56) it is given on the whole sale; a discount on a single line is not built. It can be typed as a **percentage** or as a **Naira amount**; the system works out and stores the Naira amount.
 - Flow: cashier enters the discount and a reason → a manager approves it → the sale can be completed.
-- **Two ways to approve (proposed):** (a) the manager types their own username and password/PIN on the cashier's screen, or (b) the manager approves from their own computer, in a "waiting for approval" list.
+- **Two ways to approve (proposed):** (a) the manager types their own username and password on the cashier's screen — **built at M11 (C56)**; or (b) the manager approves from their own computer, in a "waiting for approval" list — **not built yet, for the owner to decide (C56)**.
 - The approval is tied to **that sale and that exact discount**. If the cashier changes the items, quantities or discount afterwards, the approval no longer matches and a new one is needed. An approval can be used once, and expires if unused (**proposed:** 10 minutes).
 - Stored for every approval: cashier, approving manager, reason, discount amount, time requested, time approved, and the sale it was used on.
 - The server checks the approval when saving the sale. Hiding the button is not the protection; the server check is.

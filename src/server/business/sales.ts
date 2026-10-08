@@ -3,9 +3,9 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
 import { plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
-import { formatNaira, lineTotal, moneyToString, movingAverageCost, parseMoney, roundMoney, sumMoney, taxIncludedIn } from "@/lib/money";
+import { formatNaira, moneyToString, movingAverageCost, parseMoney, roundMoney, shareDiscount, sumMoney, taxIncludedIn } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
-import { parseQuantity, quantityToString, toBaseQuantity } from "@/lib/quantity";
+import { quantityToString } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
@@ -14,6 +14,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize, can } from "@/server/permissions";
+import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
 
 /**
  * Selling, for the business in use.
@@ -27,10 +28,7 @@ import { authorize, can } from "@/server/permissions";
  * database transaction. Sales are add-only.
  */
 
-const MAX_LINES = 200;
 const MAX_PAYMENTS = 6;
-const MAX_UNIT_QUANTITY = new Decimal("9999999.999");
-const MAX_BASE_QUANTITY = new Decimal("999999999.999");
 const MAX_MONEY = new Decimal("99999999999.99");
 /** How many times to try again when the database reports that two savers got in each other's way. */
 const MAX_ATTEMPTS = 3;
@@ -69,6 +67,9 @@ export type CheckoutCatalogue = {
   canSellOnCredit: boolean;
   /** True when this person may let a customer go over their credit limit. */
   canAllowOverLimit: boolean;
+  /** True when this person may give an extra discount, and whether they may approve one themselves. */
+  canDiscount: boolean;
+  canApproveDiscount: boolean;
   products: CheckoutProduct[];
 };
 
@@ -129,6 +130,8 @@ export async function getCheckoutCatalogue(context: AppContext): Promise<Checkou
     })),
     canSellOnCredit: can(context, "sale.credit"),
     canAllowOverLimit: can(context, "customer.setCreditLimit"),
+    canDiscount: can(context, "discount.request"),
+    canApproveDiscount: can(context, "discount.approve"),
     products: products.map((product) => ({
       id: product.id,
       name: product.name,
@@ -176,19 +179,21 @@ const saleSchema = z.object({
   customerId: z.string().trim().optional().default(""),
   /** The part of the total put on that customer's account instead of being paid now. Empty for none. */
   creditAmount: z.string().trim().optional().default(""),
-  lines: z
-    .array(
-      z.object({
-        productId: z.string().trim(),
-        unitId: z.string().trim(),
-        quantity: z.string().trim(),
-        /** The price of one unit as the cashier saw it. */
-        unitPrice: z.string().trim(),
-        fromStoreroom: z.boolean().optional().default(false),
-      }),
-    )
-    .min(1, "Add at least one product to the sale.")
-    .max(MAX_LINES, `A sale can have at most ${MAX_LINES} lines.`),
+  /**
+   * An extra discount on the whole sale, in Naira; the percentage it was typed as, if it was;
+   * why; and, unless the seller may approve discounts themselves, the approval a manager gave.
+   */
+  discount: z
+    .object({
+      amount: z.string().trim(),
+      percent: z.string().trim().optional().default(""),
+      reason: z.string().trim().min(3, "Say why the discount is being given.").max(300, "The reason is too long (300 characters at most)."),
+      approvalId: z.string().trim().optional().default(""),
+    })
+    .optional(),
+  /** A manager's approval for taking the customer over their credit limit, if the seller needs one. */
+  creditApprovalId: z.string().trim().optional().default(""),
+  lines: saleLinesSchema,
 });
 
 export type SaleResult = {
@@ -208,23 +213,34 @@ type CheckedPayment = {
   reference: string | null;
 };
 
-type CheckedLine = {
-  index: number;
-  productId: string;
-  productUnitId: string;
-  productName: string;
-  baseUnitName: string;
-  unitName: string;
-  unitFactor: string;
-  quantity: string;
-  baseQuantity: Decimal;
-  unitPrice: Decimal;
-  lineTotal: Decimal;
-  taxable: boolean;
-  location: { id: string; name: string };
-};
-
 const NOTHING_SOLD = "Nothing was sold. Please correct what is marked.";
+
+type SaleTx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
+
+/**
+ * Checks that an approval is the right one for this sale — same kind, same sale, exactly
+ * the same thing approved, still in time and not yet used — and hands it back to be spent.
+ * Anything else stops the sale.
+ */
+async function claimApproval(
+  tx: SaleTx,
+  wanted: { id: string; kind: "DISCOUNT" | "CREDIT_OVER_LIMIT"; saleRequestId: string; fingerprint: string; field: string; missing: string },
+): Promise<{ id: string; approvedByName: string }> {
+  const refuse = (message: string): never => {
+    throw new ValidationError(NOTHING_SOLD, { [wanted.field]: message });
+  };
+  if (!/^[0-9a-f-]{36}$/i.test(wanted.id)) refuse(wanted.missing || "Ask a manager or admin to approve this.");
+  const approval = await tx.approval.findFirst({ where: { id: wanted.id }, include: { use: { select: { id: true } } } });
+  if (!approval || approval.kind !== wanted.kind) return refuse("That approval could not be found. Ask for approval again.");
+  if (approval.saleRequestId !== wanted.saleRequestId || approval.fingerprint !== wanted.fingerprint) {
+    return refuse("The sale was changed after it was approved, so the approval no longer matches. Ask for approval again.");
+  }
+  if (approval.use) return refuse("That approval has already been used. Ask for approval again.");
+  if (approval.expiresAt.getTime() <= Date.now()) {
+    return refuse(`That approval has run out: it lasts ${APPROVAL_MINUTES} minutes. Ask for approval again.`);
+  }
+  return { id: approval.id, approvedByName: approval.approvedByName };
+}
 
 /**
  * Saves a sale: the sale, its lines, the stock leaving the Shelf (or Storeroom), and its
@@ -261,106 +277,11 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
 
   const fieldErrors: Record<string, string> = {};
 
-  // --- Terminal and locations ------------------------------------------------------
-  const [terminal, locations] = await Promise.all([
-    db.terminal.findFirst({ where: { id: data.terminalId }, select: { id: true, code: true, deactivatedAt: true } }),
-    db.location.findMany({ select: { id: true, name: true, kind: true } }),
-  ]);
+  // --- Terminal, and the lines at the server's own prices ----------------------------
+  const terminal = await db.terminal.findFirst({ where: { id: data.terminalId }, select: { id: true, code: true, deactivatedAt: true } });
   if (!terminal) fieldErrors.terminalId = "Choose the checkout terminal.";
   else if (terminal.deactivatedAt) fieldErrors.terminalId = "This checkout terminal is out of use. Choose another.";
-  const shelf = locations.find((location) => location.kind === "SHELF");
-  const storeroom = locations.find((location) => location.kind === "STOREROOM");
-  if (!shelf) throw new ValidationError("This business has no Shelf to sell from. Ask the admin to check the locations.");
-  const mayUseStoreroom = can(context, "sale.fromStoreroom");
-
-  // --- The lines -------------------------------------------------------------------
-  const productIds = [...new Set(data.lines.map((line) => line.productId).filter(Boolean))];
-  const products = await db.product.findMany({
-    where: { id: { in: productIds } },
-    select: {
-      id: true,
-      name: true,
-      allowsFraction: true,
-      taxable: true,
-      deactivatedAt: true,
-      units: { select: { id: true, name: true, factor: true, isBase: true, forSale: true, price: true, retiredAt: true } },
-    },
-  });
-  const productById = new Map(products.map((product) => [product.id, product]));
-
-  const checked: CheckedLine[] = [];
-  data.lines.forEach((line, index) => {
-    const at = (field: string) => `lines.${index}.${field}`;
-    const product = productById.get(line.productId);
-    if (!product) {
-      fieldErrors[at("productId")] = "This product could not be found. Remove the line and add it again.";
-      return;
-    }
-    if (product.deactivatedAt) {
-      fieldErrors[at("productId")] = `"${product.name}" is no longer on sale. Remove this line.`;
-      return;
-    }
-    const unit = product.units.find((candidate) => candidate.id === line.unitId);
-    if (!unit || unit.retiredAt || !unit.forSale || unit.price === null) {
-      fieldErrors[at("unitId")] = `"${product.name}" is no longer sold in that unit. Reload the page to get the latest products.`;
-      return;
-    }
-
-    let location = shelf;
-    if (line.fromStoreroom) {
-      if (!mayUseStoreroom || !storeroom) {
-        fieldErrors[at("fromStoreroom")] = "Only a manager or admin can sell straight from the Storeroom.";
-        return;
-      }
-      location = storeroom;
-    }
-
-    // The price is the server's own. What the cashier saw is only compared with it.
-    const price = new Decimal(unit.price.toFixed(2));
-    let seen: Decimal | null = null;
-    try {
-      seen = parseMoney(line.unitPrice);
-    } catch {
-      seen = null;
-    }
-    if (!seen || !seen.equals(price)) {
-      fieldErrors[at("unitPrice")] =
-        `The price of ${product.name} (${unit.name}) is ${formatNaira(price)}` +
-        (seen ? `, not ${formatNaira(seen)}` : "") +
-        ". Reload the page to get the latest prices.";
-      return;
-    }
-
-    try {
-      const quantity = parseQuantity(line.quantity);
-      if (!quantity.greaterThan(0) || quantity.greaterThan(MAX_UNIT_QUANTITY)) throw new Error("out of range");
-      if (!product.allowsFraction && !quantity.isInteger()) {
-        fieldErrors[at("quantity")] = `"${product.name}" is sold in whole units only. Enter a whole number.`;
-        return;
-      }
-      const baseQuantity = toBaseQuantity(quantity, new Decimal(unit.factor.toFixed(3)));
-      if (baseQuantity.greaterThan(MAX_BASE_QUANTITY)) throw new Error("too large");
-      const amount = lineTotal(quantity, price);
-      if (amount.greaterThan(MAX_MONEY)) throw new Error("too large");
-      checked.push({
-        index,
-        productId: product.id,
-        productUnitId: unit.id,
-        productName: product.name,
-        baseUnitName: product.units.find((candidate) => candidate.isBase)?.name ?? "",
-        unitName: unit.name,
-        unitFactor: unit.factor.toFixed(3),
-        quantity: quantityToString(quantity),
-        baseQuantity,
-        unitPrice: price,
-        lineTotal: amount,
-        taxable: product.taxable,
-        location: { id: location.id, name: location.name },
-      });
-    } catch {
-      fieldErrors[at("quantity")] = "Enter how many, as a number greater than zero (up to 3 decimal places).";
-    }
-  });
+  const { checked, locations } = await checkSaleLines(db, context, data.lines, fieldErrors);
 
   // --- The customer, if the sale is for one -----------------------------------------
   let customer: { id: string; name: string; phone: string } | null = null;
@@ -374,10 +295,24 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
     else customer = found;
   }
 
+  // --- The discount, if there is one ---------------------------------------------------
+  const subtotal = sumMoney(checked.map((line) => line.lineTotal));
+  const linesAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("lines."));
+  let discount = new Decimal(0);
+  let discountPercent: Decimal | null = null;
+  if (data.discount && linesAreSound) {
+    if (!can(context, "discount.request")) {
+      fieldErrors["discount.amount"] = "You are not allowed to give a discount.";
+    } else {
+      const sound = checkDiscount(subtotal, data.discount, fieldErrors);
+      discount = sound.discount;
+      discountPercent = sound.percent;
+    }
+  }
+
   // --- Total and payments ----------------------------------------------------------
   let credit = new Decimal(0);
-  const total = sumMoney(checked.map((line) => line.lineTotal));
-  const linesAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("lines."));
+  const total = subtotal.minus(discount);
   const payments: CheckedPayment[] = [];
   if (linesAreSound) {
     let expected: Decimal | null = null;
@@ -512,10 +447,32 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           });
         }
 
+        // Approvals. Whoever may approve such things themselves needs none; anyone else must
+        // bring one a manager gave for exactly this sale, and it is spent here, once.
+        const spent: string[] = [];
+        const own: { kind: "DISCOUNT" | "CREDIT_OVER_LIMIT"; fingerprint: string; amount: Decimal; basis: Decimal; reason: string | null }[] = [];
+        if (discount.greaterThan(0)) {
+          const print = discountFingerprint(data.requestId, checked, discount);
+          if (can(context, "discount.approve")) {
+            own.push({ kind: "DISCOUNT", fingerprint: print, amount: discount, basis: subtotal, reason: data.discount?.reason ?? null });
+          } else {
+            const approval = await claimApproval(tx, {
+              id: data.discount?.approvalId ?? "",
+              kind: "DISCOUNT",
+              saleRequestId: data.requestId,
+              fingerprint: print,
+              field: "discount.approvalId",
+              missing: "A manager or admin must approve this discount before the sale can be completed.",
+            });
+            spent.push(approval.id);
+          }
+        }
+
         // Credit: the customer's "turn" comes before any product's. Their balance goes up in one
         // statement, and the limit is checked against the balance that statement left.
         let owedAfter: Decimal | null = null;
         let overLimit = false;
+        let overLimitAllowedBy = context.actor.name;
         if (customer && credit.greaterThan(0)) {
           const account = await tx.customer.update({
             where: { id: customer.id },
@@ -531,7 +488,21 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           }
           const limit = new Decimal(account.creditLimit.toFixed(2));
           if (owedAfter.greaterThan(limit)) {
-            if (!can(context, "customer.setCreditLimit")) {
+            const print = creditFingerprint(data.requestId, customer.id, credit);
+            if (can(context, "customer.setCreditLimit")) {
+              own.push({ kind: "CREDIT_OVER_LIMIT", fingerprint: print, amount: credit, basis: owedAfter, reason: null });
+            } else if (data.creditApprovalId) {
+              const approval = await claimApproval(tx, {
+                id: data.creditApprovalId,
+                kind: "CREDIT_OVER_LIMIT",
+                saleRequestId: data.requestId,
+                fingerprint: print,
+                field: "creditAmount",
+                missing: "",
+              });
+              spent.push(approval.id);
+              overLimitAllowedBy = approval.approvedByName;
+            } else {
               const room = Decimal.max(limit.minus(owedBefore), 0);
               throw new ValidationError(NOTHING_SOLD, {
                 creditAmount:
@@ -582,14 +553,21 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           throw new ValidationError("Nothing was sold: there is not enough stock.", short);
         }
 
+        // The discount is shared out over the lines, so each line knows what was really charged for it.
+        const shares = shareDiscount(
+          checked.map((line) => line.lineTotal),
+          discount,
+        );
         const lines = checked.map((line, position) => {
           const lineRate = line.taxable ? rate : new Decimal(0);
           const baseUnitCost = costOf.get(line.productId)!;
           return {
             line,
             lineNumber: position + 1,
+            discountAmount: shares[position],
             taxRatePercent: lineRate,
-            taxAmount: taxIncludedIn(line.lineTotal, lineRate),
+            // Tax is what is inside the amount actually charged.
+            taxAmount: taxIncludedIn(line.lineTotal.minus(shares[position]), lineRate),
             baseUnitCost,
             lineCost: roundMoney(line.baseQuantity.times(baseUnitCost)),
           };
@@ -604,6 +582,9 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             sequence,
             receiptNumber,
             total: moneyToString(total),
+            discountAmount: moneyToString(discount),
+            discountPercent: discountPercent ? discountPercent.toFixed(2) : null,
+            discountReason: discount.greaterThan(0) ? (data.discount?.reason ?? null) : null,
             taxRatePercent: rate.toFixed(2),
             taxTotal: moneyToString(sumMoney(lines.map((entry) => entry.taxAmount))),
             costTotal: moneyToString(sumMoney(lines.map((entry) => entry.lineCost))),
@@ -627,7 +608,7 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
               balanceAfter: moneyToString(owedAfter),
               saleId: sale.id,
               documentNumber: receiptNumber,
-              note: overLimit ? `Over the credit limit, allowed by ${context.actor.name}.` : null,
+              note: overLimit ? `Over the credit limit, allowed by ${overLimitAllowedBy}.` : null,
               createdByUserId: context.actor.userId,
               createdByName: context.actor.name,
             },
@@ -637,7 +618,8 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
               data: activityRow(context, {
                 action: "sale.credit_over_limit",
                 summary:
-                  `${context.actor.name} let ${customer.name} go over their credit limit on sale ${receiptNumber}: ` +
+                  `${overLimitAllowedBy} let ${customer.name} go over their credit limit on sale ${receiptNumber}` +
+                  `${overLimitAllowedBy === context.actor.name ? "" : ` (sold by ${context.actor.name})`}: ` +
                   `${formatNaira(credit)} on credit, now owing ${formatNaira(owedAfter)}.`,
                 targetType: "customer",
                 targetId: customer.id,
@@ -659,6 +641,7 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             baseQuantity: quantityToString(line.baseQuantity),
             unitPrice: moneyToString(line.unitPrice),
             lineTotal: moneyToString(line.lineTotal),
+            discountAmount: moneyToString(extra.discountAmount),
             taxable: line.taxable,
             taxRatePercent: extra.taxRatePercent.toFixed(2),
             taxAmount: moneyToString(extra.taxAmount),
@@ -685,6 +668,34 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             userName: context.actor.name,
           })),
         });
+        // Approvals the seller gave themselves are recorded like any other, and every approval is
+        // marked as used on this sale (one use each, kept by a unique index).
+        const expiresAt = new Date(Date.now() + APPROVAL_MINUTES * 60_000);
+        for (const approval of own) {
+          const created = await tx.approval.create({
+            data: {
+              businessId,
+              kind: approval.kind,
+              method: "OWN_SALE",
+              saleRequestId: data.requestId,
+              fingerprint: approval.fingerprint,
+              amount: moneyToString(approval.amount),
+              basis: moneyToString(approval.basis),
+              reason: approval.reason,
+              requestedByUserId: context.actor.userId,
+              requestedByName: context.actor.name,
+              approvedByUserId: context.actor.userId,
+              approvedByName: context.actor.name,
+              expiresAt,
+            },
+            select: { id: true },
+          });
+          spent.push(created.id);
+        }
+        if (spent.length > 0) {
+          await tx.approvalUse.createMany({ data: spent.map((approvalId) => ({ businessId, approvalId, saleId: sale.id })) });
+        }
+
         // The payments are written last: if they cannot be saved, nothing of the sale is.
         if (payments.length > 0) {
           await tx.payment.createMany({
@@ -867,6 +878,12 @@ export type SaleDetail = {
   }[];
   /** Cash handed back to the customer in all. */
   change: string;
+  /** What the items came to before any discount; the discount; and who approved it. */
+  subtotal: string;
+  discountAmount: string;
+  discountPercent: string | null;
+  discountReason: string | null;
+  discountApprovedBy: string | null;
   /** Who it was sold to, as they were named then; null for a walk-in. */
   customer: { id: string; name: string; phone: string } | null;
   /** The part of the total put on the customer's account, and what they owed straight afterwards. */
@@ -909,6 +926,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         payments: { orderBy: [{ kind: "asc" }, { methodName: "asc" }] },
         cancellation: { select: { note: true, cancelledByName: true, createdAt: true } },
         accountEntries: { where: { type: "CREDIT_SALE" }, select: { balanceAfter: true } },
+        approvalUses: { select: { approval: { select: { kind: true, approvedByName: true } } } },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
       },
@@ -936,6 +954,11 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
       reference: payment.reference,
     })),
     change: moneyToString(sumMoney(row.payments.map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
+    subtotal: moneyToString(new Decimal(row.total.toFixed(2)).plus(row.discountAmount.toFixed(2))),
+    discountAmount: row.discountAmount.toFixed(2),
+    discountPercent: row.discountPercent?.toFixed(2) ?? null,
+    discountReason: row.discountReason,
+    discountApprovedBy: row.approvalUses.find((use) => use.approval.kind === "DISCOUNT")?.approval.approvedByName ?? null,
     customer: row.customerId ? { id: row.customerId, name: row.customerName ?? "", phone: row.customerPhone ?? "" } : null,
     creditAmount: row.creditAmount.toFixed(2),
     owedAfter: row.accountEntries[0]?.balanceAfter.toFixed(2) ?? null,

@@ -268,9 +268,10 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q16 (advance deposits) and Q21 (customers with no limit) before this starts.
 
-### M11 · Extra discounts with manager approval
+### M11 · Extra discounts with manager approval (built 2026-10-08; waiting for the owner's check)
 **Goal:** Requirement C11, enforced by the server.
-- Discount per line or per sale, entered as a percentage or a Naira amount (C28), with reason. Approval at the cashier's screen (manager credentials) or remotely from the manager's own computer.
+- Discount on the whole sale, entered as a percentage or a Naira amount (C28), with reason. Approval at the cashier's screen (manager's own username and password). *Not built, for the owner to decide (C56): discounts on single lines, and approval from the manager's own computer.*
+- The same approval at the screen lets a customer go over their credit limit (owed from M10).
 - Approval bound to the sale ID and exact discount; single use; expires after 10 minutes.
 - Discounts & approvals report.
 
@@ -280,6 +281,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🧑 The report shows cashier, manager, reason, amount, time.
 - 🤖 An approval cannot be reused on a second sale, used after expiry, granted by a cashier account, or granted by a manager of another business.
 - 🤖 A discounted sale sent straight to the server without a valid approval is refused.
+- 🤖 The discount is shared over the lines to the kobo and tax is worked out on what was charged; five wrong tries stop further tries for ten minutes; approvals cannot be changed or removed in the database.
 
 ### M12 · Offline checkout  ← moved here because outages are frequent
 **Goal:** Requirement C13/C22 — keep selling when the internet drops. Must be finished before any business goes live.

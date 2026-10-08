@@ -175,3 +175,35 @@ describe("correctedAverageCost", () => {
     expect(await corrected({ quantityNow: "20", averageNow: "1", oldQuantity: "10", oldCost: "5000", newQuantity: "0", newCost: "0" })).toBe("0.0000");
   });
 });
+
+describe("shareDiscount", () => {
+  const shares = async (totals: string[], discount: string) => {
+    const { shareDiscount } = await import("./money");
+    return shareDiscount(totals.map((total) => new Decimal(total)), new Decimal(discount)).map((share) => share.toFixed(2));
+  };
+
+  it("shares a discount in proportion to each line, and the shares add up exactly", async () => {
+    expect(await shares(["6000", "4000"], "500")).toEqual(["300.00", "200.00"]);
+    // ₦100 over three equal lines: 33.33 + 33.33 + 33.34.
+    expect(await shares(["1000", "1000", "1000"], "100")).toEqual(["33.33", "33.33", "33.34"]);
+    expect(await shares(["42000", "1500"], "0.01")).toEqual(["0.01", "0.00"]);
+    expect(await shares(["999.99", "0.01"], "1000")).toEqual(["999.99", "0.01"]);
+  });
+
+  it("gives nothing to a line of zero, never more than a line's own total, and nothing at all for no discount", async () => {
+    expect(await shares(["500", "0", "500"], "100")).toEqual(["50.00", "0.00", "50.00"]);
+    expect(await shares(["500", "500", "0"], "1000")).toEqual(["500.00", "500.00", "0.00"]);
+    expect(await shares(["300", "700"], "0")).toEqual(["0.00", "0.00"]);
+  });
+
+  it("refuses a discount that is negative or more than the lines", async () => {
+    await expect(shares(["100"], "100.01")).rejects.toThrow();
+    await expect(shares(["100"], "-1")).rejects.toThrow();
+  });
+
+  it("percentOf rounds to the kobo", async () => {
+    const { percentOf } = await import("./money");
+    expect(percentOf(new Decimal("10000"), new Decimal("5")).toFixed(2)).toBe("500.00");
+    expect(percentOf(new Decimal("3126.25"), new Decimal("7.5")).toFixed(2)).toBe("234.47");
+  });
+});

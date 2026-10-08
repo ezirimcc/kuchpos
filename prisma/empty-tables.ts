@@ -14,6 +14,8 @@ const TABLES = [
   "document_counter",
   "till_session_recount",
   "till_session_close",
+  "approval_use",
+  "approval",
   "repayment_allocation",
   "customer_account_entry",
   "repayment",

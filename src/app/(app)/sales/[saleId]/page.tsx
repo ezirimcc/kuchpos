@@ -75,6 +75,14 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
         </Alert>
       )}
 
+      {sale.discountAmount !== "0.00" && (
+        <Alert data-testid="discount-notice">
+          A discount of {nairaFromText(sale.discountAmount)}
+          {sale.discountPercent ? ` (${plainNumber(sale.discountPercent)}%)` : ""} was taken off {nairaFromText(sale.subtotal)}
+          {sale.discountApprovedBy ? `, approved by ${sale.discountApprovedBy}` : ""}. Reason given: {sale.discountReason}
+        </Alert>
+      )}
+
       <ReceiptWithActions sale={sale} justSold={justSold} canSell={can(context, "sale.create")} />
 
       <Table>

@@ -86,6 +86,8 @@ describe("database update tool for the hosting server", () => {
       "credit_limit_change",
       "repayment",
       "repayment_allocation",
+      "approval",
+      "approval_use",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -141,6 +143,9 @@ describe("database update tool for the hosting server", () => {
         "customer_account_entry_amounts_check",
         "repayment_amounts_check",
         "repayment_allocation_amount_check",
+        "sale_discount_check",
+        "sale_line_discount_check",
+        "approval_amounts_check",
       ]),
     );
   });

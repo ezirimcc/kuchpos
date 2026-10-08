@@ -16,6 +16,7 @@ const SCREENS = [
   "/products/categories",
   "/sell",
   "/sales",
+  "/sales/discounts",
   "/customers",
   "/customers/new",
   "/customers/00000000-0000-4000-8000-000000000000",

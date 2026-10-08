@@ -207,7 +207,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q14 (receipt contents) before this starts. *(Answered 2026-10-07: C44, C45.)*
 
-### M9 · Payment methods, split payments, till sessions — built 2026-10-07, awaiting owner's check
+### M9 · Payment methods, split payments, till sessions ✅ (verified 2026-10-08, tag `m9`)
 **Goal:** Every way a customer pays is recorded correctly.
 - Payment methods managed by the admin (C46): a name and a kind (cash, bank transfer, POS/card); "Cash" always exists; used methods are switched off, not deleted. Chosen at checkout, with an optional reference for transfer and POS. Split across methods.
 - Till sessions: open with float, close with counted cash, show expected vs counted.

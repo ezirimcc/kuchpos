@@ -407,6 +407,12 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => sales.getSale(context, { saleId: saleInB }),
   },
   {
+    name: "sales.cancelSale",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => sales.cancelSale(context, { saleId: saleInA, note: "Customer changed his mind" }),
+    runAgainstB: (context) => sales.cancelSale(context, { saleId: saleInB, note: "Customer changed his mind" }),
+  },
+  {
     name: "sales.recordReceiptPrint",
     allowed: SALES_VIEWERS,
     run: (context) => sales.recordReceiptPrint(context, { saleId: saleInA }),

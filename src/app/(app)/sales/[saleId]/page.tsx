@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
+import { Alert } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Decimal } from "@/lib/decimal";
 import { formatDateTime, nairaFromText, plainNumber } from "@/lib/format";
@@ -11,6 +13,7 @@ import { requirePageContext } from "@/server/auth/request";
 import { getSale } from "@/server/business/sales";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { can } from "@/server/permissions";
+import { CancelSaleForm } from "./cancel-sale-form";
 import { ReceiptWithActions } from "./receipt-actions";
 
 export const metadata: Metadata = { title: "Sale — KuchPos" };
@@ -38,9 +41,21 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
       </Link>
       <PageHeader
         icon={ReceiptText}
-        title={`Sale ${sale.receiptNumber}`}
+        title={
+          <span className="flex flex-wrap items-center gap-2">
+            Sale {sale.receiptNumber}
+            {sale.cancellation && <Badge variant="destructive">Cancelled</Badge>}
+          </span>
+        }
         description={`${formatDateTime(sale.createdAt)} · served by ${sale.cashierName} · a saved sale is never changed.`}
       />
+
+      {sale.cancellation && (
+        <Alert variant="destructive" data-testid="cancelled-notice">
+          Cancelled by {sale.cancellation.cancelledByName} on {formatDateTime(sale.cancellation.createdAt)}. The goods went
+          back into stock and the payment was refunded. Reason given: {sale.cancellation.note}
+        </Alert>
+      )}
 
       <ReceiptWithActions sale={sale} justSold={justSold} canSell={can(context, "sale.create")} />
 
@@ -71,7 +86,9 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
         </TableBody>
       </Table>
 
-      {sale.costTotal !== null && (
+      {sale.canCancel && <CancelSaleForm saleId={sale.id} refunds={sale.payments.map((payment) => ({ methodName: payment.methodName, amount: payment.amount }))} />}
+
+      {sale.costTotal !== null && !sale.cancellation && (
         <p className="px-2 text-right text-sm text-muted-foreground" data-testid="sale-profit">
           Cost of these goods {nairaFromText(sale.costTotal)} · profit{" "}
           <span className="font-semibold text-foreground">{formatNaira(new Decimal(sale.total).minus(sale.costTotal))}</span>

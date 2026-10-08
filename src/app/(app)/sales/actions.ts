@@ -2,7 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { runAction } from "@/server/action";
-import { postSale, recordReceiptPrint, type SaleResult } from "@/server/business/sales";
+import { cancelSale, postSale, recordReceiptPrint, type SaleResult } from "@/server/business/sales";
 
 /** Saves a sale sent whole from the checkout screen. On success the answer carries the saved sale. */
 export async function postSaleAction(input: unknown): Promise<FormState & { sale?: SaleResult }> {
@@ -20,4 +20,9 @@ export async function recordReceiptPrintAction(saleId: string): Promise<FormStat
     reprint = (await recordReceiptPrint(context, { saleId })).reprint;
   });
   return result.status === "success" ? { ...result, reprint } : result;
+}
+
+/** Cancels a whole sale: goods back to stock, payments refunded, the sale marked as cancelled. */
+export async function cancelSaleAction(input: unknown): Promise<FormState> {
+  return runAction({ success: "Sale cancelled." }, (context) => cancelSale(context, input));
 }

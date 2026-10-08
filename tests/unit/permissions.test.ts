@@ -38,6 +38,7 @@ const SPEC_TABLE: Array<{ row: string; permission: Permission; allowed: Business
   { row: "Sell a line directly from the Storeroom (P7)", permission: "sale.fromStoreroom", allowed: [A, M] },
   { row: "Request an extra discount", permission: "discount.request", allowed: [A, M, C] },
   { row: "Approve an extra discount", permission: "discount.approve", allowed: [A, M] },
+  { row: "Cancel a whole sale on the same day, with a note (C48)", permission: "sale.cancel", allowed: [A, M] },
   { row: "Void a sale / process a return — request", permission: "return.request", allowed: [A, M, C] },
   { row: "Void a sale / process a return — without needing approval", permission: "return.approve", allowed: [A, M] },
   { row: "Open and close own till session", permission: "till.operateOwn", allowed: [A, M, C] },

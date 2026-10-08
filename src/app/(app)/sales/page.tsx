@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { FilterDate, LiveSearch } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
 import { Pagination } from "@/components/pagination";
+import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, nairaFromText } from "@/lib/format";
@@ -77,6 +78,11 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
                     <Link href={`/sales/${sale.id}`} className="text-link underline-offset-4 hover:underline">
                       {sale.receiptNumber}
                     </Link>
+                    {sale.cancelled && (
+                      <Badge variant="destructive" className="ml-2">
+                        Cancelled
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">{formatDateTime(sale.createdAt)}</TableCell>
                   <TableCell>
@@ -86,13 +92,15 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{sale.cashierName}</TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{nairaFromText(sale.total)}</TableCell>
+                  <TableCell className={sale.cancelled ? "text-right text-muted-foreground tabular-nums line-through" : "text-right font-medium tabular-nums"}>
+                    {nairaFromText(sale.total)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
           <p className="px-2 text-right text-sm text-muted-foreground">
-            Total of {filtered ? "the sales that match" : "all these sales"}{" "}
+            Total of {filtered ? "the sales that match" : "all these sales"}, leaving out cancelled ones{" "}
             <span className="ml-2 text-2xl font-semibold text-foreground tabular-nums" data-testid="sales-sum">
               {nairaFromText(list.sumOfTotals)}
             </span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { Pause, Play, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
@@ -16,6 +16,7 @@ import { nairaFromText, plainNumber } from "@/lib/format";
 import { formatNaira, lineTotal, moneyToString, sumMoney } from "@/lib/money";
 import type { CheckoutCatalogue, CheckoutProduct } from "@/server/business/sales";
 import { postSaleAction } from "../sales/actions";
+import { type HeldSale, holdSale, MAX_HELD_SALES, removeHeldSale, useHeldSales } from "./held-sales";
 
 type CartLine = { key: string; productId: string; unitId: string; quantity: string; fromStoreroom: boolean };
 
@@ -35,7 +36,7 @@ const isMoney = (text: string) => /^\d+(\.\d{1,2})?$/.test(text.trim());
  * was given — for the cashier's eyes only: the server works it all out again when the sale
  * is sent, and refuses the sale if anything differs.
  */
-export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
+export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogue; cashierId: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // The sale's unique ID, made up here before anything is sent: pressing the button many
@@ -57,6 +58,7 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
   ]);
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const held = useHeldSales(cashierId);
   const searchBox = useRef<HTMLInputElement>(null);
   const cashBox = useRef<HTMLInputElement>(null);
   const focusQuantityOf = useRef<string | null>(null);
@@ -124,6 +126,58 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
       focusQuantityOf.current = key;
       return [...current, { key, productId: product.id, unitId: unit.id, quantity: "1", fromStoreroom: false }];
     });
+  }
+
+  const freshPayment = (): PaymentPart[] => [
+    { key: crypto.randomUUID(), methodId: catalogue.paymentMethods[0]?.id ?? "", amount: "", tendered: "", reference: "" },
+  ];
+
+  /** Parks the sale in progress so another customer can be served. Nothing is saved on the server. */
+  function hold(): boolean {
+    if (lines.length === 0) return true;
+    const kept = holdSale(
+      cashierId,
+      lines.map(({ productId, unitId, quantity, fromStoreroom }) => ({ productId, unitId, quantity, fromStoreroom })),
+    );
+    if (!kept) {
+      setMessage(`${MAX_HELD_SALES} sales are already on hold. Complete or discard one of them first.`);
+      return false;
+    }
+    setLines([]);
+    setParts(freshPayment());
+    setMessage(null);
+    setErrors({});
+    searchBox.current?.focus();
+    return true;
+  }
+
+  /** Brings a held sale back. If a sale is in progress, that one is put on hold in its place. */
+  function resume(sale: HeldSale) {
+    // Taken off the list first, so that there is room to hold the sale in progress.
+    removeHeldSale(cashierId, sale.id);
+    if (!hold()) {
+      holdSale(cashierId, sale.lines);
+      return;
+    }
+    setLines(sale.lines.map((line) => ({ ...line, key: crypto.randomUUID() })));
+    setParts(freshPayment());
+    searchBox.current?.focus();
+  }
+
+  /** What a held sale holds, in words and in money at today's prices. */
+  function describeHeld(sale: HeldSale) {
+    let total: Decimal | null = new Decimal(0);
+    const items = sale.lines.map((line) => {
+      const product = productById.get(line.productId);
+      const unit = product?.units.find((candidate) => candidate.id === line.unitId);
+      if (!product || !unit || !isQuantity(line.quantity)) {
+        total = null;
+        return "something no longer on sale";
+      }
+      if (total) total = total.plus(lineTotal(new Decimal(line.quantity.trim()), new Decimal(unit.price)));
+      return `${plainNumber(line.quantity.trim())} ${unit.name} ${product.name}`;
+    });
+    return { items: items.join(", "), total: total as Decimal | null };
   }
 
   function change(key: string, patch: Partial<CartLine>) {
@@ -412,8 +466,57 @@ export function Checkout({ catalogue }: { catalogue: CheckoutCatalogue }) {
                 </div>
               );
             })}
+            {view.length > 0 && (
+              <div className="border-t pt-3">
+                <Button type="button" variant="outline" size="sm" onClick={hold} data-testid="hold-sale">
+                  <Pause className="size-4" aria-hidden /> Put this sale on hold
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
+
+        {held.length > 0 && (
+          <Card>
+            <CardContent className="flex flex-col gap-1" data-testid="held-sales">
+              <div className="pb-2">
+                <h2 className="text-base font-semibold">
+                  Sales on hold ({held.length})
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Kept on this computer for you only. Nothing is sold, and no stock is set aside, until a sale is completed.
+                </p>
+              </div>
+              {held.map((sale, index) => {
+                const { items, total: heldTotal } = describeHeld(sale);
+                return (
+                  <div key={sale.id} data-testid={`held-sale-${index + 1}`} className="flex flex-wrap items-center gap-3 border-t py-2.5">
+                    <div className="min-w-48 flex-1">
+                      <p className="text-sm font-medium">{items}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Held at {new Date(sale.heldAt).toLocaleTimeString("en-NG", { hour: "numeric", minute: "2-digit", timeZone: "Africa/Lagos" })}
+                      </p>
+                    </div>
+                    <p className="font-semibold tabular-nums">{heldTotal ? formatNaira(heldTotal) : "—"}</p>
+                    <Button type="button" size="sm" onClick={() => resume(sale)}>
+                      <Play className="size-4" aria-hidden /> Resume
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeHeldSale(cashierId, sale.id)}
+                      aria-label={`Discard held sale ${index + 1}`}
+                      title="Discard this held sale"
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                    </Button>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <Card className="xl:sticky xl:top-3">

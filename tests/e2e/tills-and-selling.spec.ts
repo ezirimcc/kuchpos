@@ -409,6 +409,112 @@ test("a cashier sees only their own sales; an accountant sees all but cannot sel
   await expect(page.getByText(/No product on sale matches/)).toBeVisible();
 });
 
+test("a cashier puts a sale on hold, serves someone else, and picks the held sale up again", async ({ page }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await expect(page.getByTestId("held-sales")).toHaveCount(0);
+
+  // First customer: two sachets… and then they go to fetch their money.
+  await addToSale(page, "tomato");
+  await page.keyboard.type("2");
+  await expect(page.getByTestId("cart-total")).toHaveText("₦1,000.00");
+  await page.getByTestId("hold-sale").click();
+  await expect(page.getByTestId("cart-empty")).toBeVisible();
+  await expect(page.getByTestId("held-sale-1")).toContainText("2 sachet Tomato Seed Sachet");
+  await expect(page.getByTestId("held-sale-1")).toContainText("₦1,000.00");
+
+  // Second customer is served in the meantime, paying by transfer.
+  await addToSale(page, "tomato");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦500.00");
+  await expect(page.getByTestId("receipt")).toContainText("Paid: Bank transfer (sample)");
+  // A cashier cannot cancel a sale.
+  await expect(page.getByRole("button", { name: "Cancel this sale" })).toHaveCount(0);
+
+  // The held sale is still there — also after the page is loaded afresh.
+  await page.getByTestId("new-sale").click();
+  await expect(page.getByTestId("held-sale-1")).toBeVisible();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("held-sale-1")).toContainText("2 sachet Tomato Seed Sachet");
+
+  await page.getByTestId("held-sale-1").getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByTestId("held-sales")).toHaveCount(0);
+  await expect(page.getByTestId("cart-line-1").getByLabel(/^How many/)).toHaveValue("2");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦1,000.00");
+
+  // Holding while another sale is in progress swaps the two; and what one person holds, another does not see.
+  await page.getByTestId("new-sale").click();
+  await addToSale(page, "npk");
+  await page.getByTestId("hold-sale").click();
+  await addToSale(page, "tomato");
+  await page.getByTestId("held-sale-1").getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByTestId("cart-line-1")).toContainText("NPK 15-15-15 Fertilizer");
+  await expect(page.getByTestId("held-sale-1")).toContainText("Tomato Seed Sachet");
+  await signOut(page);
+
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await openCheckout(page);
+  await expect(page.getByTestId("cart-empty")).toBeVisible();
+  await expect(page.getByTestId("held-sales")).toHaveCount(0);
+  await signOut(page);
+
+  // Back as the cashier, on the same computer: the held sale is waiting. It is discarded.
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await expect(page.getByTestId("held-sale-1")).toContainText("Tomato Seed Sachet");
+  await page.getByRole("button", { name: "Discard held sale 1" }).click();
+  await expect(page.getByTestId("held-sales")).toHaveCount(0);
+});
+
+test("a manager cancels a sale with a note: the goods are back, the cash is refunded, and the sale says Cancelled", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  const shelf = await stockOf(page, "Tomato Seed Sachet", "Shelf");
+
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.getByRole("button", { name: "Exact" }).click();
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦500.00");
+  const saleUrl = page.url().replace("?sold=1", "");
+  expect(await stockOf(page, "Tomato Seed Sachet", "Shelf")).toBe(shelf - 1);
+
+  await gotoReady(page, saleUrl);
+  await page.getByRole("button", { name: "Cancel this sale" }).click();
+  const form = page.getByTestId("cancel-sale-form");
+  await expect(form).toContainText("₦500.00 (Cash)");
+  await form.getByLabel("Why is it being cancelled?").fill("no");
+  await form.getByRole("button", { name: "Cancel the sale and refund" }).click();
+  await expect(form.getByText("Say why the sale is being cancelled.").first()).toBeVisible();
+  await form.getByLabel("Why is it being cancelled?").fill("The customer changed his mind");
+  await form.getByRole("button", { name: "Cancel the sale and refund" }).click();
+
+  await expect(page.getByTestId("cancelled-notice")).toContainText("Cancelled by Green Valley Manager");
+  await expect(page.getByTestId("cancelled-notice")).toContainText("The customer changed his mind");
+  await expect(page.getByTestId("cancelled-mark")).toBeVisible();
+  await expect(page.getByTestId("cancel-sale-form")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Cancel this sale" })).toHaveCount(0);
+
+  expect(await stockOf(page, "Tomato Seed Sachet", "Shelf")).toBe(shelf);
+  await page.goto("/sales");
+  await expect(page.getByRole("row", { name: /Cancelled/ })).toHaveCount(1);
+  // The till: ₦500 in, ₦500 back out, so what should be in the drawer is what it was.
+  await page.goto("/till");
+  await chooseT1(page);
+  await expect(page.getByTestId("till-expected-now")).toHaveText("₦60,626.25");
+  await page.getByRole("link", { name: /See this session/ }).click();
+  await expect(page.getByTestId("till-cash-refunded")).toHaveText("−₦500.00");
+  await page.goto("/activity");
+  await expect(page.getByText(/Green Valley Manager cancelled sale T1-\d+ \(₦500.00, sold by Green Valley Manager\)/)).toBeVisible();
+});
+
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");
@@ -468,7 +574,9 @@ test("the cashier closes the till with a count and is not told the result; the m
   await expect(page.getByTestId("till-row-1")).toContainText("Green Valley Cashier");
   await page.getByTestId("till-row-1").getByRole("link", { name: "TS-000001" }).click();
   await expect(page.getByTestId("till-expected")).toHaveText("₦60,626.25");
-  await expect(page.getByTestId("till-method-Cash")).toContainText("₦55,626.25");
+  // Cash taken includes the ₦500 sale that was cancelled; its refund is shown on its own line.
+  await expect(page.getByTestId("till-method-Cash")).toContainText("₦56,126.25");
+  await expect(page.getByTestId("till-cash-refunded")).toHaveText("−₦500.00");
   // The accountant reviews, but does not count cash.
   await expect(page.getByTestId("recount-till-form")).toHaveCount(0);
   await page.goto("/activity");

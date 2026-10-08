@@ -80,6 +80,8 @@ describe("database update tool for the hosting server", () => {
       "till_session",
       "till_session_close",
       "till_session_recount",
+      "sale_cancellation",
+      "refund",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -127,6 +129,8 @@ describe("database update tool for the hosting server", () => {
         "till_session_float_check",
         "till_session_close_amounts_check",
         "till_session_recount_amounts_check",
+        "sale_cancellation_note_check",
+        "refund_amounts_check",
       ]),
     );
   });

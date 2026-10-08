@@ -48,6 +48,8 @@ const ADD_ONLY_TABLES = [
   "till_session",
   "till_session_close",
   "till_session_recount",
+  "sale_cancellation",
+  "refund",
 ];
 
 /**
@@ -95,6 +97,8 @@ const REQUIRED_CHECKS = [
   "till_session_float_check",
   "till_session_close_amounts_check",
   "till_session_recount_amounts_check",
+  "sale_cancellation_note_check",
+  "refund_amounts_check",
 ];
 
 function readAppVersion(): string {

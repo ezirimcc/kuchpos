@@ -20,7 +20,7 @@ export default async function SellPage() {
         title="Sell"
         description="Find a product, set the unit and how many, take the payment. F2 jumps to the search box, F4 to the payment box."
       />
-      <Checkout catalogue={catalogue} />
+      <Checkout catalogue={catalogue} cashierId={context.actor.userId} />
     </div>
   );
 }

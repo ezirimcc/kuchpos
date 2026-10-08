@@ -28,6 +28,12 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
         {sale.business.taxNumber && <p>TIN: {sale.business.taxNumber}</p>}
       </div>
 
+      {sale.cancellation && (
+        <p className="border-y-2 border-black py-0.5 text-center text-[1.15em] font-bold tracking-widest" data-testid="cancelled-mark">
+          *** CANCELLED ***
+        </p>
+      )}
+
       {reprint && (
         <p className="border-y border-dashed border-black py-0.5 text-center font-bold tracking-widest" data-testid="reprint-mark">
           *** REPRINT ***

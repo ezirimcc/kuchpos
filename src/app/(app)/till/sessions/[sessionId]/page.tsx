@@ -38,7 +38,11 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
     ["Checkout", session.terminalCode],
     ["Opened", `${formatDateTime(session.openedAt)} · ${session.openedByName}`],
     ["Closed", session.closedAt ? `${formatDateTime(session.closedAt)} · ${session.closedByName}` : "Still open"],
-    ["Sales", `${session.saleCount} · ${nairaFromText(session.salesTotal)}`],
+    [
+      "Sales",
+      `${session.saleCount} · ${nairaFromText(session.salesTotal)}` +
+        (session.cancelledCount > 0 ? ` (and ${session.cancelledCount} cancelled)` : ""),
+    ],
   ];
 
   return (
@@ -124,9 +128,15 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
                 {session.floatBreakdown.join(" · ")}
               </p>
             )}
+            {session.cashRefunded !== null && session.cashRefunded !== "0.00" && (
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Cash refunded for cancelled sales</span>
+                <span data-testid="till-cash-refunded">−{nairaFromText(session.cashRefunded)}</span>
+              </p>
+            )}
             {reviewer && (
               <p className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Should be there (float + cash sales − change)</span>
+                <span className="text-muted-foreground">Should be there (float + cash sales − change − refunds)</span>
                 <span data-testid="till-expected">{nairaFromText(session.expectedCash ?? "0.00")}</span>
               </p>
             )}

@@ -43,7 +43,7 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
   const seesAllSales = can(context, "report.sales.view");
   const seesSales = seesAllSales || can(context, "report.ownShift.view");
 
-  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday, collected] = await Promise.all([
+  const [products, categories, business, staff, activityToday, recentActivity, adjustmentsWaiting, salesToday, collected, refunded] = await Promise.all([
     db.product.count({ where: { deactivatedAt: null } }),
     db.category.count(),
     db.business.findFirst({ select: { taxRatePercent: true } }),
@@ -59,7 +59,11 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     can(context, "stock.adjust.approve") ? db.stockAdjustment.count({ where: { decision: null } }) : null,
     seesSales
       ? db.sale.aggregate({
-          where: { createdAt: { gte: startOfToday }, ...(seesAllSales ? {} : { cashierUserId: context.actor.userId }) },
+          where: {
+            createdAt: { gte: startOfToday },
+            cancellation: null,
+            ...(seesAllSales ? {} : { cashierUserId: context.actor.userId }),
+          },
           _count: { _all: true },
           _sum: { total: true },
         })
@@ -67,15 +71,19 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     can(context, "report.collections.view")
       ? db.payment.groupBy({ by: ["kind"], where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } })
       : null,
+    can(context, "report.collections.view")
+      ? db.refund.groupBy({ by: ["kind"], where: { createdAt: { gte: startOfToday } }, _sum: { amount: true } })
+      : null,
   ]);
 
+  // Money received today less money given back today for cancelled sales.
+  const net = (kinds: (kind: string) => boolean) =>
+    sumMoney((collected ?? []).filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))).minus(
+      sumMoney((refunded ?? []).filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))),
+    );
+
   const collectedToday = collected
-    ? {
-        total: moneyToString(sumMoney(collected.map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0")))),
-        cash: moneyToString(
-          sumMoney(collected.filter((group) => group.kind === "CASH").map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))),
-        ),
-      }
+    ? { total: moneyToString(net(() => true)), cash: moneyToString(net((kind) => kind === "CASH")) }
     : null;
 
   return {

@@ -2,8 +2,8 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart } from "@/lib/format";
-import { formatNaira, lineTotal, moneyToString, parseMoney, roundMoney, sumMoney, taxIncludedIn } from "@/lib/money";
+import { plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
+import { formatNaira, lineTotal, moneyToString, movingAverageCost, parseMoney, roundMoney, sumMoney, taxIncludedIn } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { parseQuantity, quantityToString, toBaseQuantity } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
@@ -637,6 +637,8 @@ export type SaleSummary = {
   /** The first few products, for recognising the sale in the list. */
   products: string[];
   total: string;
+  /** True when the sale was cancelled; it is then left out of the sum of totals. */
+  cancelled: boolean;
 };
 
 const dayFilter = z
@@ -654,8 +656,8 @@ const listSchema = z.object({
 });
 
 /**
- * One page of sales, newest first, with the total of everything that matches.
- * A cashier is shown only their own sales.
+ * One page of sales, newest first, with the total of everything that matches — cancelled
+ * sales are listed but not counted in that total. A cashier is shown only their own sales.
  */
 export async function listSales(
   context: AppContext,
@@ -683,7 +685,7 @@ export async function listSales(
   const db = businessDb(context);
   const [total, sum, rows] = await Promise.all([
     db.sale.count({ where }),
-    db.sale.aggregate({ where, _sum: { total: true } }),
+    db.sale.aggregate({ where: { ...where, cancellation: null }, _sum: { total: true } }),
     db.sale.findMany({
       where,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -695,6 +697,7 @@ export async function listSales(
         createdAt: true,
         cashierName: true,
         total: true,
+        cancellation: { select: { id: true } },
         lines: { orderBy: { lineNumber: "asc" }, take: 3, select: { productName: true } },
         _count: { select: { lines: true } },
       },
@@ -711,6 +714,7 @@ export async function listSales(
       lineCount: row._count.lines,
       products: row.lines.map((line) => line.productName),
       total: row.total.toFixed(2),
+      cancelled: row.cancellation !== null,
     })),
     ...paged(total, page),
   };
@@ -740,6 +744,10 @@ export type SaleDetail = {
   }[];
   /** Cash handed back to the customer in all. */
   change: string;
+  /** Set when the sale was cancelled: who, when and why. The sale itself is never changed. */
+  cancellation: { note: string; cancelledByName: string; createdAt: Date } | null;
+  /** True when this person may cancel it now: allowed to, not yet cancelled, and made today. */
+  canCancel: boolean;
   /** How many times the receipt has been printed so far. */
   printCount: number;
   /** What is printed around the sale: taken from the business's settings as they are now. */
@@ -771,6 +779,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
       include: {
         lines: { orderBy: { lineNumber: "asc" } },
         payments: { orderBy: [{ kind: "asc" }, { methodName: "asc" }] },
+        cancellation: { select: { note: true, cancelledByName: true, createdAt: true } },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
       },
@@ -798,6 +807,8 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
       reference: payment.reference,
     })),
     change: moneyToString(sumMoney(row.payments.map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
+    cancellation: row.cancellation,
+    canCancel: can(context, "sale.cancel") && row.cancellation === null && shopToday(row.createdAt) === shopToday(),
     printCount: row._count.receiptPrints,
     business,
     lines: row.lines.map((line) => ({
@@ -847,4 +858,200 @@ export async function recordReceiptPrint(context: AppContext, input: unknown): P
     }
   });
   return { reprint };
+}
+
+// ---------------------------------------------------------------------------
+// Cancelling a sale
+// ---------------------------------------------------------------------------
+
+const cancelSchema = z.object({
+  saleId: z.string().uuid("That sale could not be found."),
+  note: z.string().trim().min(5, "Say why the sale is being cancelled.").max(300, "The note is too long (300 characters at most)."),
+});
+
+export type CancelResult = { id: string; receiptNumber: string; refunded: string; alreadyCancelled: boolean };
+
+/**
+ * Cancels a whole sale on the day it was made (SPEC C48) — for example when the customer
+ * changes their mind. Admins, managers and owners only; a note is required.
+ *
+ * Nothing about the sale is changed or removed. In one transaction: a cancellation record
+ * is written (one per sale, so it can only happen once), the goods go back where they came
+ * from by new stock movements, and every payment is given back by a refund record of the
+ * same method. A cash refund comes out of the till that is open at the sale's terminal, so
+ * that till must be open.
+ */
+export async function cancelSale(context: AppContext, input: unknown): Promise<CancelResult> {
+  authorize(context, "sale.cancel");
+  const businessId = businessIdOf(context);
+  const data = parseInput(cancelSchema, input);
+  const db = businessDb(context);
+
+  const load = () =>
+    db.sale.findFirst({
+      where: { id: data.saleId },
+      include: {
+        lines: { orderBy: { lineNumber: "asc" } },
+        payments: { orderBy: [{ kind: "asc" }, { methodName: "asc" }] },
+        cancellation: { select: { id: true } },
+      },
+    });
+  const sale = await load();
+  if (!sale) throw new NotFoundError("That sale could not be found.");
+  const refunded = moneyToString(sumMoney(sale.payments.map((payment) => new Decimal(payment.amount.toFixed(2)))));
+  const already = (): CancelResult => ({ id: sale.id, receiptNumber: sale.receiptNumber, refunded, alreadyCancelled: true });
+  if (sale.cancellation) return already();
+  if (shopToday(sale.createdAt) !== shopToday()) {
+    throw new ValidationError("A sale can only be cancelled on the day it was made. For an earlier sale, the goods must be returned instead.");
+  }
+
+  // What comes back, per product and place, in base units and at the cost it left with.
+  type Back = { quantity: Decimal; cost: Decimal; places: Map<string, Decimal> };
+  const perProduct = new Map<string, Back>();
+  for (const line of sale.lines) {
+    const back = perProduct.get(line.productId) ?? { quantity: new Decimal(0), cost: new Decimal(0), places: new Map<string, Decimal>() };
+    const quantity = new Decimal(line.baseQuantity.toFixed(3));
+    back.quantity = back.quantity.plus(quantity);
+    back.cost = back.cost.plus(line.lineCost.toFixed(2));
+    back.places.set(line.locationId, (back.places.get(line.locationId) ?? new Decimal(0)).plus(quantity));
+    perProduct.set(line.productId, back);
+  }
+  const cashToRefund = sumMoney(sale.payments.filter((payment) => payment.kind === "CASH").map((payment) => new Decimal(payment.amount.toFixed(2))));
+  const hasCash = cashToRefund.greaterThan(0);
+
+  const save = () =>
+    db.$transaction(
+      async (tx) => {
+        // The terminal's "turn", as for selling and for opening and closing its till.
+        await tx.terminal.update({ where: { id: sale.terminalId }, data: { updatedAt: new Date() }, select: { id: true } });
+        const till = await tx.tillSession.findFirst({
+          where: { terminalId: sale.terminalId, close: null },
+          select: { id: true, openingFloat: true },
+        });
+        if (hasCash && !till) {
+          throw new ValidationError(
+            `Nothing was cancelled: the till of ${sale.terminalCode} is not open, and the cash refund has to come out of it. Open the till, then cancel the sale.`,
+          );
+        }
+        if (hasCash && till) {
+          // Cash cannot be handed back out of a drawer that does not hold it.
+          const [taken, paidBack] = await Promise.all([
+            tx.payment.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
+            tx.refund.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
+          ]);
+          const inDrawer = new Decimal(till.openingFloat.toFixed(2)).plus(taken._sum.amount?.toFixed(2) ?? "0").minus(paidBack._sum.amount?.toFixed(2) ?? "0");
+          if (inDrawer.lessThan(cashToRefund)) {
+            throw new ValidationError(
+              `Nothing was cancelled: ${formatNaira(cashToRefund)} in cash has to be given back, but the till of ${sale.terminalCode} should only hold ${formatNaira(inDrawer)}.`,
+            );
+          }
+        }
+
+        // Writing this first is what stops a second cancellation: there can be only one per sale.
+        const cancellation = await tx.saleCancellation.create({
+          data: {
+            businessId,
+            saleId: sale.id,
+            note: data.note,
+            cancelledByUserId: context.actor.userId,
+            cancelledByName: context.actor.name,
+          },
+        });
+
+        // Always in the same order (product, then location), as for every other stock change.
+        for (const productId of [...perProduct.keys()].sort()) {
+          const back = perProduct.get(productId)!;
+          const product = await tx.product.update({
+            where: { id: productId },
+            data: { updatedAt: new Date() },
+            select: { averageCost: true },
+          });
+          const before = await tx.stockBalance.aggregate({ where: { productId }, _sum: { quantity: true } });
+          // The goods come back at the cost they left with.
+          const average = movingAverageCost({
+            quantityBefore: new Decimal(before._sum.quantity?.toFixed(3) ?? "0"),
+            averageBefore: new Decimal(product.averageCost.toFixed(4)),
+            quantityAdded: back.quantity,
+            costAdded: back.cost,
+          });
+          await tx.product.update({ where: { id: productId }, data: { averageCost: average.toFixed(4) } });
+
+          for (const [locationId, quantity] of [...back.places.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+            const raised = await tx.stockBalance.updateMany({
+              where: { productId, locationId },
+              data: { quantity: { increment: quantityToString(quantity) } },
+            });
+            if (raised.count === 0) {
+              await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(quantity) } });
+            }
+          }
+        }
+
+        await tx.stockMovement.createMany({
+          data: sale.lines.map((line) => ({
+            businessId,
+            productId: line.productId,
+            locationId: line.locationId,
+            type: "SALE_CANCELLATION" as const,
+            quantityDelta: line.baseQuantity.toFixed(3),
+            unitName: line.unitName,
+            unitFactor: line.unitFactor.toFixed(3),
+            unitQuantity: line.quantity.toFixed(3),
+            documentType: "sale_cancellation",
+            documentId: cancellation.id,
+            documentNumber: sale.receiptNumber,
+            userId: context.actor.userId,
+            userName: context.actor.name,
+          })),
+        });
+
+        if (sale.payments.length > 0) {
+          await tx.refund.createMany({
+            data: sale.payments.map((payment) => ({
+              businessId,
+              saleId: sale.id,
+              cancellationId: cancellation.id,
+              paymentId: payment.id,
+              methodId: payment.methodId,
+              methodName: payment.methodName,
+              kind: payment.kind,
+              amount: payment.amount.toFixed(2),
+              tillSessionId: till?.id ?? null,
+              refundedByUserId: context.actor.userId,
+              refundedByName: context.actor.name,
+            })),
+          });
+        }
+
+        await tx.activityLog.create({
+          data: activityRow(context, {
+            action: "sale.cancelled",
+            summary:
+              `${context.actor.name} cancelled sale ${sale.receiptNumber} (${formatNaira(new Decimal(sale.total.toFixed(2)))}, sold by ${sale.cashierName}). ` +
+              (sale.payments.length > 0
+                ? `Refunded: ${sale.payments.map((payment) => `${formatNaira(new Decimal(payment.amount.toFixed(2)))} ${payment.methodName}`).join(", ")}. `
+                : "") +
+              `Reason: ${data.note}`,
+            targetType: "sale",
+            targetId: sale.id,
+            details: { receiptNumber: sale.receiptNumber, total: sale.total.toFixed(2), refunded },
+          }),
+        });
+
+        return { id: sale.id, receiptNumber: sale.receiptNumber, refunded, alreadyCancelled: false };
+      },
+      { isolationLevel: "ReadCommitted", timeout: 20_000 },
+    );
+
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await save();
+    } catch (error) {
+      const known = error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null;
+      // Someone else cancelled it at the same moment: it is cancelled, once.
+      if (known === "P2002" && (await load())?.cancellation) return already();
+      if (known === "P2034" && attempt < MAX_ATTEMPTS) continue;
+      throw error;
+    }
+  }
 }

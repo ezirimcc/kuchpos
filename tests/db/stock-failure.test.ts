@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { correctReceipt, getCorrectionOptions, getReceiptHistory } from "@/server/business/receipt-corrections";
 import { getReceipt, receiveGoods } from "@/server/business/stock";
 import { transferStock } from "@/server/business/transfers";
+import { cancelSale, postSale } from "@/server/business/sales";
+import { openTill } from "@/server/business/till";
 import { adjustFromCount, decideAdjustment, getAdjustment, recordAdjustment } from "@/server/business/adjustments";
 import { submitCount } from "@/server/business/counts";
 import { getDb } from "@/server/db/client";
@@ -250,6 +252,41 @@ describe("a failure halfway through a count, an adjustment or an approval", () =
     // 43 held; counted 40 (−3), then −3 direct, then −3 approved.
     const storeroom = await getDb().stockBalance.findFirstOrThrow({ where: { productId: world.a.product.id, locationId: world.a.storeroomId } });
     expect(storeroom.quantity.toFixed(3)).toBe("34.000");
+    await expectBalancesMatchMovements();
+  });
+});
+
+/** And for cancelling a sale: the failure comes after the cancellation, the stock and the refunds are written. */
+describe("a failure halfway through cancelling a sale", () => {
+  it("leaves the sale, the stock, the till and the average cost exactly as they were; it can then be cancelled", async () => {
+    await receiveGoods(world.a.as.ADMIN, { ...delivery(), locationId: world.a.shelfId });
+    await openTill(world.a.as.CASHIER, { terminalId: world.a.terminalId, openingFloat: "0" });
+    const sale = await postSale(world.a.as.CASHIER, {
+      requestId: randomUUID(),
+      terminalId: world.a.terminalId,
+      expectedTotal: "500.00",
+      payments: [{ methodId: world.a.cashMethodId, amount: "500.00" }],
+      lines: [{ productId: world.a.product.id, unitId: world.a.product.baseUnitId, quantity: "5", unitPrice: "100.00" }],
+    });
+    const db = getDb();
+    const state = async () =>
+      JSON.stringify({
+        cancellations: await db.saleCancellation.count(),
+        refunds: await db.refund.count(),
+        movements: await db.stockMovement.count(),
+        balances: await db.stockBalance.findMany({ orderBy: { id: "asc" } }),
+        averageCost: (await db.product.findUniqueOrThrow({ where: { id: world.a.product.id } })).averageCost,
+      });
+    const before = await state();
+
+    failure.on = true;
+    await expect(cancelSale(world.a.as.MANAGER, { saleId: sale.id, note: "Customer changed his mind" })).rejects.toThrow("Simulated failure while saving");
+    expect(await state()).toBe(before);
+    await expectBalancesMatchMovements();
+
+    failure.on = false;
+    expect(await cancelSale(world.a.as.MANAGER, { saleId: sale.id, note: "Customer changed his mind" })).toMatchObject({ alreadyCancelled: false, refunded: "500.00" });
+    expect(await db.refund.count()).toBe(1);
     await expectBalancesMatchMovements();
   });
 });

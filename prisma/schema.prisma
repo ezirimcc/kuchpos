@@ -73,6 +73,8 @@ model Business {
   tillSessions  TillSession[]
   tillSessionCloses TillSessionClose[]
   tillSessionRecounts TillSessionRecount[]
+  saleCancellations SaleCancellation[]
+  refunds       Refund[]
   sales         Sale[]
   saleLines     SaleLine[]
   payments      Payment[]
@@ -441,6 +443,8 @@ enum StockMovementType {
   ADJUSTMENT
   /// Stock leaving a location because it was sold.
   SALE
+  /// Stock coming back because the sale was cancelled.
+  SALE_CANCELLATION
 }
 
 /// Every change to stock. Add-only: database triggers refuse changes and deletions.
@@ -865,6 +869,8 @@ model Sale {
   lines           SaleLine[]
   payments        Payment[]
   receiptPrints   SaleReceiptPrint[]
+  cancellation    SaleCancellation?
+  refunds         Refund[]
 
   @@unique([businessId, requestId])
   @@unique([terminalId, sequence])
@@ -935,6 +941,7 @@ model PaymentMethod {
   updatedAt     DateTime    @updatedAt @db.DateTime(3)
 
   payments      Payment[]
+  refunds       Refund[]
 
   @@unique([businessId, name])
   @@map("payment_method")
@@ -965,6 +972,8 @@ model Payment {
   receivedByUserId String?
   receivedByName   String
   createdAt        DateTime      @default(now()) @db.DateTime(3)
+
+  refund           Refund?
 
   @@index([saleId])
   @@index([businessId, createdAt])
@@ -1032,6 +1041,7 @@ model TillSession {
 
   sales          Sale[]
   payments       Payment[]
+  refunds        Refund[]
   close          TillSessionClose?
   recounts       TillSessionRecount[]
 
@@ -1086,4 +1096,57 @@ model TillSessionRecount {
 
   @@index([sessionId, createdAt])
   @@map("till_session_recount")
+}
+
+/// The cancelling of a whole sale by an admin or manager, on the day it was made (SPEC C48).
+/// The sale itself is never changed: this row is what marks it as cancelled, and there can be
+/// only one per sale. Its stock comes back by new movements and its payments are refunded by
+/// Refund rows, all in the same transaction. Add-only.
+model SaleCancellation {
+  id                String   @id @default(uuid()) @db.Char(36)
+  businessId        String   @db.Char(36)
+  business          Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleId            String   @unique @db.Char(36)
+  sale              Sale     @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Why it was cancelled.
+  note              String   @db.VarChar(300)
+  cancelledByUserId String?
+  cancelledByName   String
+  createdAt         DateTime @default(now()) @db.DateTime(3)
+
+  refunds           Refund[]
+
+  @@index([businessId, createdAt])
+  @@map("sale_cancellation")
+}
+
+/// Money given back for one payment of a cancelled sale: the opposite of that payment, by
+/// the same method. A cash refund comes out of the till that is open at the time. Add-only.
+model Refund {
+  id               String           @id @default(uuid()) @db.Char(36)
+  businessId       String           @db.Char(36)
+  business         Business         @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleId           String           @db.Char(36)
+  sale             Sale             @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cancellationId   String           @db.Char(36)
+  cancellation     SaleCancellation @relation(fields: [cancellationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// The payment being given back. A payment is refunded at most once.
+  paymentId        String           @unique @db.Char(36)
+  payment          Payment          @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  methodId         String           @db.Char(36)
+  method           PaymentMethod    @relation(fields: [methodId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  methodName       String           @db.VarChar(60)
+  kind             PaymentKind
+  amount           Decimal          @db.Decimal(14, 2)
+  /// The till session the cash came out of. Always set for a cash refund.
+  tillSessionId    String?          @db.Char(36)
+  tillSession      TillSession?     @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  refundedByUserId String?
+  refundedByName   String
+  createdAt        DateTime         @default(now()) @db.DateTime(3)
+
+  @@index([saleId])
+  @@index([tillSessionId])
+  @@index([businessId, createdAt])
+  @@map("refund")
 }

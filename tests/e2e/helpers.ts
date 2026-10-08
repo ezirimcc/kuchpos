@@ -31,6 +31,8 @@ export async function openFromMenu(page: Page, label: string) {
 
 /** Opens the drop-down under the person's name at the top right. */
 export async function openUserMenu(page: Page) {
+  // A click before the page is interactive does nothing, and the menu never opens.
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
   await page.getByRole("button", { name: "Your account menu" }).click();
 }
 

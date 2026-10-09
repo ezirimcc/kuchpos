@@ -51,6 +51,8 @@ export type CheckedSaleLine = {
   lineTotal: Decimal;
   taxable: boolean;
   location: { id: string; name: string };
+  /** Offline sales only: what was found that a manager should look at (price not the current one, out of use). */
+  notes?: { kind: "PRICE_DIFFERENT" | "OUT_OF_USE"; summary: string }[];
 };
 
 /**
@@ -63,6 +65,12 @@ export async function checkSaleLines(
   context: AppContext,
   lines: SaleLineInput[],
   fieldErrors: Record<string, string>,
+  /**
+   * For a sale made offline, hours ago, on the checkout computer: the goods have left the
+   * shop, so the price the cashier saw is the price, and a product or unit taken out of use
+   * since is still accepted. Each such thing is noted on the line instead of refused.
+   */
+  options: { madeOffline?: boolean } = {},
 ): Promise<{ checked: CheckedSaleLine[]; locations: { id: string; name: string; kind: "SHELF" | "STOREROOM" }[] }> {
   const locations = await db.location.findMany({ select: { id: true, name: true, kind: true } });
   const shelf = locations.find((location) => location.kind === "SHELF");
@@ -92,15 +100,21 @@ export async function checkSaleLines(
       fieldErrors[at("productId")] = "This product could not be found. Remove the line and add it again.";
       return;
     }
+    const notes: NonNullable<CheckedSaleLine["notes"]> = [];
     if (product.deactivatedAt) {
-      fieldErrors[at("productId")] = `"${product.name}" is no longer on sale. Remove this line.`;
-      return;
+      if (!options.madeOffline) {
+        fieldErrors[at("productId")] = `"${product.name}" is no longer on sale. Remove this line.`;
+        return;
+      }
+      notes.push({ kind: "OUT_OF_USE", summary: `"${product.name}" had been taken off sale.` });
     }
     const unit = product.units.find((candidate) => candidate.id === line.unitId);
-    if (!unit || unit.retiredAt || !unit.forSale || unit.price === null) {
+    const unitOnSale = !!unit && !unit.retiredAt && unit.forSale && unit.price !== null;
+    if (!unit || (!unitOnSale && !options.madeOffline)) {
       fieldErrors[at("unitId")] = `"${product.name}" is no longer sold in that unit. Reload the page to get the latest products.`;
       return;
     }
+    if (!unitOnSale) notes.push({ kind: "OUT_OF_USE", summary: `"${product.name}" was no longer sold by the ${unit.name}.` });
 
     let location = shelf;
     if (line.fromStoreroom) {
@@ -111,14 +125,30 @@ export async function checkSaleLines(
       location = storeroom;
     }
 
-    const price = new Decimal(unit.price.toFixed(2));
+    const current = unit.price === null ? null : new Decimal(unit.price.toFixed(2));
     let seen: Decimal | null = null;
     try {
       seen = parseMoney(line.unitPrice);
+      if (seen.isNegative() || seen.greaterThan(MAX_MONEY)) seen = null;
     } catch {
       seen = null;
     }
-    if (!seen || !seen.equals(price)) {
+    let price = current ?? new Decimal(0);
+    if (options.madeOffline) {
+      if (!seen) {
+        fieldErrors[at("unitPrice")] = `The price charged for ${product.name} (${unit.name}) is missing.`;
+        return;
+      }
+      if (!current || !seen.equals(current)) {
+        notes.push({
+          kind: "PRICE_DIFFERENT",
+          summary:
+            `${product.name} (${unit.name}) was sold at ${formatNaira(seen)}` +
+            (current ? `; the price set when the sale arrived was ${formatNaira(current)}.` : "; it had no price when the sale arrived."),
+        });
+      }
+      price = seen;
+    } else if (!seen || !current || !seen.equals(price)) {
       fieldErrors[at("unitPrice")] =
         `The price of ${product.name} (${unit.name}) is ${formatNaira(price)}` +
         (seen ? `, not ${formatNaira(seen)}` : "") +
@@ -151,6 +181,7 @@ export async function checkSaleLines(
         lineTotal: amount,
         taxable: product.taxable,
         location: { id: location.id, name: location.name },
+        ...(notes.length > 0 ? { notes } : {}),
       });
     } catch {
       fieldErrors[at("quantity")] = "Enter how many, as a number greater than zero (up to 3 decimal places).";

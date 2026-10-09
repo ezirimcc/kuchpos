@@ -46,12 +46,45 @@ const REQUEST_POLL_MS = 3000;
  * was given — for the cashier's eyes only: the server works it all out again when the sale
  * is sent, and refuses the sale if anything differs.
  */
-export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogue; cashierId: string }) {
+/** A sale exactly as it is sent to be saved: to the server, or into the waiting queue when there is no internet. */
+export type SaleToSave = {
+  requestId: string;
+  terminalId: string;
+  deviceTime: string;
+  expectedTotal: string;
+  customerId: string;
+  payments: { methodId: string; amount: string; tendered: string; reference: string }[];
+  lines: { productId: string; unitId: string; quantity: string; unitPrice: string; fromStoreroom: boolean }[];
+};
+
+/** A sale in progress carried from the online checkout to the offline one when the internet drops. */
+export type CartHandover = { requestId: string; lines: Omit<CartLine, "key">[]; customerText: string };
+export const HANDOVER_KEY = "kuchpos_cart_handover";
+
+export function Checkout({
+  catalogue,
+  cashierId,
+  offline,
+  start,
+}: {
+  catalogue: CheckoutCatalogue;
+  cashierId: string;
+  /**
+   * Set when this is the checkout that runs without internet: the sale is not sent to the
+   * server but handed to `save`, which puts it in the waiting queue and returns a message
+   * if it could not. Discounts, credit and new customers are not offered.
+   */
+  offline?: { save: (sale: SaleToSave) => Promise<string | null> };
+  /** A sale in progress to begin with. */
+  start?: CartHandover | null;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // The sale's unique ID, made up here before anything is sent: pressing the button many
   // times, or the network repeating itself, can only ever save this sale once.
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const [requestId, setRequestId] = useState(() => start?.requestId ?? crypto.randomUUID());
+  // True once the server could not be reached from this (online) checkout.
+  const [noInternet, setNoInternet] = useState(false);
   const remembered = useRememberedTerminal();
   const [chosenTerminal, setChosenTerminal] = useState<string | null>(null);
   // This computer remembers which terminal it is. With one terminal there is nothing to choose;
@@ -60,7 +93,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const terminalId =
     [chosenTerminal, remembered].find((id) => id && catalogue.terminals.some((terminal) => terminal.id === id)) ??
     (catalogue.terminals.length === 1 ? catalogue.terminals[0].id : "");
-  const [lines, setLines] = useState<CartLine[]>([]);
+  const [lines, setLines] = useState<CartLine[]>(() => (start?.lines ?? []).map((line) => ({ ...line, key: crypto.randomUUID() })));
   const [search, setSearch] = useState("");
   const [highlighted, setHighlighted] = useState(0);
   const [parts, setParts] = useState<PaymentPart[]>(() => [
@@ -70,7 +103,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
   const [errors, setErrors] = useState<Record<string, string>>({});
   // The customer the sale is for ("" is a walk-in), and how much of it goes on their account.
   const [customers, setCustomers] = useState(catalogue.customers);
-  const [customerText, setCustomerText] = useState("");
+  const [customerText, setCustomerText] = useState(start?.customerText ?? "");
   const [creditText, setCreditText] = useState("");
   const [newCustomer, setNewCustomer] = useState<{ name: string; phone: string } | null>(null);
   const [newCustomerError, setNewCustomerError] = useState<string | null>(null);
@@ -473,17 +506,14 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
     if (pending || !ready || !total) return;
     setMessage(null);
     setErrors({});
-    startTransition(async () => {
-      const result = await postSaleAction({
-        requestId,
-        terminalId,
-        deviceTime: new Date().toISOString(),
-        expectedTotal: moneyToString(total),
-        customerId: customer?.id ?? "",
-        creditAmount: credit && credit.greaterThan(0) ? moneyToString(credit) : "",
-        ...(discounted ? { discount: { ...discountToSend(), approvalId: discountApproved ? discountApproval!.id : "" } } : {}),
-        ...(creditApproved ? { creditApprovalId: creditApproval!.id } : {}),
-        payments: nothingToPay || nothingCharged
+    const sale: SaleToSave = {
+      requestId,
+      terminalId,
+      deviceTime: new Date().toISOString(),
+      expectedTotal: moneyToString(total),
+      customerId: customer?.id ?? "",
+      payments:
+        nothingToPay || nothingCharged
           ? []
           : paid.map(({ part, isCash, amount }) => ({
               methodId: part.methodId,
@@ -491,8 +521,36 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
               tendered: isCash ? part.tendered.trim() : "",
               reference: isCash ? "" : part.reference.trim(),
             })),
-        lines: saleLines(),
-      });
+      lines: saleLines(),
+    };
+    startTransition(async () => {
+      if (offline) {
+        const problem = await offline.save(sale);
+        if (problem) {
+          setMessage(problem);
+          return;
+        }
+        // The page shows the receipt; this screen is ready for the next customer.
+        setRequestId(crypto.randomUUID());
+        setLines([]);
+        setParts(freshPayment());
+        setCustomerText("");
+        return;
+      }
+      let result: Awaited<ReturnType<typeof postSaleAction>>;
+      try {
+        result = await postSaleAction({
+          ...sale,
+          creditAmount: credit && credit.greaterThan(0) ? moneyToString(credit) : "",
+          ...(discounted ? { discount: { ...discountToSend(), approvalId: discountApproved ? discountApproval!.id : "" } } : {}),
+          ...(creditApproved ? { creditApprovalId: creditApproval!.id } : {}),
+        });
+      } catch {
+        // The server could not be reached. Nothing is known to be saved; the sale keeps its
+        // ID, so carrying on without internet can never save it twice.
+        setNoInternet(true);
+        return;
+      }
       if (result.status === "success" && result.sale) {
         setRequestId(crypto.randomUUID());
         router.push(`/sales/${result.sale.id}?sold=1`);
@@ -501,6 +559,24 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
         setErrors(result.fieldErrors);
       }
     });
+  }
+
+  /** Carries the sale in progress over to the checkout that works without internet. */
+  function carryOnOffline() {
+    const handover: CartHandover = {
+      requestId,
+      lines: lines.map(({ productId, unitId, quantity, fromStoreroom }) => ({ productId, unitId, quantity, fromStoreroom })),
+      customerText,
+    };
+    try {
+      window.sessionStorage.setItem(HANDOVER_KEY, JSON.stringify(handover));
+    } catch {
+      // Without it the cashier simply enters the sale again.
+    }
+    // A full page load on purpose: with no internet only the browser's kept copy of the
+    // offline checkout can answer, and that is served to page loads, not to in-app moves.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.assign("/offline");
   }
 
   if (catalogue.terminals.length === 0) {
@@ -771,9 +847,13 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
           {tillClosed && (
             <Alert variant="destructive" data-testid="till-closed">
               The till of {terminal!.code} is not open, so nothing can be sold here yet.{" "}
-              <Link href={`/till?terminal=${terminal!.id}`} className="font-medium underline underline-offset-4">
-                Open the till
-              </Link>
+              {offline ? (
+                "Open it with the form above."
+              ) : (
+                <Link href={`/till?terminal=${terminal!.id}`} className="font-medium underline underline-offset-4">
+                  Open the till
+                </Link>
+              )}
             </Alert>
           )}
 
@@ -948,7 +1028,7 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
                 </p>
               )}
             </div>
-            {newCustomer === null ? (
+            {offline ? null : newCustomer === null ? (
               <button
                 type="button"
                 onClick={() => setNewCustomer({ name: "", phone: "" })}
@@ -1193,7 +1273,21 @@ export function Checkout({ catalogue, cashierId }: { catalogue: CheckoutCatalogu
           {message && <Alert variant="destructive">{message}</Alert>}
           {errors.expectedTotal && <Alert variant="destructive">{errors.expectedTotal}</Alert>}
           {errors.lines && <Alert variant="destructive">{errors.lines}</Alert>}
-          {pricesChanged && (
+          {noInternet && !offline && (
+            <Alert variant="destructive" data-testid="no-internet">
+              The server cannot be reached, so this sale has not been saved. If the internet is down you can carry on
+              selling without it; the sale in progress comes with you.
+              <span className="mt-2 flex flex-wrap gap-2">
+                <Button type="button" size="sm" onClick={carryOnOffline} data-testid="carry-on-offline">
+                  Carry on without internet
+                </Button>
+                <Button type="button" size="sm" variant="outline" onClick={() => setNoInternet(false)}>
+                  Try again
+                </Button>
+              </span>
+            </Alert>
+          )}
+          {pricesChanged && !offline && (
             <Button type="button" variant="outline" onClick={() => router.refresh()}>
               <RefreshCw className="size-4" aria-hidden /> Get the latest prices
             </Button>

@@ -11,6 +11,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // The browser's helper program for selling without internet. It must never be served
+        // from a stale copy, or an old version could keep running after an update.
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+      {
         source: "/(.*)",
         headers: [
           // After one visit over HTTPS, browsers refuse to use plain HTTP for this address for a year.

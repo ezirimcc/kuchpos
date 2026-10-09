@@ -786,6 +786,76 @@ test("a cashier sends a discount to the manager's own computer; the manager appr
   await expect(page).toHaveURL(/\/$/);
 });
 
+test("the offline checkout keeps a sale on the computer, sends it once, and the server has it under the number that was printed", async ({ page, browser }) => {
+  // A computer nobody has sold on cannot sell without internet, and says so.
+  const stranger = await browser.newContext();
+  const unprepared = await stranger.newPage();
+  await unprepared.goto("/offline");
+  await expect(unprepared.getByTestId("offline-not-ready")).toBeVisible();
+  await stranger.close();
+
+  // Opening Sell while online makes this computer ready: it now holds the prices and the cashier's offline pass.
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await expect(page.getByTestId("connection-status")).toHaveAttribute("data-offline-ready", "true");
+  await expect(page.getByTestId("connection-status")).toHaveText("Online");
+
+  // The offline checkout itself. (Here the server can be reached, so what is made is sent at once;
+  // with the network truly off it waits — that is rehearsed against a production build, see CLAUDE.md.)
+  await page.goto("/offline");
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await expect(page.getByTestId("offline-who")).toContainText("Green Valley Cashier");
+  const which = page.getByLabel("This checkout");
+  if ((await which.count()) > 0) await which.selectOption({ label: "T1 — Checkout 1" });
+  // No discounts, no credit and no new customers without internet.
+  await expect(page.getByTestId("add-discount")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "+ New customer" })).toHaveCount(0);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("1");
+  await page.getByLabel("Customer", { exact: true }).fill("Chief Okoro — 08031112222");
+  await expect(page.getByLabel("Put on credit (₦)")).toHaveCount(0);
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("offline-sold")).toBeVisible();
+  await expect(page.getByTestId("receipt")).toContainText("Receipt: T1-F000001");
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦500.00");
+  await page.getByTestId("offline-print").click();
+  expect(await printed(page)).toBe(1);
+  await expect(page.getByTestId("offline-waiting")).toHaveText("Nothing waiting to send");
+  await page.getByTestId("offline-next").click();
+
+  // The next one takes the next number of the offline series.
+  await addToSale(page, "tomato");
+  await page.keyboard.type("1");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt")).toContainText("Receipt: T1-F000002");
+  await expect(page.getByTestId("offline-waiting")).toHaveText("Nothing waiting to send");
+
+  // Back to normal selling: both are on the server, once each, marked as made offline.
+  await page.getByTestId("back-online").click();
+  await expect(page.getByTestId("checkout-search")).toBeVisible();
+  await page.goto("/sales");
+  await expect(page.getByTestId("sale-row-T1-F000001")).toHaveCount(1);
+  await expect(page.getByTestId("sale-row-T1-F000002")).toHaveCount(1);
+  await expect(page.getByTestId("sale-row-T1-F000001")).toContainText("Chief Okoro");
+  await page.getByTestId("sale-row-T1-F000001").getByRole("link", { name: "T1-F000001" }).click();
+  await expect(page.getByTestId("offline-notice")).toContainText("Made without internet at");
+  // Signing out ends selling without internet for this person on this computer.
+  await signOut(page);
+  await page.goto("/offline");
+  await expect(page.getByTestId("offline-not-ready")).toBeVisible();
+
+  // Nothing was out of the ordinary, so the manager's report is empty.
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await openFromMenu(page, "Sales");
+  await page.getByRole("link", { name: "Offline exceptions" }).click();
+  await expect(page.getByRole("heading", { name: "Offline exceptions" })).toBeVisible();
+  await expect(page.getByTestId("exceptions-waiting")).toHaveText("Nothing is waiting to be looked at.");
+});
+
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");

@@ -18,6 +18,8 @@ const SCREENS = [
   "/sales",
   "/sales/discounts",
   "/approvals",
+  "/sales/offline",
+  "/offline",
   "/customers",
   "/customers/new",
   "/customers/00000000-0000-4000-8000-000000000000",

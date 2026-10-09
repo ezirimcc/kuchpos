@@ -14,6 +14,8 @@ const TABLES = [
   "document_counter",
   "till_session_recount",
   "till_session_close",
+  "offline_exception_review",
+  "offline_exception",
   "approval_use",
   "approval",
   "approval_request_decision",

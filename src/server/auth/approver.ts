@@ -31,3 +31,17 @@ export async function verifyApprover(input: {
   if (!roleHasPermission(user.role, input.permission)) return null;
   return { userId: user.id, name: user.name, role: user.role };
 }
+
+/**
+ * The account an offline pass names, as it stands now. The pass says who made a sale during
+ * an outage; this says whether that person still exists, where they belong and whether the
+ * account has been disabled since.
+ */
+export async function findCashier(
+  userId: string,
+): Promise<{ id: string; name: string; username: string; role: Role; businessId: string | null; disabledAt: Date | null } | null> {
+  return getDb().user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, username: true, role: true, businessId: true, disabledAt: true },
+  });
+}

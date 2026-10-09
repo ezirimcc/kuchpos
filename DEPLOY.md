@@ -56,6 +56,7 @@ On the server:
 6. Setup Node.js App → open the application → **Run JS script** → `migrate`.
 7. **Restart** the application.
 8. Open `/api/health`, then sign in as an owner and open **System check**: the version should be the new one and every rule should say "Enforced".
+9. **Selling without internet** (from M12): on each checkout computer, sign in as the cashier and open **Sell** once after every update, and leave it open for a minute — the sign at the top right should say **Online**. That is what makes the computer ready for an outage (it fetches the prices and keeps a copy of the offline checkout). It only works over `https://`. To check: switch the Wi‑Fi off and reload the page — the yellow "No internet — selling continues on this computer" bar should appear.
 
 Never run `npm run seed` on the live site: it wipes the database. It refuses to run unless `SEED_CONFIRM` in `.env` names the database, and that line must not exist on the live site.
 

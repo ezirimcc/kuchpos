@@ -3,6 +3,7 @@
 import type { FormState } from "@/lib/form-state";
 import { runAction } from "@/server/action";
 import { type ApprovalGiven, approveAtScreen, decideApprovalRequest, requestApproval, withdrawApprovalRequest } from "@/server/business/approvals";
+import { reviewOfflineException } from "@/server/business/offline";
 import { cancelSale, postSale, recordReceiptPrint, type SaleResult } from "@/server/business/sales";
 
 /** Saves a sale sent whole from the checkout screen. On success the answer carries the saved sale. */
@@ -57,4 +58,9 @@ export async function withdrawApprovalRequestAction(requestId: string): Promise<
 /** A manager approves or refuses a waiting request from their own computer. */
 export async function decideApprovalRequestAction(input: { requestId: string; approve: boolean; note: string }): Promise<FormState> {
   return runAction({ success: input.approve ? "Approved." : "Refused." }, (context) => decideApprovalRequest(context, input));
+}
+
+/** A manager marks an offline exception as looked at. */
+export async function reviewOfflineExceptionAction(input: { exceptionId: string; note: string }): Promise<FormState> {
+  return runAction({ success: "Marked as looked at." }, (context) => reviewOfflineException(context, input));
 }

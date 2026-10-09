@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, appendFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getDb } from "@/server/db/client";
 import { applyMigrations } from "../../hosting/migrate";
 
@@ -11,6 +11,10 @@ import { applyMigrations } from "../../hosting/migrate";
  * applied there by hosting/migrate.ts. These tests run it against a scratch
  * database and check that Prisma itself agrees with the result.
  */
+// Every test here applies every migration from the beginning, so each one takes longer as
+// migrations are added (and much longer when this computer is busy).
+vi.setConfig({ testTimeout: 90_000, hookTimeout: 90_000 });
+
 const SCRATCH = "kuchpos_migratetool_test";
 const scratchUrl = (() => {
   const url = new URL(process.env.DATABASE_URL ?? "");
@@ -90,6 +94,8 @@ describe("database update tool for the hosting server", () => {
       "approval_use",
       "approval_request",
       "approval_request_decision",
+      "offline_exception",
+      "offline_exception_review",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -149,6 +155,9 @@ describe("database update tool for the hosting server", () => {
         "sale_line_discount_check",
         "approval_amounts_check",
         "approval_request_amounts_check",
+        "sale_line_stock_short_check",
+        "sale_offline_check",
+        "terminal_offline_number_check",
       ]),
     );
   });

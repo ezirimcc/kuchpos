@@ -1,5 +1,6 @@
 "use client";
 
+import { forgetKits } from "@/lib/offline/store";
 import { ChevronDown, KeyRound, LogOut, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -37,6 +38,9 @@ export function UserMenu({ name, username, roleLabel }: { name: string; username
 
   async function signOut() {
     setSigningOut(true);
+    // Signing out also ends selling without internet for this person on this computer (C61).
+    // Sales still waiting to be sent are kept.
+    await forgetKits().catch(() => undefined);
     await authClient.signOut();
     router.replace("/sign-in");
     router.refresh();

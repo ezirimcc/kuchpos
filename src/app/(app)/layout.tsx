@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ActionForm, SubmitButton } from "@/components/action-form";
 import { AppShell } from "@/components/app-shell";
 import { ApprovalsWaiting } from "@/components/approvals-waiting";
+import { OfflineStatus } from "@/components/offline-status";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
 import { requirePageContext } from "@/server/auth/request";
@@ -48,6 +49,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       }
       topRight={
         <>
+          {can(context, "sale.create") && <OfflineStatus />}
           {(can(context, "discount.approve") || can(context, "customer.setCreditLimit")) && <ApprovalsWaiting />}
           <ThemeToggle startDark={choices.get("kuchpos_theme")?.value === "dark"} />
           <UserMenu name={context.actor.name} username={context.actor.username} roleLabel={ROLE_LABELS[context.actor.role]} />

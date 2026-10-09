@@ -83,6 +83,8 @@ model Business {
   approvals     Approval[]
   approvalUses  ApprovalUse[]
   approvalRequests ApprovalRequest[]
+  offlineExceptions OfflineException[]
+  offlineExceptionReviews OfflineExceptionReview[]
   approvalRequestDecisions ApprovalRequestDecision[]
   sales         Sale[]
   saleLines     SaleLine[]
@@ -262,6 +264,8 @@ model Terminal {
   paperWidth    PaperWidth @default(MM80)
   /// The running number the next receipt from this terminal will get. Only ever increased.
   nextReceiptNumber Int    @default(1)
+  /// The next number in this terminal's offline series, as far as the server has seen. Only ever increased.
+  nextOfflineNumber Int    @default(1)
   deactivatedAt DateTime?  @db.DateTime(3)
   createdAt     DateTime   @default(now()) @db.DateTime(3)
   updatedAt     DateTime   @updatedAt @db.DateTime(3)
@@ -874,6 +878,12 @@ model Sale {
   cashierName     String
   /// The clock of the cashier's computer when the sale was made (matters for offline sales).
   deviceTime      DateTime? @db.DateTime(3)
+  /// True when the sale was made on the checkout computer during an internet outage and sent
+  /// later. Its receipt number then comes from the terminal's offline series ("T1-F000007").
+  offline         Boolean  @default(false)
+  /// For an offline sale: who was signed in when it was sent to the server.
+  sentByUserId    String?
+  sentByName      String?
   /// Server time when it was saved.
   createdAt       DateTime @default(now()) @db.DateTime(3)
   /// The customer it was sold to, with their name and phone as they were. Empty for a walk-in.
@@ -895,6 +905,7 @@ model Sale {
   accountEntries  CustomerAccountEntry[]
   repaymentParts  RepaymentAllocation[]
   approvalUses    ApprovalUse[]
+  offlineExceptions OfflineException[]
 
   @@unique([businessId, requestId])
   @@unique([terminalId, sequence])
@@ -923,6 +934,9 @@ model SaleLine {
   /// How many of the chosen unit, and the same amount in base units.
   quantity       Decimal  @db.Decimal(16, 3)
   baseQuantity   Decimal  @db.Decimal(16, 3)
+  /// Offline sales only: the part of baseQuantity the system did not hold when the sale arrived,
+  /// and so could not take out of stock. Never more than baseQuantity.
+  stockShort     Decimal  @default(0) @db.Decimal(16, 3)
   /// The preset price of one unit (tax included) and quantity × price rounded to the kobo.
   unitPrice      Decimal  @db.Decimal(14, 2)
   lineTotal      Decimal  @db.Decimal(14, 2)
@@ -1336,6 +1350,55 @@ enum ApprovalMethod {
   OWN_SALE
   /// The cashier sent a request and a manager or admin approved it from their own computer.
   REMOTE
+}
+
+enum OfflineExceptionKind {
+  /// The system held less stock than the sale took.
+  STOCK_SHORT
+  /// The price charged is not the price now set.
+  PRICE_DIFFERENT
+  /// A product, unit, payment method or customer had been taken out of use.
+  OUT_OF_USE
+  /// Sold after the time allowed without signing in online, or the computer's clock looks wrong.
+  TIME
+  /// The cashier's account had been disabled or changed.
+  ACCOUNT
+  /// The receipt number printed was already taken; the sale was given another.
+  RECEIPT_NUMBER
+}
+
+/// Something about a sale made offline that a manager should look at. Add-only.
+model OfflineException {
+  id         String               @id @default(uuid()) @db.Char(36)
+  businessId String               @db.Char(36)
+  business   Business             @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleId     String               @db.Char(36)
+  sale       Sale                 @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  kind       OfflineExceptionKind
+  /// A plain sentence saying what was found.
+  summary    String               @db.VarChar(500)
+  createdAt  DateTime             @default(now()) @db.DateTime(3)
+
+  review     OfflineExceptionReview?
+
+  @@index([businessId, createdAt])
+  @@index([saleId])
+  @@map("offline_exception")
+}
+
+/// A manager's note that an offline exception has been looked at. Add-only; one per exception.
+model OfflineExceptionReview {
+  id               String           @id @default(uuid()) @db.Char(36)
+  businessId       String           @db.Char(36)
+  business         Business         @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  exceptionId      String           @unique @db.Char(36)
+  exception        OfflineException @relation(fields: [exceptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  note             String?          @db.VarChar(300)
+  reviewedByUserId String?
+  reviewedByName   String
+  createdAt        DateTime         @default(now()) @db.DateTime(3)
+
+  @@map("offline_exception_review")
 }
 
 enum ApprovalRequestOutcome {

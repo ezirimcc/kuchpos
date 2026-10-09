@@ -1,5 +1,6 @@
 "use client";
 
+import { useUnsentQueue } from "@/lib/offline/use-queue";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { rememberTerminal, useRememberedTerminal } from "@/components/terminal-choice";
@@ -127,10 +128,13 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Sales made on this computer without internet that have not reached the server yet. The
+  // count would be checked without them, so the till must not be closed until they are sent.
+  const stillWaiting = (useUnsentQueue() ?? []).length;
 
   function close(event: React.FormEvent) {
     event.preventDefault();
-    if (pending) return;
+    if (pending || stillWaiting > 0) return;
     setMessage(null);
     setErrors({});
     startTransition(async () => {
@@ -184,8 +188,17 @@ export function CloseTillForm({ sessionId }: { sessionId: string }) {
         {errors.note && <p className="text-xs text-destructive">{errors.note}</p>}
       </div>
       {message && <Alert variant="destructive">{message}</Alert>}
+      {stillWaiting > 0 && (
+        <Alert variant="destructive" data-testid="close-waits-for-offline">
+          {stillWaiting === 1 ? "1 sale" : `${stillWaiting} sales or other things`} made on this computer without internet {stillWaiting === 1 ? "has" : "have"} not
+          reached the server yet. Wait until the sign at the top says Online with nothing waiting, then close the till.{" "}
+          <a href="/offline" className="font-medium underline underline-offset-4">
+            See what is waiting
+          </a>
+        </Alert>
+      )}
       <div>
-        <Button type="submit" size="lg" variant="outline" disabled={pending}>
+        <Button type="submit" size="lg" variant="outline" disabled={pending || stillWaiting > 0}>
           {pending ? "Closing…" : "Close the till"}
         </Button>
       </div>

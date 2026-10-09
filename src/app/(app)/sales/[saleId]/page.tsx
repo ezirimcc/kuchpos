@@ -75,6 +75,21 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
         </Alert>
       )}
 
+      {sale.offline && (
+        <Alert data-testid="offline-notice">
+          Made without internet at {formatDateTime(sale.offline.madeAt)} by the checkout computer&apos;s clock, and sent to the server at{" "}
+          {formatDateTime(sale.offline.sentAt)}
+          {sale.offline.sentByName && sale.offline.sentByName !== sale.cashierName ? ` by ${sale.offline.sentByName}` : ""}.
+          {sale.offline.exceptions.length > 0 && (
+            <ul className="mt-1 list-disc pl-5">
+              {sale.offline.exceptions.map((exception, index) => (
+                <li key={index}>{exception}</li>
+              ))}
+            </ul>
+          )}
+        </Alert>
+      )}
+
       {sale.discountAmount !== "0.00" && (
         <Alert data-testid="discount-notice">
           A discount of {nairaFromText(sale.discountAmount)}

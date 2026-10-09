@@ -8,6 +8,7 @@ import * as catalog from "@/server/business/catalog";
 import * as counts from "@/server/business/counts";
 import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
+import * as offline from "@/server/business/offline";
 import * as paymentMethods from "@/server/business/payment-methods";
 import * as sales from "@/server/business/sales";
 import * as setup from "@/server/business/setup";
@@ -67,6 +68,24 @@ function selling(business: World["a"]) {
     expectedTotal: "100.00",
     payments: [{ methodId: business.cashMethodId, amount: "100.00" }],
     lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "1", unitPrice: "100.00" }],
+  };
+}
+
+/** A sale made offline in each business at a price that had since changed: one offline exception each. */
+let exceptionInA = "";
+let exceptionInB = "";
+let offlineNumber = 0;
+async function madeOffline(business: World["a"], price = "100.00") {
+  offlineNumber += 1;
+  return {
+    requestId: randomUUID(),
+    terminalId: business.terminalId,
+    pass: (await offline.getOfflineKit(business.as.CASHIER)).pass,
+    receiptNumber: `T1-F${String(offlineNumber).padStart(6, "0")}`,
+    deviceTime: new Date().toISOString(),
+    expectedTotal: price,
+    payments: [{ methodId: business.cashMethodId, amount: price }],
+    lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "1", unitPrice: price }],
   };
 }
 
@@ -158,6 +177,10 @@ beforeEach(async () => {
     if (business === world.a) customerInA = id;
     else customerInB = id;
   }
+  await sales.postOfflineSale(world.a.as.CASHIER, await madeOffline(world.a, "90.00"));
+  await sales.postOfflineSale(world.b.as.CASHIER, await madeOffline(world.b, "90.00"));
+  exceptionInA = (await getDb().offlineException.findFirstOrThrow({ where: { businessId: world.a.id } })).id;
+  exceptionInB = (await getDb().offlineException.findFirstOrThrow({ where: { businessId: world.b.id } })).id;
   requestInA = (await approvals.requestApproval(world.a.as.CASHIER, asking(world.a))).requestId;
   requestInB = (await approvals.requestApproval(world.b.as.CASHIER, asking(world.b))).requestId;
   countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
@@ -430,6 +453,38 @@ const OPERATIONS: Operation[] = [
     name: "sales.postSale",
     allowed: SELLERS,
     run: (context) => sales.postSale(context, selling(world.a)),
+  },
+  {
+    name: "sales.postOfflineSale",
+    allowed: SELLERS,
+    run: async (context) => sales.postOfflineSale(context, await madeOffline(world.a)),
+  },
+  {
+    name: "till.openTillOffline",
+    allowed: SELLERS,
+    run: async (context) =>
+      till.openTillOffline(context, {
+        terminalId: world.a.terminalId,
+        openingFloat: "0",
+        pass: (await offline.getOfflineKit(world.a.as.CASHIER)).pass,
+        deviceTime: new Date().toISOString(),
+      }),
+  },
+  {
+    name: "offline.getOfflineKit",
+    allowed: SELLERS,
+    run: (context) => offline.getOfflineKit(context),
+  },
+  {
+    name: "offline.listOfflineExceptions",
+    allowed: ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT"],
+    run: (context) => offline.listOfflineExceptions(context),
+  },
+  {
+    name: "offline.reviewOfflineException",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => offline.reviewOfflineException(context, { exceptionId: exceptionInA }),
+    runAgainstB: (context) => offline.reviewOfflineException(context, { exceptionId: exceptionInB }),
   },
   {
     name: "sales.listSales",
@@ -879,6 +934,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(till).map((name) => `till.${name}`),
       ...Object.keys(adjustments).map((name) => `adjustments.${name}`),
       ...Object.keys(approvals).map((name) => `approvals.${name}`),
+      ...Object.keys(offline).map((name) => `offline.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

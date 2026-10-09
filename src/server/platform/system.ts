@@ -58,6 +58,8 @@ const ADD_ONLY_TABLES = [
   "approval_use",
   "approval_request",
   "approval_request_decision",
+  "offline_exception",
+  "offline_exception_review",
 ];
 
 /**
@@ -117,6 +119,9 @@ const REQUIRED_CHECKS = [
   "sale_line_discount_check",
   "approval_amounts_check",
   "approval_request_amounts_check",
+  "sale_line_stock_short_check",
+  "sale_offline_check",
+  "terminal_offline_number_check",
 ];
 
 function readAppVersion(): string {

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { breakdownTotal, type CashBreakdown, describeBreakdown, NAIRA_NOTES, storeBreakdown } from "@/lib/cash-notes";
 import { Decimal } from "@/lib/decimal";
-import { shopDayEnd, shopDayStart, shopToday, tillSessionNumber } from "@/lib/format";
+import { formatDateTime, shopDayEnd, shopDayStart, shopToday, tillSessionNumber } from "@/lib/format";
 import { formatNaira, moneyToString, parseMoney } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { activityRow } from "@/server/activity";
@@ -14,6 +14,7 @@ import { takeDocumentNumber } from "@/server/document-number";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { cashierOfPass } from "@/server/offline-cashier";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -239,6 +240,50 @@ export async function openTill(context: AppContext, input: unknown): Promise<{ i
     },
     { isolationLevel: "ReadCommitted", timeout: 20_000 },
   );
+}
+
+const openOfflineSchema = openSchema.extend({
+  /** The pass the server signed for the person while they were online. */
+  pass: z.string().min(1).max(2000),
+  deviceTime: z.string().datetime(),
+});
+
+/**
+ * A till that was opened on the checkout computer during an internet outage is opened here
+ * when the internet returns, before that computer's waiting sales are sent (C60). It is
+ * recorded under the person named in the signed offline pass, whoever sends it.
+ *
+ * If the terminal's till is already open — it was opened before the outage, or this was
+ * already sent — nothing changes and that till is given back: the waiting sales go into it.
+ */
+export async function openTillOffline(context: AppContext, input: unknown): Promise<{ id: string; number: number; alreadyOpen: boolean }> {
+  authorize(context, "sale.create");
+  const { pass, deviceTime, ...data } = parseInput(openOfflineSchema, input);
+  const { asCashier } = await cashierOfPass(context, pass);
+  const db = businessDb(context);
+  const open = () => db.tillSession.findFirst({ where: { terminalId: data.terminalId, close: null }, select: { id: true, number: true } });
+
+  const already = await open();
+  if (already) return { ...already, alreadyOpen: true };
+  try {
+    const opened = await openTill(asCashier, data);
+    await db.activityLog.create({
+      data: activityRow(asCashier, {
+        action: "till.opened_offline",
+        summary:
+          `${tillSessionNumber(opened.number)} was opened by ${asCashier.actor.name} without internet, at ${formatDateTime(new Date(deviceTime))} ` +
+          `by the checkout computer's clock, and sent to the server${context.actor.userId === asCashier.actor.userId ? "" : ` by ${context.actor.name}`} now.`,
+        targetType: "till_session",
+        targetId: opened.id,
+      }),
+    });
+    return { ...opened, alreadyOpen: false };
+  } catch (error) {
+    // Someone opened it at the same instant: the waiting sales go into that one.
+    const now = error instanceof ValidationError ? await open() : null;
+    if (now) return { ...now, alreadyOpen: true };
+    throw error;
+  }
 }
 
 const closeSchema = z.object({

@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
+import { formatDateTime, offlineReceiptNumber, plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
 import { formatNaira, moneyToString, movingAverageCost, parseMoney, roundMoney, shareDiscount, sumMoney, taxIncludedIn } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { quantityToString } from "@/lib/quantity";
@@ -13,6 +13,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { authorize, can } from "@/server/permissions";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
 
@@ -43,6 +44,8 @@ export type CheckoutProduct = {
   code: string | null;
   barcode: string | null;
   allowsFraction: boolean;
+  /** Whether tax is inside this product's prices (needed to print a receipt without the server). */
+  taxable: boolean;
   baseUnitName: string;
   /** Units on sale with their preset prices, smallest first. */
   units: { id: string; name: string; factor: string; price: string }[];
@@ -100,6 +103,7 @@ export async function getCheckoutCatalogue(context: AppContext): Promise<Checkou
         code: true,
         barcode: true,
         allowsFraction: true,
+        taxable: true,
         units: { where: { retiredAt: null }, orderBy: { factor: "asc" }, select: { id: true, name: true, factor: true, isBase: true, forSale: true, price: true } },
         stockBalances: { select: { locationId: true, quantity: true } },
       },
@@ -138,6 +142,7 @@ export async function getCheckoutCatalogue(context: AppContext): Promise<Checkou
       code: product.code,
       barcode: product.barcode,
       allowsFraction: product.allowsFraction,
+      taxable: product.taxable,
       baseUnitName: product.units.find((unit) => unit.isBase)?.name ?? "",
       units: product.units
         .filter((unit) => unit.forSale && unit.price !== null)
@@ -254,8 +259,67 @@ async function claimApproval(
 export async function postSale(context: AppContext, input: unknown): Promise<SaleResult> {
   authorize(context, "sale.create");
   authorize(context, "payment.take");
+  return saveSale(context, parseInput(saleSchema, input), null);
+}
+
+/** The first number of the offline series in `sale.sequence`, which is unique per terminal. */
+const OFFLINE_SEQUENCE_BASE = 1_000_000_000;
+/** A device clock this far ahead of the server's is taken to be wrong. */
+const CLOCK_ALLOWANCE_MS = 10 * 60_000;
+
+const offlineSaleSchema = saleSchema.extend({
+  /** The pass the server signed for the cashier while they were online. */
+  pass: z.string().min(1).max(2000),
+  /** The number printed on the receipt, from the terminal's offline series: "T1-F000007". */
+  receiptNumber: z.string().trim().max(20),
+  deviceTime: z.string().datetime(),
+});
+
+type OfflineMode = { receiptNumber: string; number: number; sentBy: { userId: string; name: string }; notes: OfflineNote[] };
+
+/**
+ * Saves a sale that was made on the checkout computer during an internet outage and is being
+ * sent now (C60, C61). It goes through the same saving as every other sale, with these
+ * differences — because the goods have already left the shop:
+ *
+ * - it is recorded under the cashier named in the signed offline pass, whoever sends it;
+ * - the prices the cashier saw are the prices, and it keeps the receipt number that was printed;
+ * - if the system holds less stock than was sold, what is there is taken and the rest is noted;
+ * - anything else out of the ordinary is noted too. The notes are the offline exceptions report.
+ *
+ * It is still refused — and stays waiting on the computer — if the pass is not genuine, if it
+ * carries a discount or credit, if the payments do not add up, or if the terminal's till is not open.
+ * Sending the same sale again returns the one already saved.
+ */
+export async function postOfflineSale(context: AppContext, input: unknown): Promise<SaleResult> {
+  authorize(context, "sale.create");
+  const { pass: token, receiptNumber, ...data } = parseInput(offlineSaleSchema, input);
+  const { asCashier, pass, cashier, notes } = await cashierOfPass(context, token);
+  const terminal = await businessDb(context).terminal.findFirst({ where: { id: data.terminalId }, select: { code: true } });
+  const match = terminal ? new RegExp(`^${terminal.code}-F(\\d{6})$`).exec(receiptNumber) : null;
+  const number = match ? Number.parseInt(match[1], 10) : 0;
+  if (!terminal || number < 1) {
+    throw new ValidationError("This sale cannot be accepted: its receipt number is not one of this checkout's offline numbers.", {
+      receiptNumber: "Not accepted.",
+    });
+  }
+
+  const soldAt = new Date(data.deviceTime);
+  if (soldAt.getTime() > pass.expiresAt.getTime()) {
+    notes.push({
+      kind: "TIME",
+      summary: `Sold at ${formatDateTime(soldAt)} by the computer's clock, after ${cashier.name}'s time for selling without internet ran out (${formatDateTime(pass.expiresAt)}).`,
+    });
+  }
+  if (soldAt.getTime() > Date.now() + CLOCK_ALLOWANCE_MS || soldAt.getTime() < pass.issuedAt.getTime() - CLOCK_ALLOWANCE_MS) {
+    notes.push({ kind: "TIME", summary: `The checkout computer's clock said ${formatDateTime(soldAt)}, which cannot be right. Check that computer's date and time.` });
+  }
+
+  return saveSale(asCashier, data, { receiptNumber, number, sentBy: { userId: context.actor.userId, name: context.actor.name }, notes });
+}
+
+async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, offline: OfflineMode | null): Promise<SaleResult> {
   const businessId = businessIdOf(context);
-  const data = parseInput(saleSchema, input);
   const db = businessDb(context);
 
   const alreadySaved = async (): Promise<SaleResult | null> => {
@@ -281,7 +345,8 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
   const terminal = await db.terminal.findFirst({ where: { id: data.terminalId }, select: { id: true, code: true, deactivatedAt: true } });
   if (!terminal) fieldErrors.terminalId = "Choose the checkout terminal.";
   else if (terminal.deactivatedAt) fieldErrors.terminalId = "This checkout terminal is out of use. Choose another.";
-  const { checked, locations } = await checkSaleLines(db, context, data.lines, fieldErrors);
+  const { checked, locations } = await checkSaleLines(db, context, data.lines, fieldErrors, { madeOffline: !!offline });
+  for (const line of checked) offline?.notes.push(...(line.notes ?? []));
 
   // --- The customer, if the sale is for one -----------------------------------------
   let customer: { id: string; name: string; phone: string } | null = null;
@@ -291,8 +356,11 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
       select: { id: true, name: true, phone: true, deactivatedAt: true },
     });
     if (!found) fieldErrors.customerId = "Choose the customer again: this one could not be found.";
-    else if (found.deactivatedAt) fieldErrors.customerId = `"${found.name}" is out of use. Choose another customer, or sell as a walk-in.`;
-    else customer = found;
+    else if (found.deactivatedAt && !offline) fieldErrors.customerId = `"${found.name}" is out of use. Choose another customer, or sell as a walk-in.`;
+    else {
+      customer = found;
+      if (found.deactivatedAt) offline?.notes.push({ kind: "OUT_OF_USE", summary: `The customer "${found.name}" had been taken out of use.` });
+    }
   }
 
   // --- The discount, if there is one ---------------------------------------------------
@@ -300,6 +368,9 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
   const linesAreSound = Object.keys(fieldErrors).every((key) => !key.startsWith("lines."));
   let discount = new Decimal(0);
   let discountPercent: Decimal | null = null;
+  if (offline && (data.discount || data.creditAmount !== "")) {
+    fieldErrors[data.discount ? "discount.amount" : "creditAmount"] = "A sale made without internet cannot carry a discount or credit.";
+  }
   if (data.discount && linesAreSound) {
     if (!can(context, "discount.request")) {
       fieldErrors["discount.amount"] = "You are not allowed to give a discount.";
@@ -336,10 +407,11 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           fieldErrors[at("methodId")] = "Choose how this is paid.";
           return;
         }
-        if (method.deactivatedAt) {
+        if (method.deactivatedAt && !offline) {
           fieldErrors[at("methodId")] = `"${method.name}" is switched off. Choose another way to pay.`;
           return;
         }
+        if (method.deactivatedAt) offline?.notes.push({ kind: "OUT_OF_USE", summary: `The payment method "${method.name}" had been switched off.` });
         if (used.has(method.id)) {
           fieldErrors[at("methodId")] = `"${method.name}" is already used in this sale. Put the two amounts together.`;
           return;
@@ -430,13 +502,36 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
     db.$transaction(
       async (tx) => {
         // The terminal's next number. Taking it also makes sales from one terminal queue up.
+        // (An offline sale keeps the number that was printed, from the terminal's offline series;
+        // it still takes the terminal's turn here.)
         const counter = await tx.terminal.update({
           where: { id: terminal.id },
-          data: { nextReceiptNumber: { increment: 1 } },
-          select: { nextReceiptNumber: true },
+          data: offline ? { updatedAt: new Date() } : { nextReceiptNumber: { increment: 1 } },
+          select: { nextReceiptNumber: true, nextOfflineNumber: true },
         });
-        const sequence = counter.nextReceiptNumber - 1;
-        const receiptNumber = saleReceiptNumber(terminal.code, sequence);
+        let sequence = counter.nextReceiptNumber - 1;
+        let receiptNumber = saleReceiptNumber(terminal.code, sequence);
+        // What this sale adds to the offline exceptions report. Rebuilt on every attempt.
+        const notes: OfflineNote[] = offline ? [...offline.notes] : [];
+        if (offline) {
+          let number = offline.number;
+          receiptNumber = offline.receiptNumber;
+          // Two computers set up as the same checkout could print the same number. The second
+          // to arrive is given the next free one, and that is noted.
+          const taken = await tx.sale.findFirst({ where: { receiptNumber }, select: { id: true } });
+          if (taken) {
+            number = Math.max(counter.nextOfflineNumber, number + 1);
+            receiptNumber = offlineReceiptNumber(terminal.code, number);
+            notes.push({
+              kind: "RECEIPT_NUMBER",
+              summary: `The receipt was printed as ${offline.receiptNumber}, a number already used by another sale. This sale was saved as ${receiptNumber}.`,
+            });
+          }
+          sequence = OFFLINE_SEQUENCE_BASE + number;
+          if (number >= counter.nextOfflineNumber) {
+            await tx.terminal.update({ where: { id: terminal.id }, data: { nextOfflineNumber: number + 1 } });
+          }
+        }
 
         // A sale belongs to the terminal's open till. (Opening and closing take the same
         // "turn" on the terminal, so a till cannot be closed under a sale that is going through.)
@@ -519,6 +614,8 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
         const rate = new Decimal(business?.taxRatePercent.toFixed(2) ?? "0");
 
         const short: Record<string, string> = {};
+        // Offline sales only: what each line could not take out of stock, in base units.
+        const shortOf = new Map<number, Decimal>();
         const costOf = new Map<string, Decimal>();
         for (const productId of productOrder) {
           // The product's "turn", as for every other stock change; its average cost is read here.
@@ -540,6 +637,33 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             });
             if (lowered.count === 1) continue;
             const there = await tx.stockBalance.findFirst({ where: { productId, locationId }, select: { quantity: true } });
+            if (offline) {
+              // The goods have left the shop. Take what the system holds (this product's turn is
+              // ours, so nobody else can change it meanwhile) and note the rest, line by line.
+              const held = new Decimal(there?.quantity.toFixed(3) ?? "0");
+              if (held.greaterThan(0)) {
+                const taken = await tx.stockBalance.updateMany({
+                  where: { productId, locationId, quantity: { gte: quantityToString(held) } },
+                  data: { quantity: { decrement: quantityToString(held) } },
+                });
+                if (taken.count !== 1) throw new Error("Stock changed while it was being taken for an offline sale.");
+              }
+              let left = held;
+              for (const line of checked) {
+                if (line.productId !== productId || line.location.id !== locationId) continue;
+                const moved = Decimal.min(left, line.baseQuantity);
+                left = left.minus(moved);
+                if (moved.lessThan(line.baseQuantity)) shortOf.set(line.index, line.baseQuantity.minus(moved));
+              }
+              const first = checked.find((line) => line.productId === productId && line.location.id === locationId)!;
+              notes.push({
+                kind: "STOCK_SHORT",
+                summary:
+                  `${plainNumber(needed)} ${first.baseUnitName} of "${first.productName}" was sold, but the system held only ` +
+                  `${plainNumber(quantityToString(held))} in ${locationName.get(locationId)}. Count that product and adjust the stock.`,
+              });
+              continue;
+            }
             for (const line of checked) {
               if (line.productId !== productId || line.location.id !== locationId) continue;
               short[`lines.${line.index}.quantity`] =
@@ -591,6 +715,9 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             cashierUserId: context.actor.userId,
             cashierName: context.actor.name,
             deviceTime: data.deviceTime ? new Date(data.deviceTime) : null,
+            offline: !!offline,
+            sentByUserId: offline?.sentBy.userId ?? null,
+            sentByName: offline?.sentBy.name ?? null,
             tillSessionId: till.id,
             customerId: customer?.id ?? null,
             customerName: customer?.name ?? null,
@@ -639,6 +766,7 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
             unitFactor: line.unitFactor,
             quantity: line.quantity,
             baseQuantity: quantityToString(line.baseQuantity),
+            stockShort: quantityToString(shortOf.get(line.index) ?? new Decimal(0)),
             unitPrice: moneyToString(line.unitPrice),
             lineTotal: moneyToString(line.lineTotal),
             discountAmount: moneyToString(extra.discountAmount),
@@ -652,22 +780,34 @@ export async function postSale(context: AppContext, input: unknown): Promise<Sal
           })),
         });
         await tx.stockMovement.createMany({
-          data: checked.map((line) => ({
+          data: checked.flatMap((line) => {
+            // An offline line that was partly (or wholly) not in stock moves only what was there,
+            // written in the base unit.
+            const lacking = shortOf.get(line.index);
+            const moved = lacking ? line.baseQuantity.minus(lacking) : line.baseQuantity;
+            if (!moved.greaterThan(0)) return [];
+            return [{
             businessId,
             productId: line.productId,
             locationId: line.location.id,
             type: "SALE" as const,
-            quantityDelta: `-${quantityToString(line.baseQuantity)}`,
-            unitName: line.unitName,
-            unitFactor: line.unitFactor,
-            unitQuantity: `-${line.quantity}`,
+            quantityDelta: `-${quantityToString(moved)}`,
+            unitName: lacking ? line.baseUnitName : line.unitName,
+            unitFactor: lacking ? "1.000" : line.unitFactor,
+            unitQuantity: lacking ? `-${quantityToString(moved)}` : `-${line.quantity}`,
             documentType: "sale",
             documentId: sale.id,
             documentNumber: receiptNumber,
             userId: context.actor.userId,
             userName: context.actor.name,
-          })),
+            }];
+          }),
         });
+        if (notes.length > 0) {
+          await tx.offlineException.createMany({
+            data: notes.map((note) => ({ businessId, saleId: sale.id, kind: note.kind, summary: note.summary.slice(0, 500) })),
+          });
+        }
         // Approvals the seller gave themselves are recorded like any other, and every approval is
         // marked as used on this sale (one use each, kept by a unique index).
         const expiresAt = new Date(Date.now() + APPROVAL_MINUTES * 60_000);
@@ -884,6 +1024,11 @@ export type SaleDetail = {
   discountPercent: string | null;
   discountReason: string | null;
   discountApprovedBy: string | null;
+  /**
+   * Set when the sale was made on the checkout computer without internet: when (by that
+   * computer's clock), who sent it to the server, and what was found out of the ordinary.
+   */
+  offline: { madeAt: Date; sentAt: Date; sentByName: string | null; exceptions: string[] } | null;
   /** Who it was sold to, as they were named then; null for a walk-in. */
   customer: { id: string; name: string; phone: string } | null;
   /** The part of the total put on the customer's account, and what they owed straight afterwards. */
@@ -927,6 +1072,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         cancellation: { select: { note: true, cancelledByName: true, createdAt: true } },
         accountEntries: { where: { type: "CREDIT_SALE" }, select: { balanceAfter: true } },
         approvalUses: { select: { approval: { select: { kind: true, approvedByName: true } } } },
+        offlineExceptions: { orderBy: { createdAt: "asc" }, select: { summary: true } },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
       },
@@ -959,6 +1105,15 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
     discountPercent: row.discountPercent?.toFixed(2) ?? null,
     discountReason: row.discountReason,
     discountApprovedBy: row.approvalUses.find((use) => use.approval.kind === "DISCOUNT")?.approval.approvedByName ?? null,
+    offline: row.offline
+      ? {
+          madeAt: row.deviceTime ?? row.createdAt,
+          sentAt: row.createdAt,
+          sentByName: row.sentByName,
+          // What a manager is to look at is not for the cashier's eyes.
+          exceptions: can(context, "report.sales.view") ? row.offlineExceptions.map((entry) => entry.summary) : [],
+        }
+      : null,
     customer: row.customerId ? { id: row.customerId, name: row.customerName ?? "", phone: row.customerPhone ?? "" } : null,
     creditAmount: row.creditAmount.toFixed(2),
     owedAfter: row.accountEntries[0]?.balanceAfter.toFixed(2) ?? null,

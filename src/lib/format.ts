@@ -106,6 +106,11 @@ export function saleReceiptNumber(terminalCode: string, sequence: number): strin
   return `${terminalCode}-${String(sequence).padStart(6, "0")}`;
 }
 
+/** The number of a receipt made during an internet outage: the terminal's own offline series, e.g. "T1-F000007". */
+export function offlineReceiptNumber(terminalCode: string, number: number): string {
+  return `${terminalCode}-F${String(number).padStart(6, "0")}`;
+}
+
 /** Repayment numbers are shown as RP-000012. */
 export function repaymentNumber(number: number): string {
   return `RP-${String(number).padStart(6, "0")}`;

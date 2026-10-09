@@ -268,7 +268,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q16 (advance deposits) and Q21 (customers with no limit) before this starts.
 
-### M11 · Extra discounts with manager approval (built 2026-10-08; waiting for the owner's check)
+### M11 · Extra discounts with manager approval ✅ (verified 2026-10-09, tag `m11`)
 **Goal:** Requirement C11, enforced by the server.
 - Discount on the whole sale, entered as a percentage or a Naira amount (C28), with reason. Approval at the cashier's screen (manager's own username and password). Or the cashier sends it and the manager approves from their own computer (C57). Discounts on single lines are not wanted (C56).
 - Customer list with city/state, total purchases, visits, filters and sorting (C58; asked for by the owner while trying M11).

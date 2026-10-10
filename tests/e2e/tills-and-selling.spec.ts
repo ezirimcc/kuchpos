@@ -1076,6 +1076,81 @@ test("a customer brings back 1 of 3: the cashier needs the manager's approval, t
   await expect(page.getByTestId("approval-row").first()).toContainText("Return of goods");
 });
 
+test("the accountant reads and exports the reports; today's sales report equals the sum of today's receipts; others see only what they may", async ({ page }) => {
+  await signIn(page, "gv.accountant");
+  await expectSignedInAs(page, "Accountant");
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos" }).format(new Date());
+
+  // The sum of today's receipts, from the sales list.
+  await page.goto(`/sales?from=${today}&to=${today}`);
+  const receipts = (await page.getByTestId("sales-sum").innerText()).trim();
+
+  await openFromMenu(page, "Reports");
+  await expect(page.getByRole("heading", { name: "Reports", exact: true })).toBeVisible();
+  await page.getByTestId("report-card").filter({ hasText: "What was sold, returned and earned" }).click();
+  await expect(page.getByRole("heading", { name: "Sales report" })).toBeVisible();
+  await page.getByTestId("period-links").getByRole("link", { name: "Today" }).click();
+  await expect(page.getByTestId("period-links").getByRole("link", { name: "Today" })).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId("breakdown-sales")).toHaveText(receipts);
+  // The accountant sees cost and profit.
+  await expect(page.getByTestId("kpi-profit")).toBeVisible();
+  await expect(page.getByTestId("sales-report-row")).toHaveCount(1);
+
+  // By cashier, and exported: the file holds the same rows.
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByLabel("Break down").selectOption({ label: "By cashier" });
+  await expect(page.getByTestId("sales-report-row").filter({ hasText: "Green Valley Cashier" })).toHaveCount(1);
+  const downloading = page.waitForEvent("download");
+  await page.getByTestId("export-csv").click();
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe(`sales-by-cashier_${today}_to_${today}.csv`);
+  const stream = await download.createReadStream();
+  let file = "";
+  for await (const chunk of stream) file += chunk.toString("utf8");
+  const lines = file.replace(/^\uFEFF/, "").trim().split("\r\n");
+  expect(lines[0]).toBe("Cashier,Sales (count),Sales,Refunds for returns,Net sales,Cost,Profit,Margin %");
+  expect(lines.some((line) => line.startsWith("Green Valley Cashier,"))).toBe(true);
+  expect(lines.length - 1).toBe(await page.getByTestId("sales-report-row").count());
+
+  // Collections, debts and stock movements.
+  await page.getByRole("link", { name: "Collections" }).click();
+  await expect(page.getByRole("heading", { name: "Collections report" })).toBeVisible();
+  await expect(page.getByTestId("collections-row").filter({ hasText: "Cash" }).first()).toBeVisible();
+  await expect(page.getByTestId("collections-net")).not.toHaveText("₦0.00");
+  await page.getByRole("link", { name: "Customer debts" }).click();
+  await expect(page.getByRole("heading", { name: "Customer debts" })).toBeVisible();
+  await expect(page.getByTestId("debt-row-Chief Okoro")).toContainText("Chief Okoro");
+  await expect(page.getByTestId("debts-older")).toHaveText("₦0.00");
+  await page.getByRole("link", { name: "Stock movements" }).click();
+  await expect(page.getByRole("heading", { name: "Stock movements" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByLabel("What happened").selectOption({ label: "Returned by customer" });
+  await expect(page.getByTestId("movement-row")).toHaveCount(1);
+  await expect(page.getByTestId("movement-row")).toContainText("Tomato Seed Sachet");
+  await signOut(page);
+
+  // The storekeeper has stock movements only, and nothing to export.
+  await signIn(page, "gv.storekeeper");
+  await expectSignedInAs(page, "Storekeeper");
+  await openFromMenu(page, "Reports");
+  await expect(page.getByTestId("report-card").filter({ hasText: "Stock movements" })).toHaveCount(1);
+  await expect(page.getByTestId("report-card").filter({ hasText: "Collections" })).toHaveCount(0);
+  await page.goto("/reports/sales");
+  await expect(page).toHaveURL(/\/$/);
+  await page.goto("/reports/stock-movements");
+  await expect(page.getByTestId("export-csv")).toHaveCount(0);
+  const refused = await page.request.get("/reports/export?report=stock-movements");
+  expect(refused.status()).toBe(403);
+  await signOut(page);
+
+  // A cashier's Reports page leads only to their own sales.
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openFromMenu(page, "Reports");
+  await expect(page.getByTestId("report-card").filter({ hasText: "My sales" })).toHaveCount(1);
+  await expect(page.getByTestId("report-card").filter({ hasText: "Collections" })).toHaveCount(0);
+});
+
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");

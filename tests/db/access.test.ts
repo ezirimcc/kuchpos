@@ -10,6 +10,7 @@ import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
 import * as offline from "@/server/business/offline";
 import * as paymentMethods from "@/server/business/payment-methods";
+import * as reports from "@/server/business/reports";
 import * as returns from "@/server/business/returns";
 import * as sales from "@/server/business/sales";
 import * as setup from "@/server/business/setup";
@@ -275,6 +276,7 @@ const STOCK_MOVERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "STOREKEEPER"];
 const SELLERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "CASHIER"];
 const SALES_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
 const CUSTOMER_KEEPERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
+const REPORT_READERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -582,6 +584,31 @@ const OPERATIONS: Operation[] = [
     name: "approvals.listApprovals",
     allowed: ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT"],
     run: (context) => approvals.listApprovals(context),
+  },
+  {
+    name: "reports.getSalesReport",
+    allowed: REPORT_READERS,
+    run: (context) => reports.getSalesReport(context),
+  },
+  {
+    name: "reports.getCollectionsReport",
+    allowed: REPORT_READERS,
+    run: (context) => reports.getCollectionsReport(context),
+  },
+  {
+    name: "reports.getDebtReport",
+    allowed: REPORT_READERS,
+    run: (context) => reports.getDebtReport(context),
+  },
+  {
+    name: "reports.getStockMovements",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => reports.getStockMovements(context),
+  },
+  {
+    name: "reports.exportReport",
+    allowed: REPORT_READERS,
+    run: (context) => reports.exportReport(context, { report: "sales" }),
   },
   {
     name: "returns.getReturnOptions",
@@ -1038,6 +1065,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(approvals).map((name) => `approvals.${name}`),
       ...Object.keys(offline).map((name) => `offline.${name}`),
       ...Object.keys(returns).map((name) => `returns.${name}`),
+      ...Object.keys(reports).map((name) => `reports.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

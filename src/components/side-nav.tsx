@@ -43,7 +43,9 @@ const ICONS: Record<string, LucideIcon> = {
 function NavLink({ item, active, collapsed }: { item: SideNavItem; active: boolean; collapsed: boolean }) {
   const Icon = ICONS[item.icon] ?? LayoutDashboard;
   const shape = cn(
-    "flex items-center gap-3 rounded-2xl text-sm transition-colors",
+    // (Never squeezed: Home sits directly in the menu's column, where a full menu would
+    // otherwise press it flatter than the buttons below it.)
+    "flex shrink-0 items-center gap-3 rounded-2xl text-sm transition-colors",
     collapsed ? "size-11 justify-center" : "px-3 py-2.5",
   );
   const label = <span className={collapsed ? "sr-only" : "flex-1 truncate"}>{item.label}</span>;

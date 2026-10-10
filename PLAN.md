@@ -321,7 +321,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ## Phase D — Reports and go-live
 
-### M14 · Reports and exports
+### M14 · Reports and exports (part 1 built 2026-10-10: sales and its KPIs, collections, debts, stock movements, CSV export; part 2 to come: customer and stock KPIs, owner overview)
 **Goal:** Requirement C12.
 - Per business: sales, collections, stock on hand, stock movement, customer debt (with ageing), discounts & approvals, expiring soon, offline exceptions, activity log. Date and other filters. CSV export.
 - Owner overview: every business side by side (sales, collections, outstanding debt).

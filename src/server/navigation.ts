@@ -20,7 +20,7 @@ const BUSINESS_MENU: NavEntry[] = [
   {
     label: "Reports",
     icon: "reports",
-    href: null,
+    href: "/reports",
     anyOf: [
       "report.sales.view",
       "report.collections.view",

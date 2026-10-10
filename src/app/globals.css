@@ -58,6 +58,9 @@
    */
   --background: oklch(0.955 0.004 150);
   --foreground: oklch(0.2 0.015 160);
+  /* The scroll bar's handle: a quiet grey-green that sits on the page instead of on a white strip. */
+  --scroll-thumb: oklch(0.8 0.012 150);
+  --scroll-thumb-hover: oklch(0.68 0.02 150);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.2 0.015 160);
   --popover: oklch(1 0 0);
@@ -98,6 +101,8 @@
 .dark {
   --background: oklch(0.16 0.008 160);
   --foreground: oklch(0.96 0.005 150);
+  --scroll-thumb: oklch(0.36 0.02 160);
+  --scroll-thumb-hover: oklch(0.48 0.03 160);
   --card: oklch(0.215 0.01 160);
   --card-foreground: oklch(0.96 0.005 150);
   --popover: oklch(0.24 0.012 160);
@@ -141,6 +146,37 @@
   }
   html {
     @apply font-sans;
+    /* Tells the browser which mode the page is in, so its own parts (drop-down lists, date
+       pickers, scroll bars) are drawn to match instead of light grey on a dark page. */
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  /* Scroll bars everywhere in the app: no light track, a handle in the theme's own colours. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+  /* Browsers that do not know the two lines above (older Chrome and Edge, Safari). */
+  @supports not (scrollbar-color: auto) {
+    *::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    *::-webkit-scrollbar-track,
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    *::-webkit-scrollbar-thumb {
+      background-color: var(--scroll-thumb);
+      border-radius: 9999px;
+      border: 2px solid transparent;
+      background-clip: content-box;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scroll-thumb-hover);
+    }
   }
 }
 @layer utilities {

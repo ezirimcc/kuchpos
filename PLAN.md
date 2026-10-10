@@ -308,7 +308,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q22. Try it in a shop on the real Windows checkout computer during a real or simulated outage.
 
-### M13 · Voids and returns (built 2026-10-10; waiting for the owner's check)
+### M13 · Voids and returns ✅ (uploaded 2026-10-10, tag `m13`)
 **Goal:** Mistakes are corrected openly, never by editing history.
 - Return against an original sale line (cannot exceed what was sold); stock back to a location or written off; refund by cash/transfer or off the customer's debt. Manager approval. Void of a whole sale under the same rule. Online only.
 

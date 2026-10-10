@@ -7,6 +7,8 @@ import { useBrowserOnline, useUnsentQueue } from "@/lib/offline/use-queue";
 
 /** How often, while online, this computer sends what is waiting and renews what it keeps for an outage. */
 const RENEW_EVERY_MS = 5 * 60_000;
+/** How long after a page opens the first upkeep waits, so the page itself comes first. */
+const FIRST_UPKEEP_AFTER_MS = 4000;
 
 /**
  * For people who sell: the always-visible sign of whether this computer is online, offline,
@@ -30,17 +32,25 @@ export function OfflineStatus() {
       if (!gone) setReady(kept);
       if (kept) await keepOfflinePage();
     }
-    // The browser's helper program is only installed on a real (built) site; a development
-    // server changes its files too often for a kept copy to make sense.
-    if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
-      void navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(renew, renew);
-    } else {
-      void renew();
-    }
+    // Anything waiting goes at once (it costs nothing when nothing is waiting). The rest of the
+    // upkeep — fresh prices, a fresh pass, the kept copy of the offline checkout — waits a few
+    // seconds, so that it never competes with the page the person has just asked for: straight
+    // after signing in, the small hosting server should be drawing their screen, not this.
+    void sendWaiting();
+    const first = window.setTimeout(() => {
+      // The browser's helper program is only installed on a real (built) site; a development
+      // server changes its files too often for a kept copy to make sense.
+      if (process.env.NODE_ENV === "production" && "serviceWorker" in navigator) {
+        void navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(renew, renew);
+      } else {
+        void renew();
+      }
+    }, FIRST_UPKEEP_AFTER_MS);
     const timer = window.setInterval(renew, RENEW_EVERY_MS);
     window.addEventListener("online", renew);
     return () => {
       gone = true;
+      window.clearTimeout(first);
       window.clearInterval(timer);
       window.removeEventListener("online", renew);
     };

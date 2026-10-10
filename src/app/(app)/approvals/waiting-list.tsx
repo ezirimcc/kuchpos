@@ -7,15 +7,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { nairaFromText, plainNumber } from "@/lib/format";
 import type { WaitingApproval } from "@/server/business/approvals";
+import type { WaitingTillCash } from "@/server/business/till";
 import { decideApprovalRequestAction } from "../sales/actions";
+import { decideTillCashAction } from "../till/actions";
 
 type Waiting = Omit<WaitingApproval, "requestedAt" | "expiresAt"> & { requestedAt: string; expiresAt: string };
+type WaitingCash = Omit<WaitingTillCash, "requestedAt"> & { requestedAt: string };
 
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString("en-NG", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lagos" });
 
 /** The requests waiting for this person's answer. The list refreshes itself every few seconds. */
-export function WaitingList({ start }: { start: Waiting[] }) {
+export function WaitingList({ start, startCash }: { start: Waiting[]; startCash: WaitingCash[] }) {
   const [requests, setRequests] = useState(start);
+  const [cashRequests, setCashRequests] = useState(startCash);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ good: boolean; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -27,8 +31,11 @@ export function WaitingList({ start }: { start: Waiting[] }) {
         const response = await fetch("/api/approvals/waiting", { cache: "no-store" });
         if (response.status === 401 || response.status === 403) stopped = true;
         if (!response.ok || stopped) return;
-        const body = (await response.json()) as { requests: Waiting[] };
-        if (!stopped) setRequests(body.requests);
+        const body = (await response.json()) as { requests: Waiting[]; cashRequests?: WaitingCash[] };
+        if (!stopped) {
+          setRequests(body.requests);
+          setCashRequests(body.cashRequests ?? []);
+        }
       } catch {
         // No connection just now; try again next time.
       }
@@ -58,6 +65,18 @@ export function WaitingList({ start }: { start: Waiting[] }) {
     });
   }
 
+  function decideCash(request: WaitingCash, approve: boolean) {
+    if (pending) return;
+    setMessage(null);
+    startTransition(async () => {
+      const result = await decideTillCashAction({ cashRequestId: request.id, approve, note: notes[request.id] ?? "" });
+      if (result.status === "error") setMessage({ good: false, text: result.fieldErrors.note ?? result.message });
+      else setMessage({ good: true, text: `${approve ? "Approved" : "Refused"}: ${request.requestedByName}'s cash ${request.direction === "IN" ? "in" : "out"}.` });
+      // Answered, or no longer there to answer. (If it could not be approved, the next look puts it back.)
+      if (result.status !== "error") setCashRequests((current) => current.filter((entry) => entry.id !== request.id));
+    });
+  }
+
   return (
     <div className="flex flex-col gap-4">
       {message && (
@@ -65,7 +84,39 @@ export function WaitingList({ start }: { start: Waiting[] }) {
           {message.text}
         </p>
       )}
-      {requests.length === 0 ? (
+      {cashRequests.map((request) => (
+        <Card key={request.id} data-testid="waiting-cash-request">
+          <CardContent className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-lg font-semibold">
+                {request.direction === "IN" ? "Cash in" : "Cash out"} of {nairaFromText(request.amount)} — till of {request.terminalCode}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Asked by {request.requestedByName} at {timeOf(request.requestedAt)}
+              </p>
+            </div>
+            <p className="text-sm">For: {request.note}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                value={notes[request.id] ?? ""}
+                onChange={(event) => setNotes((current) => ({ ...current, [request.id]: event.target.value }))}
+                placeholder="Note for the record (optional)"
+                aria-label="Note (optional)"
+                maxLength={300}
+                autoComplete="off"
+                className="min-w-56 flex-1"
+              />
+              <Button type="button" onClick={() => decideCash(request, true)} disabled={pending}>
+                Approve
+              </Button>
+              <Button type="button" variant="outline" onClick={() => decideCash(request, false)} disabled={pending}>
+                Refuse
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+      {requests.length === 0 && cashRequests.length > 0 ? null : requests.length === 0 ? (
         <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground" data-testid="nothing-waiting">
           Nothing is waiting for approval.
         </p>

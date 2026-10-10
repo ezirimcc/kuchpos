@@ -140,9 +140,21 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
                 <span data-testid="till-cash-refunded">−{nairaFromText(session.cashRefunded)}</span>
               </p>
             )}
+            {session.cashPutIn !== null && session.cashPutIn !== "0.00" && (
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Cash put in during the day</span>
+                <span data-testid="till-cash-in">+{nairaFromText(session.cashPutIn)}</span>
+              </p>
+            )}
+            {session.cashTakenOut !== null && session.cashTakenOut !== "0.00" && (
+              <p className="flex justify-between gap-3 text-sm">
+                <span className="text-muted-foreground">Cash taken out during the day</span>
+                <span data-testid="till-cash-out">−{nairaFromText(session.cashTakenOut)}</span>
+              </p>
+            )}
             {reviewer && (
               <p className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Should be there (float + cash sales + cash repayments − change − refunds)</span>
+                <span className="text-muted-foreground">Should be there (float + cash sales + cash repayments + cash in − change − refunds − cash out)</span>
                 <span data-testid="till-expected">{nairaFromText(session.expectedCash ?? "0.00")}</span>
               </p>
             )}
@@ -190,6 +202,34 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
           </CardContent>
         </Card>
       </div>
+
+      {session.cashRequests.length > 0 && (
+        <Card data-testid="till-cash-list">
+          <CardContent className="flex flex-col gap-1">
+            <h2 className="text-base font-semibold">Cash in / cash out</h2>
+            {session.cashRequests.map((request) => (
+              <p key={request.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t py-2 text-sm first:border-t-0">
+                <span className="font-medium tabular-nums">
+                  {request.direction === "IN" ? "Cash in" : "Cash out"} {nairaFromText(request.amount)}
+                </span>
+                <span>{request.note}</span>
+                <span className="text-muted-foreground">
+                  {request.requestedByName}, {formatDateTime(request.requestedAt)}
+                </span>
+                <Badge variant={request.status === "REFUSED" ? "destructive" : request.status === "APPROVED" ? "default" : "secondary"}>
+                  {request.status === "WAITING" ? "Waiting for a manager" : request.status === "APPROVED" ? "Approved" : request.status === "REFUSED" ? "Refused" : "Taken back"}
+                </Badge>
+                {request.decidedByName && request.status !== "WITHDRAWN" && request.decidedByName !== request.requestedByName && (
+                  <span className="text-muted-foreground">
+                    by {request.decidedByName}
+                    {request.decisionNote ? `: ${request.decisionNote}` : ""}
+                  </span>
+                )}
+              </p>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {session.canRecount && (
         <Card>

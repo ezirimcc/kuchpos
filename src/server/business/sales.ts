@@ -14,6 +14,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
+import { drawerMovements } from "@/server/till-cash";
 import { authorize, can } from "@/server/permissions";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
 
@@ -1041,7 +1042,7 @@ export type SaleDetail = {
   /** How many times the receipt has been printed so far. */
   printCount: number;
   /** What is printed around the sale: taken from the business's settings as they are now. */
-  business: { name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null };
+  business: { name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null; autoPrintReceipts: boolean };
   lines: {
     lineNumber: number;
     productName: string;
@@ -1077,7 +1078,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         _count: { select: { receiptPrints: true } },
       },
     }),
-    db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true } }),
+    db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true, autoPrintReceipts: true } }),
   ]);
   if (!row || !business) throw new NotFoundError("That sale could not be found.");
   return {
@@ -1245,15 +1246,7 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
         }
         if (hasCash && till) {
           // Cash cannot be handed back out of a drawer that does not hold it.
-          const [taken, repaid, paidBack] = await Promise.all([
-            tx.payment.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
-            tx.repayment.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
-            tx.refund.aggregate({ where: { tillSessionId: till.id, kind: "CASH" }, _sum: { amount: true } }),
-          ]);
-          const inDrawer = new Decimal(till.openingFloat.toFixed(2))
-            .plus(taken._sum.amount?.toFixed(2) ?? "0")
-            .plus(repaid._sum.amount?.toFixed(2) ?? "0")
-            .minus(paidBack._sum.amount?.toFixed(2) ?? "0");
+          const inDrawer = new Decimal(till.openingFloat.toFixed(2)).plus((await drawerMovements(tx, till.id)).net);
           if (inDrawer.lessThan(cashToRefund)) {
             throw new ValidationError(
               `Nothing was cancelled: ${formatNaira(cashToRefund)} in cash has to be given back, but the till of ${sale.terminalCode} should only hold ${formatNaira(inDrawer)}.`,

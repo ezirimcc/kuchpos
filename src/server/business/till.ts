@@ -15,6 +15,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { cashierOfPass } from "@/server/offline-cashier";
+import { drawerMovements } from "@/server/till-cash";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -38,7 +39,6 @@ import { authorize, can } from "@/server/permissions";
  */
 
 const MAX_MONEY = new Decimal("99999999999.99");
-const ZERO = new Decimal(0);
 
 type Db = ReturnType<typeof businessDb>;
 
@@ -51,15 +51,8 @@ function ownOnly(context: AppContext): Prisma.TillSessionWhereInput {
  * Cash that went into the drawer in a session — from sales and from customers repaying
  * debts — less cash refunded out of it (cancelled sales).
  */
-async function cashTakenIn(db: Pick<Db, "payment" | "refund" | "repayment">, sessionId: string): Promise<Decimal> {
-  const [taken, repaid, refunded] = await Promise.all([
-    db.payment.aggregate({ where: { tillSessionId: sessionId, kind: "CASH" }, _sum: { amount: true } }),
-    db.repayment.aggregate({ where: { tillSessionId: sessionId, kind: "CASH" }, _sum: { amount: true } }),
-    db.refund.aggregate({ where: { tillSessionId: sessionId, kind: "CASH" }, _sum: { amount: true } }),
-  ]);
-  return new Decimal(taken._sum.amount?.toFixed(2) ?? "0")
-    .plus(repaid._sum.amount?.toFixed(2) ?? "0")
-    .minus(refunded._sum.amount?.toFixed(2) ?? "0");
+async function cashTakenIn(db: Parameters<typeof drawerMovements>[0], sessionId: string): Promise<Decimal> {
+  return (await drawerMovements(db, sessionId)).net;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +72,10 @@ export type TillNow = {
     saleCount: number;
     /** True when this person may close it: they opened it, or they may review any till. */
     canClose: boolean;
+    /** Cash in / cash out asked for in this session (C64): all for reviewers, a person's own otherwise. */
+    cashRequests: TillCashRequestView[];
+    /** True when what this person records counts at once, without waiting for approval. */
+    cashCountsAtOnce: boolean;
     /** Only for those who may review any till: the cash that should be in the drawer now. */
     expectedCash: string | null;
   } | null;
@@ -117,9 +114,281 @@ export async function getTill(context: AppContext, input: unknown = {}): Promise
       openedAt: session.openedAt,
       saleCount: session._count.sales,
       canClose: reviews || session.openedByUserId === context.actor.userId,
+      cashRequests: await cashRequestsOf(context, db, session.id),
+      cashCountsAtOnce: answersCashRequests(context),
       expectedCash: reviews ? moneyToString(new Decimal(session.openingFloat.toFixed(2)).plus(await cashTakenIn(db, session.id))) : null,
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cash in and cash out during the day (C64)
+// ---------------------------------------------------------------------------
+
+export type TillCashRequestView = {
+  id: string;
+  direction: "IN" | "OUT";
+  amount: string;
+  note: string;
+  requestedByName: string;
+  requestedAt: Date;
+  /** WAITING until someone allowed to has answered. */
+  status: "WAITING" | "APPROVED" | "REFUSED" | "WITHDRAWN";
+  decidedByName: string | null;
+  decisionNote: string | null;
+  /** True when this person may still take it back. */
+  canWithdraw: boolean;
+};
+
+/** Whoever may both review tills and run one answers cash requests: admin, manager, owner (not the accountant). */
+const answersCashRequests = (context: AppContext) => can(context, "till.reviewAny") && can(context, "till.operateOwn");
+
+async function cashRequestsOf(context: AppContext, db: Db, sessionId: string): Promise<TillCashRequestView[]> {
+  const rows = await db.tillCashRequest.findMany({
+    where: { tillSessionId: sessionId, ...(can(context, "till.reviewAny") ? {} : { requestedByUserId: context.actor.userId }) },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    include: { decision: true },
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    direction: row.direction,
+    amount: row.amount.toFixed(2),
+    note: row.note,
+    requestedByName: row.requestedByName,
+    requestedAt: row.createdAt,
+    status: row.decision?.outcome ?? "WAITING",
+    decidedByName: row.decision?.decidedByName ?? null,
+    decisionNote: row.decision?.note ?? null,
+    canWithdraw: !row.decision && row.requestedByUserId === context.actor.userId,
+  }));
+}
+
+const cashRequestSchema = z.object({
+  /** Made up on the person's computer, so pressing the button twice saves one request. */
+  requestId: z.string().uuid("This form has expired. Reload the page."),
+  sessionId: z.string().uuid("That till session could not be found."),
+  direction: z.enum(["IN", "OUT"], "Choose cash in or cash out."),
+  amount: z.string().trim(),
+  note: z.string().trim().min(3, "Say what the cash is for.").max(300, "The note is too long (300 characters at most)."),
+});
+
+const NOT_RECORDED = "Nothing was recorded. Please correct what is marked.";
+
+/** What the drawer of an open session should hold right now. Call with the terminal's turn taken. */
+async function shouldHold(tx: Parameters<typeof drawerMovements>[0] & Pick<Db, "tillSession">, sessionId: string): Promise<Decimal> {
+  const session = await tx.tillSession.findFirst({ where: { id: sessionId }, select: { openingFloat: true } });
+  return new Decimal(session?.openingFloat.toFixed(2) ?? "0").plus((await drawerMovements(tx, sessionId)).net);
+}
+
+/**
+ * Asks to put cash into an open till, or take cash out of it, with a note saying why. From
+ * someone who may answer such requests it counts at once; from anyone else it waits for one
+ * of them. Sending the same request again changes nothing.
+ */
+export async function requestTillCash(context: AppContext, input: unknown): Promise<{ id: string; status: "WAITING" | "APPROVED" }> {
+  authorize(context, "till.operateOwn");
+  const businessId = businessIdOf(context);
+  const data = parseInput(cashRequestSchema, input);
+  const db = businessDb(context);
+
+  const fieldErrors: Record<string, string> = {};
+  const amount = parseAmount(data.amount, fieldErrors, "amount", "Enter the amount as a plain number greater than zero, for example 5000 (no commas).");
+  if (amount && !amount.greaterThan(0)) fieldErrors.amount = "Enter an amount greater than zero.";
+  if (!amount || Object.keys(fieldErrors).length > 0) throw new ValidationError(NOT_RECORDED, fieldErrors);
+
+  const saved = async () => {
+    const row = await db.tillCashRequest.findFirst({ where: { requestId: data.requestId }, select: { id: true, decision: { select: { outcome: true } } } });
+    return row ? { id: row.id, status: row.decision?.outcome === "APPROVED" ? ("APPROVED" as const) : ("WAITING" as const) } : null;
+  };
+  const repeat = await saved();
+  if (repeat) return repeat;
+
+  const session = await db.tillSession.findFirst({
+    where: { id: data.sessionId },
+    select: { id: true, number: true, terminalId: true, terminalCode: true, close: { select: { id: true } } },
+  });
+  if (!session) throw new NotFoundError("That till session could not be found.");
+  const atOnce = answersCashRequests(context);
+  const words = data.direction === "IN" ? "put into" : "taken out of";
+
+  try {
+    return await db.$transaction(
+      async (tx) => {
+        // The terminal's "turn", as for selling and closing: the till cannot be closed underneath this.
+        await tx.terminal.update({ where: { id: session.terminalId }, data: { updatedAt: new Date() }, select: { id: true } });
+        const closed = await tx.tillSessionClose.findFirst({ where: { sessionId: session.id }, select: { id: true } });
+        if (closed) throw new ValidationError(`Nothing was recorded: ${tillSessionNumber(session.number)} is closed.`);
+        if (atOnce && data.direction === "OUT") {
+          const holds = await shouldHold(tx, session.id);
+          if (holds.lessThan(amount)) {
+            throw new ValidationError(NOT_RECORDED, { amount: `The till of ${session.terminalCode} should only hold ${formatNaira(holds)}.` });
+          }
+        }
+        const request = await tx.tillCashRequest.create({
+          data: {
+            businessId,
+            requestId: data.requestId,
+            tillSessionId: session.id,
+            direction: data.direction,
+            amount: moneyToString(amount),
+            note: data.note,
+            requestedByUserId: context.actor.userId,
+            requestedByName: context.actor.name,
+          },
+          select: { id: true },
+        });
+        if (atOnce) {
+          await tx.tillCashDecision.create({
+            data: { businessId, cashRequestId: request.id, outcome: "APPROVED", decidedByUserId: context.actor.userId, decidedByName: context.actor.name },
+          });
+        }
+        await tx.activityLog.create({
+          data: activityRow(context, {
+            action: atOnce ? "till.cash_recorded" : "till.cash_requested",
+            summary: atOnce
+              ? `${context.actor.name} recorded ${formatNaira(amount)} ${words} the till of ${session.terminalCode} (${tillSessionNumber(session.number)}): ${data.note}`
+              : `${context.actor.name} asked for ${formatNaira(amount)} to be ${words} the till of ${session.terminalCode} (${tillSessionNumber(session.number)}): ${data.note}`,
+            targetType: "till_cash_request",
+            targetId: request.id,
+          }),
+        });
+        return { id: request.id, status: atOnce ? ("APPROVED" as const) : ("WAITING" as const) };
+      },
+      { isolationLevel: "ReadCommitted", timeout: 20_000 },
+    );
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const again = await saved();
+      if (again) return again;
+    }
+    throw error;
+  }
+}
+
+export type WaitingTillCash = {
+  id: string;
+  direction: "IN" | "OUT";
+  amount: string;
+  note: string;
+  requestedByName: string;
+  requestedAt: Date;
+  terminalCode: string;
+  sessionNumber: number;
+};
+
+/** The cash requests of open tills that are waiting for an answer, oldest first. */
+export async function listWaitingTillCash(context: AppContext): Promise<{ requests: WaitingTillCash[] }> {
+  authorize(context, "till.reviewAny");
+  authorize(context, "till.operateOwn");
+  const rows = await businessDb(context).tillCashRequest.findMany({
+    where: { decision: null, tillSession: { close: null } },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: 50,
+    include: { tillSession: { select: { number: true, terminalCode: true } } },
+  });
+  return {
+    requests: rows.map((row) => ({
+      id: row.id,
+      direction: row.direction,
+      amount: row.amount.toFixed(2),
+      note: row.note,
+      requestedByName: row.requestedByName,
+      requestedAt: row.createdAt,
+      terminalCode: row.tillSession.terminalCode,
+      sessionNumber: row.tillSession.number,
+    })),
+  };
+}
+
+const decideCashSchema = z.object({
+  cashRequestId: z.string().uuid("That request could not be found."),
+  approve: z.boolean(),
+  note: z.string().trim().max(300, "The note is too long (300 characters at most).").optional().default(""),
+});
+
+const CASH_ALREADY_ANSWERED = "That request has already been answered or taken back.";
+
+/**
+ * A manager, admin or owner approves or refuses a cash request. Once approved it is part of
+ * what the till should hold. Cash out is refused if the till should not hold that much.
+ */
+export async function decideTillCash(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "till.reviewAny");
+  authorize(context, "till.operateOwn");
+  const businessId = businessIdOf(context);
+  const data = parseInput(decideCashSchema, input);
+  const db = businessDb(context);
+  const request = await db.tillCashRequest.findFirst({
+    where: { id: data.cashRequestId },
+    include: { decision: { select: { id: true } }, tillSession: { select: { id: true, number: true, terminalId: true, terminalCode: true } } },
+  });
+  if (!request) throw new NotFoundError("That request could not be found.");
+  if (request.decision) throw new ValidationError(CASH_ALREADY_ANSWERED);
+  const amount = new Decimal(request.amount.toFixed(2));
+  const session = request.tillSession;
+
+  try {
+    await db.$transaction(
+      async (tx) => {
+        await tx.terminal.update({ where: { id: session.terminalId }, data: { updatedAt: new Date() }, select: { id: true } });
+        // The answer first: there can be only one.
+        await tx.tillCashDecision.create({
+          data: {
+            businessId,
+            cashRequestId: request.id,
+            outcome: data.approve ? "APPROVED" : "REFUSED",
+            note: data.note || null,
+            decidedByUserId: context.actor.userId,
+            decidedByName: context.actor.name,
+          },
+        });
+        if (data.approve) {
+          const closed = await tx.tillSessionClose.findFirst({ where: { sessionId: session.id }, select: { id: true } });
+          if (closed) throw new ValidationError(`${tillSessionNumber(session.number)} has been closed, so this can no longer be approved. It can only be refused.`);
+          // Checked with this request already counted: the drawer may not go below zero.
+          if (request.direction === "OUT" && (await shouldHold(tx, session.id)).isNegative()) {
+            const holds = (await shouldHold(tx, session.id)).plus(amount);
+            throw new ValidationError(`Not approved: the till of ${session.terminalCode} should only hold ${formatNaira(holds)}, less than the ${formatNaira(amount)} asked for.`);
+          }
+        }
+        await tx.activityLog.create({
+          data: activityRow(context, {
+            action: data.approve ? "till.cash_approved" : "till.cash_refused",
+            summary:
+              `${context.actor.name} ${data.approve ? "approved" : "refused"} ${formatNaira(amount)} ${request.direction === "IN" ? "into" : "out of"} the till of ` +
+              `${session.terminalCode} (${tillSessionNumber(session.number)}), asked for by ${request.requestedByName}: ${request.note}${data.note ? ` — ${data.note}` : ""}`,
+            targetType: "till_cash_request",
+            targetId: request.id,
+          }),
+        });
+      },
+      { isolationLevel: "ReadCommitted", timeout: 20_000 },
+    );
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") throw new ValidationError(CASH_ALREADY_ANSWERED);
+    throw error;
+  }
+}
+
+/** The person who asked takes a waiting cash request back. Nothing happens if it was already answered. */
+export async function withdrawTillCash(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "till.operateOwn");
+  const { cashRequestId } = parseInput(z.object({ cashRequestId: z.string().uuid("That request could not be found.") }), input);
+  const db = businessDb(context);
+  const request = await db.tillCashRequest.findFirst({
+    where: { id: cashRequestId, requestedByUserId: context.actor.userId },
+    select: { id: true, decision: { select: { id: true } } },
+  });
+  if (!request) throw new NotFoundError("That request could not be found.");
+  if (request.decision) return;
+  try {
+    await db.tillCashDecision.create({
+      data: { businessId: businessIdOf(context), cashRequestId: request.id, outcome: "WITHDRAWN", decidedByUserId: context.actor.userId, decidedByName: context.actor.name },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +613,14 @@ export async function closeTill(context: AppContext, input: unknown): Promise<Cl
       async (tx) => {
         // The terminal's "turn": no sale can be going through this till while it is being closed.
         await tx.terminal.update({ where: { id: session.terminalId }, data: { updatedAt: new Date() }, select: { id: true } });
+        // A cash request still waiting would change what the drawer should hold: it must be answered first.
+        const unanswered = await tx.tillCashRequest.count({ where: { tillSessionId: session.id, decision: null } });
+        if (unanswered > 0) {
+          throw new ValidationError(
+            `The till was not closed: ${unanswered === 1 ? "a cash in / cash out request is" : `${unanswered} cash in / cash out requests are`} still waiting for a manager. ` +
+              "Ask for an answer, or take the request back, then close the till.",
+          );
+        }
         const expected = new Decimal(session.openingFloat.toFixed(2)).plus(await cashTakenIn(tx, session.id));
         const difference = counted.minus(expected);
         await tx.tillSessionClose.create({
@@ -563,6 +840,11 @@ export type TillSessionDetail = TillSessionSummary & {
   cashRefunded: string | null;
   /** Cash received in this till from customers repaying debts. Only for those who may review any till. */
   cashRepaid: string | null;
+  /** Cash put into and taken out of the drawer during the day, once approved (C64). Only for reviewers. */
+  cashPutIn: string | null;
+  cashTakenOut: string | null;
+  /** The cash-in / cash-out requests of this session: all of them for reviewers, a person's own otherwise. */
+  cashRequests: TillCashRequestView[];
   /** Float + cash taken; once closed, the figure stored at closing. Only for those who may review any till. */
   expectedCash: string | null;
   /** What was counted at closing. Shown to the person who closed it too. */
@@ -617,12 +899,10 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
     .sort((a, b) => b.amount.comparedTo(a.amount) || a.methodName.localeCompare(b.methodName));
   const cashRefunded = new Decimal(cashRefunds._sum.amount?.toFixed(2) ?? "0");
   const cashRepaid = new Decimal(cashRepayments._sum.amount?.toFixed(2) ?? "0");
-  const cash = byMethod
-    .filter((entry) => entry.kind === "CASH")
-    .reduce((sum, entry) => sum.plus(entry.amount), ZERO)
-    .plus(cashRepaid)
-    .minus(cashRefunded);
+  const drawer = await drawerMovements(db, session.id);
+  const cash = drawer.net;
   const reviews = can(context, "till.reviewAny");
+  const cashRequests = await cashRequestsOf(context, db, session.id);
 
   return {
     id: session.id,
@@ -640,6 +920,9 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
     cancelledCount,
     cashRefunded: reviews ? moneyToString(cashRefunded) : null,
     cashRepaid: reviews ? moneyToString(cashRepaid) : null,
+    cashPutIn: reviews ? moneyToString(drawer.cashIn) : null,
+    cashTakenOut: reviews ? moneyToString(drawer.cashOut) : null,
+    cashRequests,
     // What was taken in cash would give the expected figure away, so only reviewers see it.
     byMethod: byMethod.filter((entry) => reviews || entry.kind !== "CASH").map((entry) => ({ ...entry, amount: moneyToString(entry.amount) })),
     expectedCash: !reviews

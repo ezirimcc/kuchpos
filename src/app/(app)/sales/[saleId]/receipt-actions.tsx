@@ -15,7 +15,8 @@ import { Receipt } from "../receipt";
  *
  * Every print is first noted on the server, which says whether it is the original or a
  * reprint; a reprint is marked on the paper. Straight after a sale the receipt prints by
- * itself, once, and "New sale" has the keyboard focus so Enter starts the next sale.
+ * itself, once, if the business has chosen automatic printing in Settings (C63); either way
+ * "New sale" has the keyboard focus so Enter starts the next sale.
  */
 export function ReceiptWithActions({
   sale,
@@ -56,8 +57,8 @@ export function ReceiptWithActions({
   useEffect(() => {
     if (!justSold) return;
     newSale.current?.focus();
-    // Straight after the sale: print once, without being asked.
-    if (alreadyPrinted || started.current) return;
+    // Straight after the sale: print once, without being asked — if the business has chosen that (C63).
+    if (!sale.business.autoPrintReceipts || alreadyPrinted || started.current) return;
     started.current = true;
     print();
     // Runs once when the page opens; `print` is recreated on every draw.

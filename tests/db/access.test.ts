@@ -71,6 +71,12 @@ function selling(business: World["a"]) {
   };
 }
 
+/** A cash-out a cashier of business B has asked for, still waiting. */
+let cashRequestInB = "";
+function cashOut(sessionId: string) {
+  return { requestId: randomUUID(), sessionId, direction: "OUT", amount: "50", note: "Bought a broom" };
+}
+
 /** A sale made offline in each business at a price that had since changed: one offline exception each. */
 let exceptionInA = "";
 let exceptionInB = "";
@@ -181,6 +187,7 @@ beforeEach(async () => {
   await sales.postOfflineSale(world.b.as.CASHIER, await madeOffline(world.b, "90.00"));
   exceptionInA = (await getDb().offlineException.findFirstOrThrow({ where: { businessId: world.a.id } })).id;
   exceptionInB = (await getDb().offlineException.findFirstOrThrow({ where: { businessId: world.b.id } })).id;
+  cashRequestInB = (await till.requestTillCash(world.b.as.CASHIER, cashOut(tillInB))).id;
   requestInA = (await approvals.requestApproval(world.a.as.CASHIER, asking(world.a))).requestId;
   requestInB = (await approvals.requestApproval(world.b.as.CASHIER, asking(world.b))).requestId;
   countInA = (await counts.submitCount(world.a.as.STOREKEEPER, counted(world.a))).id;
@@ -611,6 +618,31 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => till.recountTill(context, { sessionId: tillInB, countedCash: "1100", note: "Counted again" }),
   },
   {
+    name: "till.requestTillCash",
+    allowed: SELLERS,
+    run: (context) => till.requestTillCash(context, cashOut(tillInA)),
+    runAgainstB: (context) => till.requestTillCash(context, cashOut(tillInB)),
+  },
+  {
+    name: "till.withdrawTillCash",
+    allowed: SELLERS,
+    // Only the person who asked may take a request back, so each takes back one of their own.
+    run: async (context) => till.withdrawTillCash(context, { cashRequestId: (await till.requestTillCash(context, cashOut(tillInA))).id }),
+    runAgainstB: (context) => till.withdrawTillCash(context, { cashRequestId: cashRequestInB }),
+  },
+  {
+    name: "till.listWaitingTillCash",
+    allowed: PRODUCT_MANAGERS,
+    run: (context) => till.listWaitingTillCash(context),
+  },
+  {
+    name: "till.decideTillCash",
+    allowed: PRODUCT_MANAGERS,
+    run: async (context) =>
+      till.decideTillCash(context, { cashRequestId: (await till.requestTillCash(world.a.as.CASHIER, cashOut(tillInA))).id, approve: true }),
+    runAgainstB: (context) => till.decideTillCash(context, { cashRequestId: cashRequestInB, approve: true }),
+  },
+  {
     name: "till.listTillSessions",
     allowed: SALES_VIEWERS,
     run: (context) => till.listTillSessions(context),
@@ -683,6 +715,11 @@ const OPERATIONS: Operation[] = [
     name: "stock.listExpiringSoon",
     allowed: DELIVERY_VIEWERS,
     run: (context) => stock.listExpiringSoon(context),
+  },
+  {
+    name: "settings.setReceiptPrinting",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => settings.setReceiptPrinting(context, { autoPrint: false }),
   },
   {
     name: "settings.setReceiptText",

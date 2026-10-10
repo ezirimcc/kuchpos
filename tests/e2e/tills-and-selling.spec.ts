@@ -833,9 +833,33 @@ test("the offline checkout keeps a sale on the computer, sends it once, and the 
   await expect(page.getByTestId("receipt")).toContainText("Receipt: T1-F000002");
   await expect(page.getByTestId("offline-waiting")).toHaveText("Nothing waiting to send");
 
-  // Back to normal selling: both are on the server, once each, marked as made offline.
+  // Back to normal selling.
   await page.getByTestId("back-online").click();
   await expect(page.getByTestId("checkout-search")).toBeVisible();
+
+  // The internet drops in the middle of a sale: the server cannot be reached when Complete is pressed.
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("3");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.route("**/sell", (route) => (route.request().method() === "POST" ? route.abort() : route.continue()));
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("no-internet")).toBeVisible();
+  await page.unroute("**/sell");
+  // The sale in progress comes along to the offline checkout and is completed there…
+  await page.getByTestId("carry-on-offline").click();
+  await expect(page.getByTestId("offline-bar")).toBeVisible();
+  await expect(page.getByTestId("cart-total")).toHaveText("₦1,500.00");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt")).toContainText("Receipt: T1-F000003");
+  // …and the next sale starts empty, not with the old one again.
+  await page.getByTestId("offline-next").click();
+  await expect(page.getByTestId("cart-empty")).toBeVisible();
+  await expect(page.getByTestId("offline-waiting")).toHaveText("Nothing waiting to send");
+  await page.getByTestId("back-online").click();
+  await expect(page.getByTestId("checkout-search")).toBeVisible();
+  await expect(page.getByTestId("cart-empty")).toBeVisible();
   await page.goto("/sales");
   await expect(page.getByTestId("sale-row-T1-F000001")).toHaveCount(1);
   await expect(page.getByTestId("sale-row-T1-F000002")).toHaveCount(1);
@@ -854,6 +878,104 @@ test("the offline checkout keeps a sale on the computer, sends it once, and the 
   await page.getByRole("link", { name: "Offline exceptions" }).click();
   await expect(page.getByRole("heading", { name: "Offline exceptions" })).toBeVisible();
   await expect(page.getByTestId("exceptions-waiting")).toHaveText("Nothing is waiting to be looked at.");
+});
+
+test("with automatic printing switched off, a sale ends on the receipt with Print and New sale buttons", async ({ page }) => {
+  await signIn(page, "gv.admin");
+  await expectSignedInAs(page, "Admin");
+  await gotoReady(page, "/settings");
+  await expect(page.getByTestId("printer-help")).toContainText("KuchPos cannot choose the printer");
+  const automatic = page.getByLabel("Print the receipt automatically after each sale");
+  await expect(automatic).toBeChecked();
+  await automatic.uncheck();
+  await page.getByRole("button", { name: "Save printing setting" }).click();
+  await expect(page.getByText("Printing setting saved.")).toBeVisible();
+  await signOut(page);
+
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("1");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦500.00");
+  await expect(page.getByTestId("new-sale")).toBeFocused();
+  // Nothing printed by itself; the button prints the original (not a reprint).
+  expect(await printed(page)).toBe(0);
+  await page.getByRole("button", { name: "Print receipt" }).click();
+  await expect(page.getByRole("button", { name: "Print again" })).toBeVisible();
+  expect(await printed(page)).toBe(1);
+  await expect(page.getByTestId("reprint-mark")).toHaveCount(0);
+  await signOut(page);
+
+  // Back on, as the shop had it.
+  await signIn(page, "gv.admin");
+  await expectSignedInAs(page, "Admin");
+  await gotoReady(page, "/settings");
+  await page.getByLabel("Print the receipt automatically after each sale").check();
+  await page.getByRole("button", { name: "Save printing setting" }).click();
+  await expect(page.getByText("Printing setting saved.")).toBeVisible();
+});
+
+test("a cashier asks to take cash out of the till with a note; the manager approves it from the waiting page; a manager's own cash in counts at once", async ({ page, browser }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openFromMenu(page, "Till");
+  await chooseT1(page);
+  const cash = page.getByTestId("till-cash");
+  await expect(cash).toContainText("It is sent to a manager or admin and counts once they approve it.");
+  // A note is required.
+  await cash.getByLabel("Amount (₦)").fill("500");
+  await cash.getByRole("button", { name: "Send for approval" }).click();
+  await expect(cash.getByText("Say what the cash is for.")).toBeVisible();
+  await cash.getByLabel("What it is for").fill("To the bank");
+  await cash.getByRole("button", { name: "Send for approval" }).click();
+  await expect(cash.getByText("Sent. It counts once a manager or admin has approved it.")).toBeVisible();
+  await expect(cash.getByTestId("till-cash-row")).toContainText("Cash out ₦500.00");
+  await expect(cash.getByTestId("till-cash-row")).toContainText("Waiting for a manager");
+  // The till cannot be closed while the request waits.
+  const closing = page.getByTestId("close-till-form");
+  await closing.getByLabel("Cash counted in the drawer (₦)").fill("1");
+  await closing.getByRole("button", { name: "Close the till" }).click();
+  await expect(page.getByText(/still waiting for a manager/)).toBeVisible();
+
+  // The manager is told wherever they are, and approves.
+  const office = await browser.newContext();
+  const manager = await office.newPage();
+  await signIn(manager, "gv.manager");
+  await expectSignedInAs(manager, "Manager");
+  await manager.getByTestId("approvals-waiting").click();
+  const request = manager.getByTestId("waiting-cash-request");
+  await expect(request).toContainText("Cash out of ₦500.00 — till of T1");
+  await expect(request).toContainText("For: To the bank");
+  await expect(request).toContainText("Asked by Green Valley Cashier");
+  await expect(manager.locator("html")).toHaveAttribute("data-ready", "true");
+  await request.getByRole("button", { name: "Approve" }).click();
+  await expect(manager.getByTestId("decision-message")).toContainText("Approved: Green Valley Cashier's cash out.");
+  await expect(manager.getByTestId("nothing-waiting")).toBeVisible();
+
+  // The manager puts ₦500 of change in: no second person is needed.
+  await manager.goto("/till");
+  await chooseT1(manager);
+  const managersCash = manager.getByTestId("till-cash");
+  await managersCash.getByLabel("In or out").selectOption({ label: "Cash in" });
+  await managersCash.getByLabel("Amount (₦)").fill("500");
+  await managersCash.getByLabel("What it is for").fill("Change from the safe");
+  await managersCash.getByRole("button", { name: "Record" }).click();
+  await expect(managersCash.getByText("Recorded.")).toBeVisible();
+  await expect(managersCash.getByTestId("till-cash-row")).toHaveCount(2);
+  await manager.getByRole("link", { name: /See this session/ }).click();
+  await expect(manager.getByTestId("till-cash-in")).toHaveText("+₦500.00");
+  await expect(manager.getByTestId("till-cash-out")).toHaveText("−₦500.00");
+  await office.close();
+
+  // The cashier sees the answer, and never what the till should hold.
+  await page.reload();
+  await chooseT1(page);
+  await expect(page.getByTestId("till-cash").getByTestId("till-cash-row")).toContainText("Approved");
+  await expect(page.getByTestId("till-cash").getByTestId("till-cash-row")).toHaveCount(1);
+  await expect(page.getByTestId("till-expected-now")).toHaveCount(0);
 });
 
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {

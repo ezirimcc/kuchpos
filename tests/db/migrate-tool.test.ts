@@ -96,6 +96,8 @@ describe("database update tool for the hosting server", () => {
       "approval_request_decision",
       "offline_exception",
       "offline_exception_review",
+      "till_cash_request",
+      "till_cash_decision",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(
@@ -158,6 +160,7 @@ describe("database update tool for the hosting server", () => {
         "sale_line_stock_short_check",
         "sale_offline_check",
         "terminal_offline_number_check",
+        "till_cash_request_check",
       ]),
     );
   });

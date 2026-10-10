@@ -237,6 +237,11 @@ export function OfflineCheckout() {
         status: "waiting",
       });
       setShown({ receipt, fresh: true });
+      // Printed by itself if the business has chosen that (C63) — once the receipt is on the page.
+      if (kit.business.autoPrintReceipts) window.setTimeout(() => window.print(), 300);
+      // The sale carried over from the online checkout (if this was it) is done with: the
+      // next sale must start empty, with an ID of its own.
+      setStart(null);
       if (reachable) void send();
       return null;
     } catch {

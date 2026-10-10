@@ -30,6 +30,8 @@ model Business {
   deactivatedAt DateTime? @db.DateTime(3)
   /// Staff are signed out after this many minutes without using the app (5 to 480; database CHECK).
   idleSignOutMinutes Int  @default(30)
+  /// Whether a receipt prints by itself when a sale is completed (C63).
+  autoPrintReceipts  Boolean @default(true)
   /// Tax rate in percent (0 to 100; database CHECK). Prices already include tax.
   taxRatePercent Decimal  @default(0) @db.Decimal(5, 2)
   /// Lines printed at the top of every receipt, under the business name (address, phone…).
@@ -85,6 +87,8 @@ model Business {
   approvalRequests ApprovalRequest[]
   offlineExceptions OfflineException[]
   offlineExceptionReviews OfflineExceptionReview[]
+  tillCashRequests TillCashRequest[]
+  tillCashDecisions TillCashDecision[]
   approvalRequestDecisions ApprovalRequestDecision[]
   sales         Sale[]
   saleLines     SaleLine[]
@@ -1088,6 +1092,7 @@ model TillSession {
   repayments     Repayment[]
   close          TillSessionClose?
   recounts       TillSessionRecount[]
+  cashRequests   TillCashRequest[]
 
   @@unique([businessId, number])
   @@index([terminalId, openedAt])
@@ -1350,6 +1355,58 @@ enum ApprovalMethod {
   OWN_SALE
   /// The cashier sent a request and a manager or admin approved it from their own computer.
   REMOTE
+}
+
+enum TillCashDirection {
+  IN
+  OUT
+}
+
+enum TillCashOutcome {
+  APPROVED
+  REFUSED
+  /// Taken back by the person who asked.
+  WITHDRAWN
+}
+
+/// A request to put cash into an open till, or take cash out of it, during the day (C64).
+/// Add-only. It counts towards what the till should hold only once it has an APPROVED decision.
+model TillCashRequest {
+  id                String            @id @default(uuid()) @db.Char(36)
+  businessId        String            @db.Char(36)
+  business          Business          @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Made up on the person's computer, so the same request is never saved twice.
+  requestId         String            @db.Char(36)
+  tillSessionId     String            @db.Char(36)
+  tillSession       TillSession       @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  direction         TillCashDirection
+  amount            Decimal           @db.Decimal(14, 2)
+  note              String            @db.VarChar(300)
+  requestedByUserId String?
+  requestedByName   String
+  createdAt         DateTime          @default(now()) @db.DateTime(3)
+
+  decision          TillCashDecision?
+
+  @@unique([businessId, requestId])
+  @@index([tillSessionId])
+  @@map("till_cash_request")
+}
+
+/// The one answer to a cash request. Add-only; written first in its transaction (it is the lock).
+model TillCashDecision {
+  id              String          @id @default(uuid()) @db.Char(36)
+  businessId      String          @db.Char(36)
+  business        Business        @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  cashRequestId   String          @unique @db.Char(36)
+  cashRequest     TillCashRequest @relation(fields: [cashRequestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  outcome         TillCashOutcome
+  note            String?         @db.VarChar(300)
+  decidedByUserId String?
+  decidedByName   String
+  createdAt       DateTime        @default(now()) @db.DateTime(3)
+
+  @@map("till_cash_decision")
 }
 
 enum OfflineExceptionKind {

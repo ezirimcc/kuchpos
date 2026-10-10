@@ -9,6 +9,7 @@ import { formatDateTime, nairaFromText, tillSessionNumber } from "@/lib/format";
 import { requirePageContext } from "@/server/auth/request";
 import { getTill } from "@/server/business/till";
 import { can } from "@/server/permissions";
+import { TillCashForm } from "./till-cash-form";
 import { CloseTillForm, OpenTillForm, TerminalChooser } from "./till-forms";
 
 export const metadata: Metadata = { title: "Till — KuchPos" };
@@ -103,6 +104,14 @@ export default async function TillPage({ searchParams }: PageProps<"/till">) {
               </Link>
             </CardContent>
           </Card>
+
+          {can(context, "till.operateOwn") && (
+            <Card>
+              <CardContent>
+                <TillCashForm sessionId={till.open.id} countsAtOnce={till.open.cashCountsAtOnce} requests={till.open.cashRequests} />
+              </CardContent>
+            </Card>
+          )}
 
           {till.open.canClose ? (
             <Card>

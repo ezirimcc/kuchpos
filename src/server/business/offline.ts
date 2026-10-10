@@ -25,7 +25,7 @@ export type OfflineKit = {
   passExpiresAt: Date;
   cashier: { userId: string; name: string };
   /** What is printed around a receipt. */
-  business: { id: string; name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null };
+  business: { id: string; name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null; autoPrintReceipts: boolean };
   /** Products, prices, payment methods and customers, as the checkout shows them. */
   catalogue: CheckoutCatalogue;
   /** Each terminal's paper width and the next number of its offline receipt series, as far as the server knows. */
@@ -42,7 +42,7 @@ export async function getOfflineKit(context: AppContext): Promise<OfflineKit> {
   const db = businessDb(context);
   const [catalogue, business, terminals] = await Promise.all([
     getCheckoutCatalogue(context),
-    db.business.findFirst({ select: { id: true, name: true, receiptHeader: true, receiptFooter: true, taxNumber: true } }),
+    db.business.findFirst({ select: { id: true, name: true, receiptHeader: true, receiptFooter: true, taxNumber: true, autoPrintReceipts: true } }),
     db.terminal.findMany({ where: { deactivatedAt: null }, orderBy: { code: "asc" }, select: { id: true, code: true, paperWidth: true, nextOfflineNumber: true } }),
   ]);
   if (!business) throw new NotFoundError("That business could not be found.");

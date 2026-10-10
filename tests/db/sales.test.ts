@@ -578,6 +578,7 @@ describe("the checkout's copy of the catalogue, and receipts", () => {
       receiptHeader: "12 Market Road\n0800 000 0000",
       receiptFooter: "No refund after 7 days",
       taxNumber: "12345678-0001",
+      autoPrintReceipts: true,
     });
   });
 });

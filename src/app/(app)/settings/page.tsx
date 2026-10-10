@@ -1,6 +1,6 @@
 import { Settings } from "lucide-react";
 import type { Metadata } from "next";
-import { ActionForm, SelectField, SubmitButton, TextAreaField, TextField } from "@/components/action-form";
+import { ActionForm, CheckboxField, SelectField, SubmitButton, TextAreaField, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,6 +22,7 @@ import {
   createPaymentMethodAction,
   renamePaymentMethodAction,
   setPaymentMethodActiveAction,
+  setReceiptPrintingAction,
   setReceiptTextAction,
   setTaxRateAction,
   setTerminalActiveAction,
@@ -140,6 +141,46 @@ export default async function SettingsPage() {
             </div>
             <SubmitButton className="mt-2">Save receipt text</SubmitButton>
           </ActionForm>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Printing</CardTitle>
+          <CardDescription>What happens to the receipt when a sale is completed, on every checkout of this business.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <ActionForm action={setReceiptPrintingAction}>
+            <CheckboxField
+              name="autoPrint"
+              label="Print the receipt automatically after each sale"
+              hint="If this is not ticked, the sale ends on the receipt with a Print receipt button and a New sale button."
+              defaultChecked={settings.autoPrintReceipts}
+            />
+            <SubmitButton className="mt-2">Save printing setting</SubmitButton>
+          </ActionForm>
+          <div className="max-w-3xl rounded-2xl bg-muted/50 p-4 text-sm" data-testid="printer-help">
+            <p className="font-medium">Which printer is used</p>
+            <p className="mt-1 text-muted-foreground">
+              KuchPos cannot choose the printer: a website is not allowed to. The browser prints to the printer chosen on that
+              checkout computer. Set it once on each checkout computer:
+            </p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+              <li>
+                In Windows open <span className="text-foreground">Settings → Bluetooth &amp; devices → Printers &amp; scanners</span>. Switch off
+                &quot;Let Windows manage my default printer&quot;, click the receipt printer, then <span className="text-foreground">Set as default</span>.
+              </li>
+              <li>
+                The first time a receipt prints, the browser&apos;s print window opens. Choose the receipt printer as the Destination; the
+                browser remembers it.
+              </li>
+              <li>
+                To print without that window appearing at all, start Chrome or Edge from a shortcut with{" "}
+                <code className="rounded bg-background px-1">--kiosk-printing</code> added to the end of its Target. It then prints straight to
+                the default printer.
+              </li>
+            </ol>
+          </div>
         </CardContent>
       </Card>
 

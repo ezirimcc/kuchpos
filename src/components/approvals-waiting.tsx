@@ -23,8 +23,8 @@ export function ApprovalsWaiting() {
         // Signed out or no longer allowed: stop asking.
         if (response.status === 401 || response.status === 403) stopped = true;
         if (!response.ok || stopped) return;
-        const body = (await response.json()) as { requests: unknown[] };
-        if (!stopped) setCount(body.requests.length);
+        const body = (await response.json()) as { requests: unknown[]; cashRequests?: unknown[] };
+        if (!stopped) setCount(body.requests.length + (body.cashRequests?.length ?? 0));
       } catch {
         // No connection just now; try again next time.
       }

@@ -12,6 +12,8 @@ const TABLES = [
   "activity_log",
   "stock_movement",
   "document_counter",
+  "till_cash_decision",
+  "till_cash_request",
   "till_session_recount",
   "till_session_close",
   "offline_exception_review",

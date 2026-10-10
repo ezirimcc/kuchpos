@@ -30,6 +30,8 @@ export type BusinessSettings = {
   taxNumber: string;
   /** How many months ahead an expiry date counts as "expiring soon". */
   expiringSoonMonths: number;
+  /** Whether a receipt prints by itself when a sale is completed (C63). */
+  autoPrintReceipts: boolean;
   taxRateHistory: TaxRateChangeView[];
 };
 
@@ -45,6 +47,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
       receiptFooter: true,
       taxNumber: true,
       expiringSoonMonths: true,
+      autoPrintReceipts: true,
     },
   });
   if (!business) throw new NotFoundError("That business could not be found.");
@@ -61,6 +64,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
     receiptFooter: business.receiptFooter ?? "",
     taxNumber: business.taxNumber ?? "",
     expiringSoonMonths: business.expiringSoonMonths,
+    autoPrintReceipts: business.autoPrintReceipts,
     taxRateHistory: history.map((entry) => ({
       id: entry.id,
       createdAt: entry.createdAt,
@@ -186,6 +190,32 @@ export async function setReceiptText(context: AppContext, input: unknown): Promi
       data: activityRow(context, {
         action: "settings.receipt_text_changed",
         summary: `${context.actor.name} changed the text printed on receipts.`,
+        targetType: "business",
+        targetId: business.id,
+      }),
+    });
+  });
+}
+
+const receiptPrintingSchema = z.object({ autoPrint: z.boolean() });
+
+/**
+ * Chooses whether a receipt prints by itself when a sale is completed (C63). When it does
+ * not, the sale ends on the receipt with a "Print receipt" and a "New sale" button.
+ */
+export async function setReceiptPrinting(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "settings.manage");
+  const { autoPrint } = parseInput(receiptPrintingSchema, input);
+
+  await businessDb(context).$transaction(async (tx) => {
+    const business = await tx.business.findFirst({ select: { id: true, autoPrintReceipts: true } });
+    if (!business) throw new NotFoundError("That business could not be found.");
+    if (business.autoPrintReceipts === autoPrint) return;
+    await tx.business.update({ where: { id: business.id }, data: { autoPrintReceipts: autoPrint } });
+    await tx.activityLog.create({
+      data: activityRow(context, {
+        action: "settings.receipt_printing_changed",
+        summary: `${context.actor.name} set receipts to ${autoPrint ? "print by themselves after each sale" : "print only when the Print button is pressed"}.`,
         targetType: "business",
         targetId: business.id,
       }),

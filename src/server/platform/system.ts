@@ -60,6 +60,8 @@ const ADD_ONLY_TABLES = [
   "approval_request_decision",
   "offline_exception",
   "offline_exception_review",
+  "till_cash_request",
+  "till_cash_decision",
 ];
 
 /**
@@ -122,6 +124,7 @@ const REQUIRED_CHECKS = [
   "sale_line_stock_short_check",
   "sale_offline_check",
   "terminal_offline_number_check",
+  "till_cash_request_check",
 ];
 
 function readAppVersion(): string {

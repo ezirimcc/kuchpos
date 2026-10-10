@@ -50,7 +50,9 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       topRight={
         <>
           {can(context, "sale.create") && <OfflineStatus />}
-          {(can(context, "discount.approve") || can(context, "customer.setCreditLimit")) && <ApprovalsWaiting />}
+          {(can(context, "discount.approve") || can(context, "customer.setCreditLimit") || (can(context, "till.reviewAny") && can(context, "till.operateOwn"))) && (
+            <ApprovalsWaiting />
+          )}
           <ThemeToggle startDark={choices.get("kuchpos_theme")?.value === "dark"} />
           <UserMenu name={context.actor.name} username={context.actor.username} roleLabel={ROLE_LABELS[context.actor.role]} />
         </>

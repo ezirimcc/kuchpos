@@ -12,6 +12,7 @@ import { activityRow } from "@/server/activity";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize, can, ROLE_LABELS } from "@/server/permissions";
+import { describeReturn, returnSchema, workOutReturn } from "@/server/return-lines";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
 
 /**
@@ -30,10 +31,13 @@ const MAX_REFUSALS = 5;
 const NOT_APPROVED = "Not approved. Please correct what is marked.";
 
 const askSchema = z.object({
-  kind: z.enum(["DISCOUNT", "CREDIT_OVER_LIMIT"]),
+  kind: z.enum(["DISCOUNT", "CREDIT_OVER_LIMIT", "RETURN"]),
   /** The ID the checkout gave the sale. The approval is good for that sale only. */
   saleRequestId: z.string().uuid("This sale has expired. Start a new sale."),
-  lines: saleLinesSchema,
+  /** The sale's lines, for a discount or credit. */
+  lines: saleLinesSchema.optional(),
+  /** For a return: the return exactly as it will be saved. Its own `requestId` is what the approval is tied to. */
+  return: returnSchema.optional(),
   discount: z
     .object({
       amount: z.string().trim(),
@@ -57,10 +61,16 @@ export type ApprovalDetails = {
   subtotal: string;
   discountPercent: string | null;
   customer: { name: string; owes: string; creditLimit: string } | null;
+  /** For a return: the receipt it is against. */
+  returnOf?: string;
 };
 
+export type ApprovalKindValue = "DISCOUNT" | "CREDIT_OVER_LIMIT" | "RETURN";
+
 type Asked = {
-  permission: "discount.approve" | "customer.setCreditLimit";
+  permission: "discount.approve" | "customer.setCreditLimit" | "return.approve";
+  /** What the approval is tied to: the sale's ID, or the return's. */
+  boundTo: string;
   fingerprint: string;
   amount: Decimal;
   basis: Decimal;
@@ -76,6 +86,36 @@ type Asked = {
 async function workOutWhatIsAsked(context: AppContext, data: z.infer<typeof askSchema>): Promise<Asked> {
   const db = businessDb(context);
   const fieldErrors: Record<string, string> = {};
+  if (data.kind === "RETURN") {
+    authorize(context, "return.request");
+    if (!data.return) throw new ValidationError(NOT_APPROVED, { lines: "Enter the return first." });
+    const worked = await workOutReturn(db, data.return, NOT_APPROVED);
+    const places: Record<string, string> = { SHELF: "back on the Shelf", STOREROOM: "back to the Storeroom", WRITTEN_OFF: "damaged — written off" };
+    return {
+      permission: "return.approve",
+      boundTo: data.return.requestId,
+      fingerprint: worked.fingerprint,
+      // (An approval's amount must be above zero; goods that had been given away refund nothing.)
+      amount: Decimal.max(worked.refundTotal, new Decimal("0.01")),
+      basis: worked.refundTotal,
+      reason: data.return.reason,
+      summary: describeReturn(worked),
+      details: {
+        returnOf: worked.sale.receiptNumber,
+        lines: worked.lines.map((line) => ({
+          productName: `${line.productName} (${places[line.disposition]})`,
+          quantity: line.quantity.toFixed(3),
+          unitName: line.unitName,
+          unitPrice: moneyToString(line.refundAmount),
+          lineTotal: moneyToString(line.refundAmount),
+        })),
+        subtotal: moneyToString(worked.refundTotal),
+        discountPercent: null,
+        customer: null,
+      },
+    };
+  }
+  if (!data.lines) throw new ValidationError(NOT_APPROVED, { lines: "Add at least one product to the sale." });
   const { checked } = await checkSaleLines(db, context, data.lines, fieldErrors);
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError("The sale itself has a problem. Correct what is marked before asking for approval.", fieldErrors);
@@ -96,6 +136,7 @@ async function workOutWhatIsAsked(context: AppContext, data: z.infer<typeof askS
     if (Object.keys(fieldErrors).length > 0) throw new ValidationError(NOT_APPROVED, fieldErrors);
     return {
       permission: "discount.approve",
+      boundTo: data.saleRequestId,
       fingerprint: discountFingerprint(data.saleRequestId, checked, discount),
       amount: discount,
       basis: subtotal,
@@ -130,6 +171,7 @@ async function workOutWhatIsAsked(context: AppContext, data: z.infer<typeof askS
   const owedAfter = owes.plus(credit);
   return {
     permission: "customer.setCreditLimit",
+    boundTo: data.saleRequestId,
     fingerprint: creditFingerprint(data.saleRequestId, customer.id, credit),
     amount: credit,
     basis: owedAfter,
@@ -206,7 +248,7 @@ export async function approveAtScreen(context: AppContext, input: unknown): Prom
         businessId,
         kind: data.kind,
         method: "AT_SCREEN",
-        saleRequestId: data.saleRequestId,
+        saleRequestId: what.boundTo,
         fingerprint: what.fingerprint,
         amount: moneyToString(what.amount),
         basis: moneyToString(what.basis),
@@ -245,7 +287,7 @@ export async function approveAtScreen(context: AppContext, input: unknown): Prom
 
 const listSchema = z.object({
   search: z.string().trim().max(100).optional().default(""),
-  kind: z.enum(["", "DISCOUNT", "CREDIT_OVER_LIMIT"]).optional().default(""),
+  kind: z.enum(["", "DISCOUNT", "CREDIT_OVER_LIMIT", "RETURN"]).optional().default(""),
   from: z.string().trim().optional().default(""),
   to: z.string().trim().optional().default(""),
   page: pageNumber,
@@ -253,7 +295,7 @@ const listSchema = z.object({
 
 export type ApprovalRow = {
   id: string;
-  kind: "DISCOUNT" | "CREDIT_OVER_LIMIT";
+  kind: ApprovalKindValue;
   /** True when the seller approved it themselves, as someone allowed to. */
   ownSale: boolean;
   /** True when it was approved from the approver's own computer, not at the cashier's screen. */
@@ -360,7 +402,7 @@ export async function requestApproval(context: AppContext, input: unknown): Prom
   const waiting = await db.approvalRequest.findFirst({
     where: {
       kind: data.kind,
-      saleRequestId: data.saleRequestId,
+      saleRequestId: what.boundTo,
       fingerprint: what.fingerprint,
       requestedByUserId: context.actor.userId,
       decision: null,
@@ -375,7 +417,7 @@ export async function requestApproval(context: AppContext, input: unknown): Prom
     data: {
       businessId,
       kind: data.kind,
-      saleRequestId: data.saleRequestId,
+      saleRequestId: what.boundTo,
       fingerprint: what.fingerprint,
       amount: moneyToString(what.amount),
       basis: moneyToString(what.basis),
@@ -448,8 +490,9 @@ export async function withdrawApprovalRequest(context: AppContext, input: unknow
 }
 
 /** The kinds of request this person may answer. */
-function kindsAnswerable(context: AppContext): ("DISCOUNT" | "CREDIT_OVER_LIMIT")[] {
+function kindsAnswerable(context: AppContext): ApprovalKindValue[] {
   return [
+    ...(can(context, "return.approve") ? (["RETURN"] as const) : []),
     ...(can(context, "discount.approve") ? (["DISCOUNT"] as const) : []),
     ...(can(context, "customer.setCreditLimit") ? (["CREDIT_OVER_LIMIT"] as const) : []),
   ];
@@ -457,7 +500,7 @@ function kindsAnswerable(context: AppContext): ("DISCOUNT" | "CREDIT_OVER_LIMIT"
 
 export type WaitingApproval = {
   id: string;
-  kind: "DISCOUNT" | "CREDIT_OVER_LIMIT";
+  kind: ApprovalKindValue;
   amount: string;
   basis: string;
   reason: string | null;
@@ -508,7 +551,7 @@ export async function decideApprovalRequest(context: AppContext, input: unknown)
 
   const request = await db.approvalRequest.findFirst({ where: { id: data.requestId }, include: { decision: { select: { id: true } } } });
   if (!request) throw new NotFoundError("That request could not be found.");
-  authorize(context, request.kind === "DISCOUNT" ? "discount.approve" : "customer.setCreditLimit");
+  authorize(context, request.kind === "DISCOUNT" ? "discount.approve" : request.kind === "RETURN" ? "return.approve" : "customer.setCreditLimit");
   if (request.decision) throw new ValidationError(ALREADY_ANSWERED);
   if (request.expiresAt.getTime() <= Date.now()) {
     throw new ValidationError(`That request has run out: it waits ${APPROVAL_MINUTES} minutes. The cashier can send it again.`);
@@ -519,7 +562,9 @@ export async function decideApprovalRequest(context: AppContext, input: unknown)
   const what =
     request.kind === "DISCOUNT"
       ? `a discount of ${formatNaira(amount)} on a sale of ${formatNaira(basis)}`
-      : `${formatNaira(amount)} on credit over a customer's limit (owing ${formatNaira(basis)} afterwards)`;
+      : request.kind === "RETURN"
+        ? `a return with a refund of ${formatNaira(basis)}`
+        : `${formatNaira(amount)} on credit over a customer's limit (owing ${formatNaira(basis)} afterwards)`;
   try {
     await db.$transaction(async (tx) => {
       // The answer first: there can be only one, so a second answerer stops here.

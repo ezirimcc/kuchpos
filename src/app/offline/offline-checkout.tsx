@@ -96,6 +96,8 @@ function receiptFor(kit: StoredKit, sale: SaleToSave, receiptNumber: string): Of
     owedAfter: null,
     cancellation: null,
     canCancel: false,
+    returns: [],
+    canReturn: false,
     printCount: 0,
     business: kit.business,
     lines,

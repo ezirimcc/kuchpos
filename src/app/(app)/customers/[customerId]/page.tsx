@@ -18,7 +18,7 @@ import { RepaymentForm } from "./repayment-form";
 
 export const metadata: Metadata = { title: "Customer — KuchPos" };
 
-const ENTRY_LABELS = { CREDIT_SALE: "Bought on credit", REPAYMENT: "Repayment", SALE_CANCELLED: "Credit sale cancelled" } as const;
+const ENTRY_LABELS = { CREDIT_SALE: "Bought on credit", REPAYMENT: "Repayment", SALE_CANCELLED: "Credit sale cancelled", SALE_RETURN: "Goods returned" } as const;
 
 export default async function CustomerPage({ params, searchParams }: PageProps<"/customers/[customerId]">) {
   const context = await requirePagePermission("customer.balance.view");

@@ -84,12 +84,21 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
       : null,
   ]);
 
-  // Money received today — for sales and against debts — less money given back today for cancelled sales.
+  // Money handed back today for returned goods counts with the refunds.
+  const returnedToday = collected
+    ? await db.saleReturn.groupBy({ by: ["refundKind"], where: { createdAt: { gte: startOfToday }, refundKind: { not: null } }, _sum: { refundPaid: true } })
+    : [];
+  const handedBack = [
+    ...(refunded ?? []).map((group) => ({ kind: group.kind as string, amount: new Decimal(group._sum.amount?.toFixed(2) ?? "0") })),
+    ...returnedToday.map((group) => ({ kind: group.refundKind as string, amount: new Decimal(group._sum.refundPaid?.toFixed(2) ?? "0") })),
+  ];
+
+  // Money received today — for sales and against debts — less money given back today for cancelled sales and returns.
   const net = (kinds: (kind: string) => boolean) =>
     sumMoney(
       [...(collected ?? []), ...(repaid ?? [])].filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0")),
     ).minus(
-      sumMoney((refunded ?? []).filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0"))),
+      sumMoney(handedBack.filter((entry) => kinds(entry.kind)).map((entry) => entry.amount)),
     );
 
   const collectedToday = collected

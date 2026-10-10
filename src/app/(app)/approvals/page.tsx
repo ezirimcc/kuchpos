@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Waiting for approval — KuchPos" };
 
 export default async function ApprovalsPage() {
   const context = await requirePageContext();
-  const sales = can(context, "discount.approve") || can(context, "customer.setCreditLimit");
+  const sales = can(context, "discount.approve") || can(context, "customer.setCreditLimit") || can(context, "return.approve");
   const tills = can(context, "till.reviewAny") && can(context, "till.operateOwn");
   if (!sales && !tills) redirect("/");
   const [{ requests }, cash] = await Promise.all([
@@ -26,7 +26,7 @@ export default async function ApprovalsPage() {
       <PageHeader
         icon={ShieldCheck}
         title="Waiting for approval"
-        description="Discounts and credit over a customer's limit sent from a checkout (these wait 10 minutes), and cash in or cash out asked for at a till. New requests appear here by themselves."
+        description="Discounts, credit over a customer's limit and returns of goods sent by a cashier (these wait 10 minutes), and cash in or cash out asked for at a till. New requests appear here by themselves."
       >
         {can(context, "report.discounts.view") && (
           <Link href="/sales/discounts" className="text-sm text-link underline-offset-4 hover:underline">

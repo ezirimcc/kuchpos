@@ -32,6 +32,8 @@ export type BusinessSettings = {
   expiringSoonMonths: number;
   /** Whether a receipt prints by itself when a sale is completed (C63). */
   autoPrintReceipts: boolean;
+  /** How many days after a sale its goods may still be returned (C62); 0 means no limit. */
+  returnDays: number;
   taxRateHistory: TaxRateChangeView[];
 };
 
@@ -48,6 +50,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
       taxNumber: true,
       expiringSoonMonths: true,
       autoPrintReceipts: true,
+      returnDays: true,
     },
   });
   if (!business) throw new NotFoundError("That business could not be found.");
@@ -65,6 +68,7 @@ export async function getBusinessSettings(context: AppContext): Promise<Business
     taxNumber: business.taxNumber ?? "",
     expiringSoonMonths: business.expiringSoonMonths,
     autoPrintReceipts: business.autoPrintReceipts,
+    returnDays: business.returnDays,
     taxRateHistory: history.map((entry) => ({
       id: entry.id,
       createdAt: entry.createdAt,
@@ -190,6 +194,40 @@ export async function setReceiptText(context: AppContext, input: unknown): Promi
       data: activityRow(context, {
         action: "settings.receipt_text_changed",
         summary: `${context.actor.name} changed the text printed on receipts.`,
+        targetType: "business",
+        targetId: business.id,
+      }),
+    });
+  });
+}
+
+const MAX_RETURN_DAYS = 3650;
+const RETURN_DAYS_MESSAGE = `Enter a whole number of days from 0 to ${MAX_RETURN_DAYS} (0 means no limit).`;
+const returnDaysSchema = z.object({
+  days: z
+    .string()
+    .trim()
+    .regex(/^\d{1,4}$/, RETURN_DAYS_MESSAGE)
+    .transform((text) => Number.parseInt(text, 10))
+    .refine((days) => days <= MAX_RETURN_DAYS, RETURN_DAYS_MESSAGE),
+});
+
+/** Sets how many days after a sale its goods may still be returned (C62). 0 means there is no limit. */
+export async function setReturnDays(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "settings.manage");
+  const { days } = parseInput(returnDaysSchema, input);
+
+  await businessDb(context).$transaction(async (tx) => {
+    const business = await tx.business.findFirst({ select: { id: true, returnDays: true } });
+    if (!business) throw new NotFoundError("That business could not be found.");
+    if (business.returnDays === days) return;
+    await tx.business.update({ where: { id: business.id }, data: { returnDays: days } });
+    await tx.activityLog.create({
+      data: activityRow(context, {
+        action: "settings.return_days_changed",
+        summary:
+          `${context.actor.name} changed the days allowed for a return from ${business.returnDays === 0 ? "no limit" : business.returnDays} ` +
+          `to ${days === 0 ? "no limit" : days}.`,
         targetType: "business",
         targetId: business.id,
       }),

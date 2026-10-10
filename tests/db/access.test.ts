@@ -10,6 +10,7 @@ import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
 import * as offline from "@/server/business/offline";
 import * as paymentMethods from "@/server/business/payment-methods";
+import * as returns from "@/server/business/returns";
 import * as sales from "@/server/business/sales";
 import * as setup from "@/server/business/setup";
 import * as settings from "@/server/business/settings";
@@ -69,6 +70,28 @@ function selling(business: World["a"]) {
     payments: [{ methodId: business.cashMethodId, amount: "100.00" }],
     lines: [{ productId: business.product.id, unitId: business.product.baseUnitId, quantity: "1", unitPrice: "100.00" }],
   };
+}
+
+/** A return a cashier of each business entered (approved at the screen by its manager), and the line it was against. */
+let returnInA = "";
+let returnInB = "";
+let saleLineInA = "";
+async function returningOne(business: World["a"], saleId: string, saleLineId: string, prefix: string, as: AppContext) {
+  const wanted = {
+    requestId: randomUUID(),
+    saleId,
+    reason: "Wrong variety",
+    lines: [{ saleLineId, quantity: "1", disposition: "SHELF" }],
+    refundMethodId: business.transferMethodId,
+  };
+  const { approvalId } = await approvals.approveAtScreen(business.as.CASHIER, {
+    kind: "RETURN",
+    saleRequestId: wanted.requestId,
+    return: wanted,
+    username: `${prefix}.manager`,
+    password: TEST_PASSWORD,
+  });
+  return returns.postReturn(as, { ...wanted, approvalId });
 }
 
 /** A cash-out a cashier of business B has asked for, still waiting. */
@@ -187,6 +210,15 @@ beforeEach(async () => {
   await sales.postOfflineSale(world.b.as.CASHIER, await madeOffline(world.b, "90.00"));
   exceptionInA = (await getDb().offlineException.findFirstOrThrow({ where: { businessId: world.a.id } })).id;
   exceptionInB = (await getDb().offlineException.findFirstOrThrow({ where: { businessId: world.b.id } })).id;
+  // The credit sale of 3 singles made above by each admin: one single comes back.
+  for (const [business, prefix] of [[world.a, "a"], [world.b, "b"]] as const) {
+    const sale = await getDb().sale.findFirstOrThrow({ where: { businessId: business.id, creditAmount: { gt: 0 } }, include: { lines: true } });
+    const saved = await returningOne(business, sale.id, sale.lines[0].id, prefix, business.as.CASHIER);
+    if (business === world.a) {
+      returnInA = saved.id;
+      saleLineInA = sale.lines[0].id;
+    } else returnInB = saved.id;
+  }
   cashRequestInB = (await till.requestTillCash(world.b.as.CASHIER, cashOut(tillInB))).id;
   requestInA = (await approvals.requestApproval(world.a.as.CASHIER, asking(world.a))).requestId;
   requestInB = (await approvals.requestApproval(world.b.as.CASHIER, asking(world.b))).requestId;
@@ -552,6 +584,34 @@ const OPERATIONS: Operation[] = [
     run: (context) => approvals.listApprovals(context),
   },
   {
+    name: "returns.getReturnOptions",
+    allowed: SELLERS,
+    run: (context) => returns.getReturnOptions(context, { saleId: saleInA }),
+    runAgainstB: (context) => returns.getReturnOptions(context, { saleId: saleInB }),
+  },
+  {
+    name: "returns.postReturn",
+    allowed: SELLERS,
+    // Approved by the manager at the screen, which is what a cashier needs (and others do not mind).
+    run: async (context) => {
+      const sale = await getDb().saleLine.findUniqueOrThrow({ where: { id: saleLineInA } });
+      return returningOne(world.a, sale.saleId, saleLineInA, "a", context);
+    },
+    runAgainstB: (context) =>
+      returns.postReturn(context, { requestId: randomUUID(), saleId: saleInB, reason: "Wrong variety", lines: [{ saleLineId: saleLineInA, quantity: "1", disposition: "SHELF" }] }),
+  },
+  {
+    name: "returns.getReturn",
+    allowed: SALES_VIEWERS,
+    run: (context) => returns.getReturn(context, { returnId: returnInA }),
+    runAgainstB: (context) => returns.getReturn(context, { returnId: returnInB }),
+  },
+  {
+    name: "returns.listReturns",
+    allowed: SALES_VIEWERS,
+    run: (context) => returns.listReturns(context),
+  },
+  {
     name: "sales.cancelSale",
     allowed: PRODUCT_MANAGERS,
     run: (context) => sales.cancelSale(context, { saleId: saleInA, note: "Customer changed his mind" }),
@@ -715,6 +775,11 @@ const OPERATIONS: Operation[] = [
     name: "stock.listExpiringSoon",
     allowed: DELIVERY_VIEWERS,
     run: (context) => stock.listExpiringSoon(context),
+  },
+  {
+    name: "settings.setReturnDays",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => settings.setReturnDays(context, { days: "14" }),
   },
   {
     name: "settings.setReceiptPrinting",
@@ -972,6 +1037,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(adjustments).map((name) => `adjustments.${name}`),
       ...Object.keys(approvals).map((name) => `approvals.${name}`),
       ...Object.keys(offline).map((name) => `offline.${name}`),
+      ...Object.keys(returns).map((name) => `returns.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

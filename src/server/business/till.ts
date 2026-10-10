@@ -877,10 +877,9 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
   });
   if (!session) throw new NotFoundError("That till session could not be found.");
 
-  const [sales, cancelledCount, cashRefunds, cashRepayments, groups] = await Promise.all([
+  const [sales, cancelledCount, cashRepayments, groups] = await Promise.all([
     db.sale.aggregate({ where: { tillSessionId: session.id, cancellation: null }, _count: { _all: true }, _sum: { total: true } }),
     db.sale.count({ where: { tillSessionId: session.id, cancellation: { isNot: null } } }),
-    db.refund.aggregate({ where: { tillSessionId: session.id, kind: "CASH" }, _sum: { amount: true } }),
     db.repayment.aggregate({ where: { tillSessionId: session.id, kind: "CASH" }, _sum: { amount: true } }),
     db.payment.groupBy({
       by: ["methodName", "kind"],
@@ -897,9 +896,11 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
       amount: new Decimal(group._sum.amount?.toFixed(2) ?? "0"),
     }))
     .sort((a, b) => b.amount.comparedTo(a.amount) || a.methodName.localeCompare(b.methodName));
-  const cashRefunded = new Decimal(cashRefunds._sum.amount?.toFixed(2) ?? "0");
-  const cashRepaid = new Decimal(cashRepayments._sum.amount?.toFixed(2) ?? "0");
   const drawer = await drawerMovements(db, session.id);
+  // Cash handed back: for cancelled sales and for returned goods.
+  const cashRefunded = drawer.refunds;
+  const cashRepaid = new Decimal(cashRepayments._sum.amount?.toFixed(2) ?? "0");
+
   const cash = drawer.net;
   const reviews = can(context, "till.reviewAny");
   const cashRequests = await cashRequestsOf(context, db, session.id);

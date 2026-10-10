@@ -136,7 +136,7 @@ export default async function TillSessionPage({ params }: PageProps<"/till/sessi
             )}
             {session.cashRefunded !== null && session.cashRefunded !== "0.00" && (
               <p className="flex justify-between gap-3 text-sm">
-                <span className="text-muted-foreground">Cash refunded for cancelled sales</span>
+                <span className="text-muted-foreground">Cash refunded (cancelled sales and returned goods)</span>
                 <span data-testid="till-cash-refunded">−{nairaFromText(session.cashRefunded)}</span>
               </p>
             )}

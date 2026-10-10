@@ -3,7 +3,7 @@
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
 import { createPaymentMethod, renamePaymentMethod, setPaymentMethodActive } from "@/server/business/payment-methods";
-import { setExpiringSoonMonths, setIdleSignOutMinutes, setReceiptPrinting, setReceiptText, setTaxRate } from "@/server/business/settings";
+import { setExpiringSoonMonths, setIdleSignOutMinutes, setReceiptPrinting, setReceiptText, setReturnDays, setTaxRate } from "@/server/business/settings";
 import { createTerminal, renameLocation, setTerminalActive, updateTerminal } from "@/server/business/setup";
 
 export async function setIdleSignOutAction(_previous: FormState, formData: FormData): Promise<FormState> {
@@ -26,6 +26,10 @@ export async function setReceiptTextAction(_previous: FormState, formData: FormD
       taxNumber: field(formData, "taxNumber"),
     }),
   );
+}
+
+export async function setReturnDaysAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Days allowed for a return saved." }, (context) => setReturnDays(context, { days: field(formData, "days") }));
 }
 
 export async function setReceiptPrintingAction(_previous: FormState, formData: FormData): Promise<FormState> {

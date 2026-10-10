@@ -1,4 +1,4 @@
-import { BadgePercent, CloudOff, ReceiptText, ShoppingCart } from "lucide-react";
+import { BadgePercent, CloudOff, ReceiptText, ShoppingCart, Undo2 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -35,6 +35,11 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
         title="Sales"
         description={list.ownOnly ? "The sales you have made, newest first." : "Every sale, newest first. A saved sale is never changed."}
       >
+        {(can(context, "report.sales.view") || can(context, "return.request")) && (
+          <Link href="/returns" className={buttonVariants({ variant: "outline" })}>
+            <Undo2 className="size-4" aria-hidden /> Returns
+          </Link>
+        )}
         {can(context, "report.sales.view") && (
           <Link href="/sales/offline" className={buttonVariants({ variant: "outline" })}>
             <CloudOff className="size-4" aria-hidden /> Offline exceptions

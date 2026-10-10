@@ -111,6 +111,11 @@ export function offlineReceiptNumber(terminalCode: string, number: number): stri
   return `${terminalCode}-F${String(number).padStart(6, "0")}`;
 }
 
+/** RT-000012: the number on a return slip. */
+export function returnNumber(number: number): string {
+  return `RT-${String(number).padStart(6, "0")}`;
+}
+
 /** Repayment numbers are shown as RP-000012. */
 export function repaymentNumber(number: number): string {
   return `RP-${String(number).padStart(6, "0")}`;

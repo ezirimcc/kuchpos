@@ -9,7 +9,7 @@ import { can } from "@/server/permissions";
  */
 export async function GET(): Promise<Response> {
   return answerPassively(async (context) => {
-    const sales = can(context, "discount.approve") || can(context, "customer.setCreditLimit");
+    const sales = can(context, "discount.approve") || can(context, "customer.setCreditLimit") || can(context, "return.approve");
     const tills = can(context, "till.reviewAny") && can(context, "till.operateOwn");
     const [approvals, cash] = await Promise.all([
       // With neither right this is what refuses the request.

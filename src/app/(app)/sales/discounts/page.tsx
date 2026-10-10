@@ -23,7 +23,7 @@ export default async function DiscountsPage({ searchParams }: PageProps<"/sales/
   const filters = { q: text(params.q), kind: text(params.kind), from: text(params.from), to: text(params.to) };
   const list = await listApprovals(context, {
     search: filters.q,
-    kind: filters.kind === "DISCOUNT" || filters.kind === "CREDIT_OVER_LIMIT" ? filters.kind : "",
+    kind: filters.kind === "DISCOUNT" || filters.kind === "CREDIT_OVER_LIMIT" || filters.kind === "RETURN" ? filters.kind : "",
     from: filters.from,
     to: filters.to,
     page: text(params.page),
@@ -47,10 +47,11 @@ export default async function DiscountsPage({ searchParams }: PageProps<"/sales/
           <FilterSelect
             name="kind"
             label="Kind"
-            allLabel="Discounts and credit"
+            allLabel="Every kind"
             options={[
               { value: "DISCOUNT", label: "Discounts" },
               { value: "CREDIT_OVER_LIMIT", label: "Credit over the limit" },
+              { value: "RETURN", label: "Returns" },
             ]}
           />
           <FilterDate name="from" label="From" />
@@ -86,9 +87,13 @@ export default async function DiscountsPage({ searchParams }: PageProps<"/sales/
                 <TableRow key={row.id} data-testid="approval-row">
                   <TableCell className="whitespace-nowrap">{formatDateTime(row.approvedAt)}</TableCell>
                   <TableCell>
-                    {row.kind === "DISCOUNT" ? "Discount" : "Credit over the limit"}
+                    {row.kind === "DISCOUNT" ? "Discount" : row.kind === "RETURN" ? "Return of goods" : "Credit over the limit"}
                     <span className="block text-xs text-muted-foreground">
-                      {row.kind === "DISCOUNT" ? `on a sale of ${nairaFromText(row.basis)}` : `owing ${nairaFromText(row.basis)} afterwards`}
+                      {row.kind === "DISCOUNT"
+                        ? `on a sale of ${nairaFromText(row.basis)}`
+                        : row.kind === "RETURN"
+                          ? `refund of ${nairaFromText(row.basis)}`
+                          : `owing ${nairaFromText(row.basis)} afterwards`}
                     </span>
                   </TableCell>
                   <TableCell className="text-right font-medium tabular-nums">{nairaFromText(row.amount)}</TableCell>

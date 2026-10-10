@@ -176,6 +176,16 @@ export async function listCustomers(
     for (const sum of sums) {
       if (sum.customerId) bought.set(sum.customerId, { purchases: new Decimal((sum._sum.total ?? new Decimal(0)).toFixed(2)), visits: sum._count._all });
     }
+    // What came back is not a purchase: refunds for returned goods (in the same dates) are taken off.
+    const back = await db.saleReturn.groupBy({
+      by: ["customerId"],
+      where: { customerId: { not: null }, ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}) },
+      _sum: { refundTotal: true },
+    });
+    for (const group of back) {
+      const entry = group.customerId ? bought.get(group.customerId) : undefined;
+      if (entry) entry.purchases = Decimal.max(entry.purchases.minus(group._sum.refundTotal?.toFixed(2) ?? "0"), 0);
+    }
   }
   const nothing = { purchases: new Decimal(0), visits: 0 };
   const min = showsPurchases ? amountOrNull(data.min) : null;
@@ -385,7 +395,7 @@ export type CustomerDetail = Omit<CustomerSummary, "purchases" | "visits"> & {
 type Tx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
 
 /** A customer's credit sales that are not fully repaid, oldest first, with what is still owed on each. */
-async function unpaidSalesOf(db: Pick<Tx, "sale" | "repaymentAllocation">, customerId: string) {
+async function unpaidSalesOf(db: Pick<Tx, "sale" | "repaymentAllocation" | "saleReturn">, customerId: string) {
   const sales = await db.sale.findMany({
     where: { customerId, creditAmount: { gt: 0 }, cancellation: null },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -398,6 +408,15 @@ async function unpaidSalesOf(db: Pick<Tx, "sale" | "repaymentAllocation">, custo
     _sum: { amount: true },
   });
   const paidOf = new Map(paid.map((group) => [group.saleId, new Decimal(group._sum.amount?.toFixed(2) ?? "0")]));
+  // Goods that came back took their refund off the debt of the sale they came from.
+  const returned = await db.saleReturn.groupBy({
+    by: ["saleId"],
+    where: { saleId: { in: sales.map((sale) => sale.id) }, debtReduced: { gt: 0 } },
+    _sum: { debtReduced: true },
+  });
+  for (const group of returned) {
+    paidOf.set(group.saleId, (paidOf.get(group.saleId) ?? new Decimal(0)).plus(group._sum.debtReduced?.toFixed(2) ?? "0"));
+  }
   return sales
     .map((sale) => {
       const credit = new Decimal(sale.creditAmount.toFixed(2));
@@ -456,7 +475,7 @@ export async function getCustomer(context: AppContext, input: unknown): Promise<
 export type StatementLine = {
   id: string;
   createdAt: Date;
-  type: "CREDIT_SALE" | "REPAYMENT" | "SALE_CANCELLED";
+  type: "CREDIT_SALE" | "REPAYMENT" | "SALE_CANCELLED" | "SALE_RETURN";
   documentNumber: string;
   /** The sale it belongs to, for linking; null for a repayment. */
   saleId: string | null;

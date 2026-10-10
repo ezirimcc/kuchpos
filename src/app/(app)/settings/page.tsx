@@ -23,6 +23,7 @@ import {
   renamePaymentMethodAction,
   setPaymentMethodActiveAction,
   setReceiptPrintingAction,
+  setReturnDaysAction,
   setReceiptTextAction,
   setTaxRateAction,
   setTerminalActiveAction,
@@ -344,6 +345,36 @@ export default async function SettingsPage() {
               ))}
             </TableBody>
           </Table>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Returns</CardTitle>
+          <CardDescription>
+            How long after a sale its goods may still be brought back. After that the system refuses the return. A return always
+            needs a reason, and a cashier&apos;s return needs a manager&apos;s approval.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ActionForm action={setReturnDaysAction}>
+            <div className="max-w-xs">
+              <TextField
+                name="days"
+                label="Days allowed for a return"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={3650}
+                step={1}
+                defaultValue={settings.returnDays}
+                key={settings.returnDays}
+                hint="0 means no limit"
+                required
+              />
+            </div>
+            <SubmitButton className="mt-2">Save days allowed</SubmitButton>
+          </ActionForm>
         </CardContent>
       </Card>
 

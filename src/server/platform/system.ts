@@ -62,6 +62,8 @@ const ADD_ONLY_TABLES = [
   "offline_exception_review",
   "till_cash_request",
   "till_cash_decision",
+  "sale_return",
+  "sale_return_line",
 ];
 
 /**
@@ -125,6 +127,9 @@ const REQUIRED_CHECKS = [
   "sale_offline_check",
   "terminal_offline_number_check",
   "till_cash_request_check",
+  "sale_return_amounts_check",
+  "sale_return_line_check",
+  "business_return_days_check",
 ];
 
 function readAppVersion(): string {

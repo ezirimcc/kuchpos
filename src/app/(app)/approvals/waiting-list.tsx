@@ -126,7 +126,9 @@ export function WaitingList({ start, startCash }: { start: Waiting[]; startCash:
             <CardContent className="flex flex-col gap-3">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <p className="text-lg font-semibold">
-                  {request.kind === "DISCOUNT"
+                  {request.kind === "RETURN"
+                    ? `Return of goods from sale ${request.details.returnOf ?? ""}: refund ${nairaFromText(request.basis)}`
+                    : request.kind === "DISCOUNT"
                     ? `Discount of ${nairaFromText(request.amount)}${request.details.discountPercent ? ` (${plainNumber(request.details.discountPercent)}%)` : ""} on ${nairaFromText(request.basis)}`
                     : `${nairaFromText(request.amount)} on credit, over the limit`}
                 </p>
@@ -145,13 +147,14 @@ export function WaitingList({ start, startCash }: { start: Waiting[]; startCash:
                 {request.details.lines.map((line, index) => (
                   <li key={index} className="flex justify-between gap-3 py-0.5 tabular-nums">
                     <span>
-                      {line.productName} — {plainNumber(line.quantity)} {line.unitName} × {nairaFromText(line.unitPrice)}
+                      {line.productName} — {plainNumber(line.quantity)} {line.unitName}
+                      {request.kind === "RETURN" ? "" : ` × ${nairaFromText(line.unitPrice)}`}
                     </span>
                     <span>{nairaFromText(line.lineTotal)}</span>
                   </li>
                 ))}
                 <li className="mt-1 flex justify-between gap-3 border-t pt-1 font-medium tabular-nums">
-                  <span>Items come to</span>
+                  <span>{request.kind === "RETURN" ? "To refund" : "Items come to"}</span>
                   <span>{nairaFromText(request.details.subtotal)}</span>
                 </li>
               </ul>

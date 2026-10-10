@@ -1,13 +1,14 @@
-import { ArrowLeft, ReceiptText } from "lucide-react";
+import { ArrowLeft, ReceiptText, Undo2 } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Decimal } from "@/lib/decimal";
-import { formatDateTime, nairaFromText, plainNumber } from "@/lib/format";
+import { formatDateTime, nairaFromText, plainNumber, returnNumber } from "@/lib/format";
 import { formatNaira } from "@/lib/money";
 import { requirePageContext } from "@/server/auth/request";
 import { getSale } from "@/server/business/sales";
@@ -126,6 +127,30 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
           ))}
         </TableBody>
       </Table>
+
+      {(sale.returns.length > 0 || sale.canReturn) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-2 text-sm" data-testid="sale-returns">
+          {sale.returns.length > 0 && (
+            <span>
+              Goods returned from this sale:{" "}
+              {sale.returns.map((entry, index) => (
+                <span key={entry.id}>
+                  {index > 0 ? ", " : ""}
+                  <Link href={`/returns/${entry.id}`} className="text-link underline-offset-4 hover:underline">
+                    {returnNumber(entry.number)}
+                  </Link>{" "}
+                  ({nairaFromText(entry.refundTotal)} refunded)
+                </span>
+              ))}
+            </span>
+          )}
+          {sale.canReturn && (
+            <Link href={`/returns/new?sale=${sale.id}`} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="return-goods">
+              <Undo2 className="size-4" aria-hidden /> Return goods
+            </Link>
+          )}
+        </div>
+      )}
 
       {sale.canCancel && <CancelSaleForm saleId={sale.id} refunds={sale.payments.map((payment) => ({ methodName: payment.methodName, amount: payment.amount }))} />}
 

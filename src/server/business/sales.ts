@@ -13,6 +13,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { claimApproval } from "@/server/approval-claim";
 import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
 import { authorize, can } from "@/server/permissions";
@@ -220,33 +221,6 @@ type CheckedPayment = {
 };
 
 const NOTHING_SOLD = "Nothing was sold. Please correct what is marked.";
-
-type SaleTx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
-
-/**
- * Checks that an approval is the right one for this sale — same kind, same sale, exactly
- * the same thing approved, still in time and not yet used — and hands it back to be spent.
- * Anything else stops the sale.
- */
-async function claimApproval(
-  tx: SaleTx,
-  wanted: { id: string; kind: "DISCOUNT" | "CREDIT_OVER_LIMIT"; saleRequestId: string; fingerprint: string; field: string; missing: string },
-): Promise<{ id: string; approvedByName: string }> {
-  const refuse = (message: string): never => {
-    throw new ValidationError(NOTHING_SOLD, { [wanted.field]: message });
-  };
-  if (!/^[0-9a-f-]{36}$/i.test(wanted.id)) refuse(wanted.missing || "Ask a manager or admin to approve this.");
-  const approval = await tx.approval.findFirst({ where: { id: wanted.id }, include: { use: { select: { id: true } } } });
-  if (!approval || approval.kind !== wanted.kind) return refuse("That approval could not be found. Ask for approval again.");
-  if (approval.saleRequestId !== wanted.saleRequestId || approval.fingerprint !== wanted.fingerprint) {
-    return refuse("The sale was changed after it was approved, so the approval no longer matches. Ask for approval again.");
-  }
-  if (approval.use) return refuse("That approval has already been used. Ask for approval again.");
-  if (approval.expiresAt.getTime() <= Date.now()) {
-    return refuse(`That approval has run out: it lasts ${APPROVAL_MINUTES} minutes. Ask for approval again.`);
-  }
-  return { id: approval.id, approvedByName: approval.approvedByName };
-}
 
 /**
  * Saves a sale: the sale, its lines, the stock leaving the Shelf (or Storeroom), and its
@@ -559,6 +533,8 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
               fingerprint: print,
               field: "discount.approvalId",
               missing: "A manager or admin must approve this discount before the sale can be completed.",
+              nothingSaved: NOTHING_SOLD,
+              what: "sale",
             });
             spent.push(approval.id);
           }
@@ -595,6 +571,8 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
                 fingerprint: print,
                 field: "creditAmount",
                 missing: "",
+                nothingSaved: NOTHING_SOLD,
+                what: "sale",
               });
               spent.push(approval.id);
               overLimitAllowedBy = approval.approvedByName;
@@ -1037,8 +1015,11 @@ export type SaleDetail = {
   owedAfter: string | null;
   /** Set when the sale was cancelled: who, when and why. The sale itself is never changed. */
   cancellation: { note: string; cancelledByName: string; createdAt: Date } | null;
-  /** True when this person may cancel it now: allowed to, not yet cancelled, and made today. */
+  /** True when this person may cancel it now: allowed to, not yet cancelled, nothing returned, and made today. */
   canCancel: boolean;
+  /** Returns made against this sale, oldest first, and whether this person may start another. */
+  returns: { id: string; number: number; refundTotal: string; createdAt: Date; createdByName: string }[];
+  canReturn: boolean;
   /** How many times the receipt has been printed so far. */
   printCount: number;
   /** What is printed around the sale: taken from the business's settings as they are now. */
@@ -1074,6 +1055,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         accountEntries: { where: { type: "CREDIT_SALE" }, select: { balanceAfter: true } },
         approvalUses: { select: { approval: { select: { kind: true, approvedByName: true } } } },
         offlineExceptions: { orderBy: { createdAt: "asc" }, select: { summary: true } },
+        returns: { orderBy: { number: "asc" }, select: { id: true, number: true, refundTotal: true, createdAt: true, createdByName: true } },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
       },
@@ -1119,7 +1101,15 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
     creditAmount: row.creditAmount.toFixed(2),
     owedAfter: row.accountEntries[0]?.balanceAfter.toFixed(2) ?? null,
     cancellation: row.cancellation,
-    canCancel: can(context, "sale.cancel") && row.cancellation === null && shopToday(row.createdAt) === shopToday(),
+    canCancel: can(context, "sale.cancel") && row.cancellation === null && row.returns.length === 0 && shopToday(row.createdAt) === shopToday(),
+    returns: row.returns.map((entry) => ({
+      id: entry.id,
+      number: entry.number,
+      refundTotal: entry.refundTotal.toFixed(2),
+      createdAt: entry.createdAt,
+      createdByName: entry.createdByName,
+    })),
+    canReturn: can(context, "return.request") && row.cancellation === null,
     printCount: row._count.receiptPrints,
     business,
     lines: row.lines.map((line) => ({
@@ -1324,6 +1314,11 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
               await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(quantity) } });
             }
           }
+        }
+
+        // Checked with every product's turn taken, so a return of these goods cannot slip in between.
+        if ((await tx.saleReturn.count({ where: { saleId: sale.id } })) > 0) {
+          throw new ValidationError("Nothing was cancelled: goods from this sale have already been returned, so the sale can no longer be cancelled whole. Return the rest instead.");
         }
 
         await tx.stockMovement.createMany({

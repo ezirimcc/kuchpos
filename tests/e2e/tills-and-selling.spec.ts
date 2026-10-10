@@ -978,6 +978,104 @@ test("a cashier asks to take cash out of the till with a note; the manager appro
   await expect(page.getByTestId("till-expected-now")).toHaveCount(0);
 });
 
+test("a customer brings back 1 of 3: the cashier needs the manager's approval, the refund is what was paid, and the sale shows the return", async ({ page }) => {
+  await signIn(page, "gv.cashier");
+  await expectSignedInAs(page, "Cashier");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.keyboard.type("3");
+  await page.getByLabel("Paid by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦1,500.00");
+  const receiptNumber = (await page.getByRole("heading", { name: /^Sale T1-/ }).innerText()).replace("Sale ", "").trim();
+
+  // Found by the number on the customer's receipt.
+  await page.goto("/sales");
+  await page.getByRole("link", { name: "Returns" }).click();
+  await expect(page.getByRole("heading", { name: "Returns" })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByLabel(/the number on the customer's receipt/).fill("T9-999999");
+  await page.getByRole("button", { name: "Find the sale" }).click();
+  await expect(page.getByTestId("receipt-not-found")).toContainText("No sale has the receipt number T9-999999");
+  await page.getByLabel(/the number on the customer's receipt/).fill(receiptNumber.toLowerCase());
+  await page.getByRole("button", { name: "Find the sale" }).click();
+  await expect(page.getByRole("heading", { name: `Return goods from sale ${receiptNumber}` })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+
+  const line = page.getByTestId("return-line-1");
+  // More than was sold cannot be typed in.
+  await line.getByLabel(/^How many came back/).fill("4");
+  await expect(line.getByText("Enter a number up to 3.")).toBeVisible();
+  await line.getByLabel(/^How many came back/).fill("1");
+  await expect(page.getByTestId("refund-total")).toHaveText("₦500.00");
+  await page.getByLabel("Handed back by").selectOption({ label: "Bank transfer (sample)" });
+  // Nothing can be saved without a reason and a manager's approval.
+  await expect(page.getByTestId("return-approval")).toHaveCount(0);
+  await page.getByLabel("Why the goods are coming back").fill("Wrong variety");
+  await expect(page.getByTestId("save-return")).toBeDisabled();
+  await page.getByTestId("ask-return-approval").click();
+  const approval = page.getByTestId("approval-box");
+  await approval.getByLabel("Approver's username").fill("gv.cashier");
+  await approval.getByLabel("Approver's password").fill(SAMPLE_PASSWORD);
+  await approval.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByTestId("approval-error")).toBeVisible();
+  await approval.getByLabel("Approver's username").fill("gv.manager");
+  await approval.getByLabel("Approver's password").fill(SAMPLE_PASSWORD);
+  await approval.getByLabel("Approver's password").press("Enter");
+  await expect(page.getByTestId("return-approved")).toContainText("Approved by Green Valley Manager");
+  // Changing what comes back needs a new approval; putting it back as it was does not.
+  await line.getByLabel(/^How many came back/).fill("2");
+  await expect(page.getByTestId("save-return")).toBeDisabled();
+  await line.getByLabel(/^How many came back/).fill("1");
+  await page.getByTestId("save-return").click();
+
+  // The slip, printed by itself once.
+  await expect(page.getByTestId("return-saved")).toContainText("Hand the customer their money back (Bank transfer (sample)).");
+  const slip = page.getByTestId("return-slip");
+  await expect(slip).toContainText(`For receipt: ${receiptNumber}`);
+  await expect(slip).toContainText("1 sachet returned");
+  await expect(page.getByTestId("return-slip-total")).toHaveText("₦500.00");
+  await expect(slip).toContainText("Reason: Wrong variety");
+  const returnTitle = await page.getByRole("heading", { name: /^Return RT-/ }).innerText();
+  const returnNumber = returnTitle.replace("Return ", "").trim();
+  await expect.poll(() => printed(page)).toBe(1);
+
+  // The sale is as it was, and says what came back.
+  await page.getByRole("link", { name: `Open sale ${receiptNumber}` }).click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦1,500.00");
+  await expect(page.getByTestId("sale-returns")).toContainText(`${returnNumber} (₦500.00 refunded)`);
+  await signOut(page);
+
+  // The manager takes back one more, damaged, without needing anyone; the sale can no longer be cancelled whole.
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await page.goto("/sales");
+  await page.getByTestId(`sale-row-${receiptNumber}`).getByRole("link", { name: receiptNumber }).click();
+  await expect(page.getByTestId("cancel-sale-form")).toHaveCount(0);
+  await page.getByTestId("return-goods").click();
+  await expect(page.getByTestId("earlier-returns")).toContainText(returnNumber);
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  const again = page.getByTestId("return-line-1");
+  await again.getByLabel(/^How many came back/).fill("3");
+  await expect(again.getByText("Enter a number up to 2.")).toBeVisible();
+  await again.getByLabel(/^How many came back/).fill("1");
+  await again.getByLabel(/^Where it goes/).selectOption({ label: "Damaged — written off" });
+  await page.getByLabel("Handed back by").selectOption({ label: "Bank transfer (sample)" });
+  await page.getByLabel("Why the goods are coming back").fill("Sachet was torn");
+  await expect(page.getByTestId("return-approval")).toHaveCount(0);
+  await page.getByTestId("save-return").click();
+  await expect(page.getByTestId("return-saved")).toBeVisible();
+  await expect(page.getByTestId("return-written-off")).toBeVisible();
+
+  // Both are in the list, and on the approvals report.
+  await page.goto("/returns");
+  await expect(page.getByTestId(`return-row-${returnNumber}`)).toContainText("approved by Green Valley Manager");
+  await expect(page.getByTestId("returns-sum")).toHaveText("₦1,000.00");
+  await page.goto("/sales/discounts?kind=RETURN");
+  await expect(page.getByTestId("approval-row")).toHaveCount(2);
+  await expect(page.getByTestId("approval-row").first()).toContainText("Return of goods");
+});
+
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");

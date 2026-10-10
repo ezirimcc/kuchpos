@@ -16,6 +16,8 @@ const TABLES = [
   "till_cash_request",
   "till_session_recount",
   "till_session_close",
+  "sale_return_line",
+  "sale_return",
   "offline_exception_review",
   "offline_exception",
   "approval_use",

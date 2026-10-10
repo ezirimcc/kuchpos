@@ -30,6 +30,8 @@ model Business {
   deactivatedAt DateTime? @db.DateTime(3)
   /// Staff are signed out after this many minutes without using the app (5 to 480; database CHECK).
   idleSignOutMinutes Int  @default(30)
+  /// How many days after a sale its goods may still be returned (C62). 0 means no limit.
+  returnDays         Int  @default(7)
   /// Whether a receipt prints by itself when a sale is completed (C63).
   autoPrintReceipts  Boolean @default(true)
   /// Tax rate in percent (0 to 100; database CHECK). Prices already include tax.
@@ -89,6 +91,8 @@ model Business {
   offlineExceptionReviews OfflineExceptionReview[]
   tillCashRequests TillCashRequest[]
   tillCashDecisions TillCashDecision[]
+  saleReturns     SaleReturn[]
+  saleReturnLines SaleReturnLine[]
   approvalRequestDecisions ApprovalRequestDecision[]
   sales         Sale[]
   saleLines     SaleLine[]
@@ -462,6 +466,8 @@ enum StockMovementType {
   SALE
   /// Stock coming back because the sale was cancelled.
   SALE_CANCELLATION
+  /// Goods a customer brought back that went back on the Shelf or into the Storeroom.
+  SALE_RETURN
 }
 
 /// Every change to stock. Add-only: database triggers refuse changes and deletions.
@@ -910,6 +916,7 @@ model Sale {
   repaymentParts  RepaymentAllocation[]
   approvalUses    ApprovalUse[]
   offlineExceptions OfflineException[]
+  returns         SaleReturn[]
 
   @@unique([businessId, requestId])
   @@unique([terminalId, sequence])
@@ -957,6 +964,8 @@ model SaleLine {
   locationId     String   @db.Char(36)
   location       Location @relation(fields: [locationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   locationName   String   @db.VarChar(60)
+
+  returnLines    SaleReturnLine[]
 
   @@unique([saleId, lineNumber])
   @@index([productId])
@@ -1049,6 +1058,7 @@ enum DocumentKind {
   STOCK_ADJUSTMENT
   TILL_SESSION
   REPAYMENT
+  SALE_RETURN
 }
 
 /// The number the next document of each kind will get in a business (deliveries, transfers,
@@ -1093,6 +1103,7 @@ model TillSession {
   close          TillSessionClose?
   recounts       TillSessionRecount[]
   cashRequests   TillCashRequest[]
+  returns        SaleReturn[]
 
   @@unique([businessId, number])
   @@index([terminalId, openedAt])
@@ -1238,6 +1249,8 @@ enum AccountEntryType {
   REPAYMENT
   /// A credit sale was cancelled: what it added is taken off again.
   SALE_CANCELLED
+  /// Goods from a credit sale came back: the refund is taken off what is still owed on it.
+  SALE_RETURN
 }
 
 /// One line of a customer's account. Add-only: the history of a debt is never rewritten.
@@ -1346,6 +1359,8 @@ enum ApprovalKind {
   DISCOUNT
   /// Letting a customer go over their credit limit on a sale.
   CREDIT_OVER_LIMIT
+  /// A customer's return of goods, asked for by someone who needs approval for it.
+  RETURN
 }
 
 enum ApprovalMethod {
@@ -1355,6 +1370,95 @@ enum ApprovalMethod {
   OWN_SALE
   /// The cashier sent a request and a manager or admin approved it from their own computer.
   REMOTE
+}
+
+enum ReturnDisposition {
+  /// Back on the Shelf, to be sold again.
+  SHELF
+  /// Back into the Storeroom.
+  STOREROOM
+  /// Damaged: not put back into stock. A loss.
+  WRITTEN_OFF
+}
+
+/// Goods a customer brought back against a sale (C62). Add-only. The sale itself is never
+/// changed: this is a new record that refers to it.
+model SaleReturn {
+  id               String       @id @default(uuid()) @db.Char(36)
+  businessId       String       @db.Char(36)
+  business         Business     @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Made up on the person's computer, so the same return is never saved twice.
+  requestId        String       @db.Char(36)
+  /// 1, 2, 3… within the business; shown as RT-000012.
+  number           Int
+  saleId           String       @db.Char(36)
+  sale             Sale         @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleReceiptNumber String      @db.VarChar(20)
+  /// The customer of the sale, if it had one (kept here for adding up what each customer bought).
+  customerId       String?      @db.Char(36)
+  customerName     String?
+  reason           String       @db.VarChar(300)
+  /// What the returned goods had actually been paid for: the sum of the lines.
+  refundTotal      Decimal      @db.Decimal(14, 2)
+  /// The part taken off what the customer still owed on that sale.
+  debtReduced      Decimal      @default(0) @db.Decimal(14, 2)
+  /// The part handed back, how, and — for cash — out of which till.
+  refundPaid       Decimal      @default(0) @db.Decimal(14, 2)
+  refundMethodId   String?      @db.Char(36)
+  refundMethodName String?
+  refundKind       PaymentKind?
+  refundReference  String?      @db.VarChar(60)
+  tillSessionId    String?      @db.Char(36)
+  tillSession      TillSession? @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// What the goods put back into stock had cost, and what the written-off ones had cost (a loss).
+  restockedCost    Decimal      @default(0) @db.Decimal(16, 2)
+  writtenOffCost   Decimal      @default(0) @db.Decimal(16, 2)
+  createdByUserId  String?
+  createdByName    String
+  /// Who approved it: the person themselves, or a manager, admin or owner.
+  approvedByUserId String?
+  approvedByName   String
+  createdAt        DateTime     @default(now()) @db.DateTime(3)
+
+  lines            SaleReturnLine[]
+
+  @@unique([businessId, requestId])
+  @@unique([businessId, number])
+  @@index([saleId])
+  @@index([businessId, createdAt])
+  @@map("sale_return")
+}
+
+/// One returned item: which line of the sale, how much of it, what was refunded, where it went. Add-only.
+model SaleReturnLine {
+  id            String            @id @default(uuid()) @db.Char(36)
+  businessId    String            @db.Char(36)
+  business      Business          @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  returnId      String            @db.Char(36)
+  return        SaleReturn        @relation(fields: [returnId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleLineId    String            @db.Char(36)
+  saleLine      SaleLine          @relation(fields: [saleLineId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lineNumber    Int
+  productId     String            @db.Char(36)
+  productName   String
+  unitName      String
+  unitFactor    Decimal           @db.Decimal(12, 3)
+  /// How many came back, in the unit they were sold in and in base units.
+  quantity      Decimal           @db.Decimal(16, 3)
+  baseQuantity  Decimal           @db.Decimal(16, 3)
+  /// What had actually been paid for them (after any discount), and the tax inside that.
+  refundAmount  Decimal           @db.Decimal(14, 2)
+  taxAmount     Decimal           @db.Decimal(14, 2)
+  /// What they had cost the business when they were sold.
+  lineCost      Decimal           @db.Decimal(16, 2)
+  disposition   ReturnDisposition
+  /// Where they were put back; empty when written off.
+  locationId    String?           @db.Char(36)
+  locationName  String?
+
+  @@unique([returnId, lineNumber])
+  @@index([saleLineId])
+  @@map("sale_return_line")
 }
 
 enum TillCashDirection {

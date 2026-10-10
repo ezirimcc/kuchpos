@@ -24,6 +24,7 @@ import * as transfers from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
+import * as overview from "@/server/platform/overview";
 import * as owners from "@/server/platform/owners";
 import * as system from "@/server/platform/system";
 import { createUser, createWorld, TEST_PASSWORD, type World } from "../support/world";
@@ -606,6 +607,21 @@ const OPERATIONS: Operation[] = [
     run: (context) => reports.getStockMovements(context),
   },
   {
+    name: "reports.getCustomerReport",
+    allowed: REPORT_READERS,
+    run: (context) => reports.getCustomerReport(context),
+  },
+  {
+    name: "reports.getStockReport",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => reports.getStockReport(context),
+  },
+  {
+    name: "overview.getOwnerOverview",
+    allowed: OWNERS,
+    run: (context) => overview.getOwnerOverview(context),
+  },
+  {
     name: "reports.exportReport",
     allowed: REPORT_READERS,
     run: (context) => reports.exportReport(context, { report: "sales" }),
@@ -1069,6 +1085,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),
+      ...Object.keys(overview).map((name) => `overview.${name}`),
       ...Object.keys(system).map((name) => `system.${name}`),
     ].sort();
     expect(OPERATIONS.map((operation) => operation.name).sort()).toEqual(exported);

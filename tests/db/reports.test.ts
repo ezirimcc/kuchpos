@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCustomer, recordRepayment, setCreditLimit } from "@/server/business/customers";
 import { getOfflineKit } from "@/server/business/offline";
-import { exportReport, getCollectionsReport, getDebtReport, getSalesReport, getStockMovements } from "@/server/business/reports";
+import { exportReport, getCollectionsReport, getCustomerReport, getDebtReport, getSalesReport, getStockMovements, getStockReport } from "@/server/business/reports";
+import { getOwnerOverview } from "@/server/platform/overview";
 import { postReturn } from "@/server/business/returns";
 import { cancelSale, postOfflineSale, postSale } from "@/server/business/sales";
 import { receiveGoods } from "@/server/business/stock";
@@ -201,15 +202,134 @@ describe("the stock movement report", () => {
   });
 });
 
+describe("the customer report", () => {
+  it("counts new and returning customers, walk-ins apart, and what each customer has been worth", async () => {
+    const report = await getCustomerReport(world.a.as.ACCOUNTANT, day);
+    expect(report).toMatchObject({
+      // Ada bought for the first time today: 1,000, less 200 for what she brought back.
+      newCustomers: 1,
+      returningCustomers: 0,
+      newSales: "800.00",
+      returningSales: "0.00",
+      // S1 and S2, less the 100 returned from S1.
+      walkInCount: 2,
+      walkInSales: "1200.00",
+      // Nobody with a name bought yesterday, so there is nobody to have come back.
+      boughtBefore: 0,
+      cameBack: 0,
+      retentionRate: null,
+      customersEver: 1,
+      lifetimeTotal: "800.00",
+      averageLifetimeValue: "800.00",
+      total: 1,
+    });
+    expect(report.rows).toEqual([
+      expect.objectContaining({ name: "Ada Okafor", phone: "08031234567", periodPurchases: "800.00", periodVisits: 1, lifetimeValue: "800.00", lifetimeVisits: 1 }),
+    ]);
+
+    // Looked at tomorrow, Ada is someone who bought in the period before and has not come back yet.
+    const tomorrow = shopToday(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    expect(await getCustomerReport(world.a.as.MANAGER, { from: tomorrow, to: tomorrow })).toMatchObject({
+      newCustomers: 0,
+      returningCustomers: 0,
+      boughtBefore: 1,
+      cameBack: 0,
+      retentionRate: "0.0",
+      lifetimeTotal: "800.00",
+    });
+    // Over yesterday and today together she is still new, and yesterday's walk-in sale is counted.
+    expect(await getCustomerReport(world.a.as.MANAGER, { from: yesterday, to: today })).toMatchObject({ newCustomers: 1, walkInCount: 3, walkInSales: "1300.00" });
+  });
+});
+
+describe("the stock report", () => {
+  it("works out sell-through, days of stock left, shrinkage, stock-outs and — for those who see costs — turnover and stock value", async () => {
+    const report = await getStockReport(world.a.as.ACCOUNTANT, day);
+    expect(report.rows).toEqual([
+      {
+        productId: world.a.product.id,
+        name: "A Seed Sachet",
+        code: "A-001",
+        baseUnitName: "single",
+        // 100 came in; 12 + 3 + 10 were sold today and 1 yesterday (offline, but it reached the stock today); 1 came back.
+        onHand: "75.000",
+        onShelf: "75.000",
+        atStart: "0.000",
+        received: "100.000",
+        // Today's sales, 25, less the 3 that came back.
+        sold: "22.000",
+        sellThrough: "22.0",
+        // 75 left at 22 a day.
+        daysLeft: "3",
+        // The 2 written off when returned.
+        lost: "2.000",
+      },
+    ]);
+    expect(report).toMatchObject({
+      productsOnSale: 1,
+      noneOnShelf: 0,
+      noneAnywhere: 0,
+      shelfOutRate: "0.0",
+      stockOutRate: "0.0",
+      stockValueNow: "3750.00",
+      stockValueAtStart: "0.00",
+      stockValueAtEnd: "3750.00",
+      costOfGoodsSold: "1200.00",
+      // 1,200 ÷ the average of 0 and 3,750.
+      turnover: "0.64",
+      // 3,750 ÷ net sales of 2,000.
+      stockToSales: "1.88",
+      shrinkageCost: "100.00",
+      shrinkageRate: "5.0",
+    });
+
+    // The storekeeper sees quantities, not money.
+    const forStorekeeper = await getStockReport(world.a.as.STOREKEEPER, day);
+    expect(forStorekeeper.rows[0]).toMatchObject({ sold: "22.000", daysLeft: "3" });
+    expect(forStorekeeper).toMatchObject({ stockValueNow: null, costOfGoodsSold: null, turnover: null, stockToSales: null, shrinkageCost: null, shrinkageRate: null });
+
+    // Business B received nothing and has nothing: its one product is out of stock.
+    expect(await getStockReport(world.b.as.ADMIN, day)).toMatchObject({ productsOnSale: 1, noneOnShelf: 1, noneAnywhere: 1, shelfOutRate: "100.0", stockOutRate: "100.0", stockValueNow: "0.00", turnover: null });
+    expect((await getStockReport(world.a.as.ADMIN, { ...day, show: "out" })).total).toBe(0);
+    expect((await getStockReport(world.b.as.ADMIN, { ...day, show: "out" })).total).toBe(1);
+    expect((await getStockReport(world.a.as.ADMIN, { ...day, search: "no such product" })).rows).toEqual([]);
+    // Yesterday the stock had not yet arrived.
+    expect((await getStockReport(world.a.as.ADMIN, { from: yesterday, to: yesterday })).rows[0]).toMatchObject({ atStart: "0.000", received: "0.000", onHand: "75.000" });
+  });
+});
+
+describe("the owner's overview", () => {
+  it("shows every business on its own row, matching that business's own reports, to owners only", async () => {
+    const overview = await getOwnerOverview(world.ownerOutside, day);
+    expect(overview.rows).toEqual([
+      { businessId: world.a.id, name: "Business A", active: true, salesCount: 3, sales: "2300.00", refunds: "300.00", netSales: "2000.00", collected: "1700.00", owed: "300.00", customersOwing: 1 },
+      { businessId: world.b.id, name: "Business B", active: true, salesCount: 0, sales: "0.00", refunds: "0.00", netSales: "0.00", collected: "0.00", owed: "0.00", customersOwing: 0 },
+    ]);
+    expect(overview.totals).toEqual({ salesCount: 3, sales: "2300.00", refunds: "300.00", netSales: "2000.00", collected: "1700.00", owed: "300.00" });
+    // The same figures as business A's own reports.
+    const own = await getSalesReport(world.a.as.ADMIN, day);
+    expect([overview.rows[0].sales, overview.rows[0].netSales]).toEqual([own.summary.sales, own.summary.netSales]);
+    expect(overview.rows[0].collected).toBe((await getCollectionsReport(world.a.as.ADMIN, day)).totals.net);
+    // It works with or without a business open, and for nobody but an owner.
+    expect((await getOwnerOverview(world.ownerInA, { from: yesterday, to: yesterday })).rows[0]).toMatchObject({ salesCount: 1, netSales: "100.00", collected: "100.00" });
+    for (const role of ["ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER", "STOREKEEPER"] as const) {
+      await expect(getOwnerOverview(world.a.as[role], day), role).rejects.toBeInstanceOf(ForbiddenError);
+    }
+    await expect(getOwnerOverview(world.ownerOutside, { from: "2020-01-01", to: today })).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
 describe("who may read and export reports", () => {
   it("each report needs its own right, and exporting needs the right to export as well; business B sees nothing of A", async () => {
     for (const role of ["CASHIER", "STOREKEEPER"] as const) {
       await expect(getSalesReport(world.a.as[role], day), role).rejects.toBeInstanceOf(ForbiddenError);
       await expect(getCollectionsReport(world.a.as[role], day), role).rejects.toBeInstanceOf(ForbiddenError);
       await expect(getDebtReport(world.a.as[role]), role).rejects.toBeInstanceOf(ForbiddenError);
+      await expect(getCustomerReport(world.a.as[role], day), role).rejects.toBeInstanceOf(ForbiddenError);
       await expect(exportReport(world.a.as[role], { report: "stock-movements", ...day }), role).rejects.toBeInstanceOf(ForbiddenError);
     }
     await expect(getStockMovements(world.a.as.CASHIER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(getStockReport(world.a.as.CASHIER, day)).rejects.toBeInstanceOf(ForbiddenError);
 
     expect((await getSalesReport(world.b.as.ADMIN, day)).summary).toMatchObject({ salesCount: 0, sales: "0.00", netSales: "0.00", averageSale: null, margin: null });
     expect((await getCollectionsReport(world.b.as.ADMIN, day)).rows).toEqual([]);
@@ -236,6 +356,10 @@ describe("who may read and export reports", () => {
     const movements = await exportReport(world.a.as.ACCOUNTANT, { report: "stock-movements", ...day, type: "SALE_RETURN", page: "7" });
     expect(movements.rows).toHaveLength(1);
     expect(movements.rows[0].slice(1)).toEqual(["A Seed Sachet", "A-001", "Shelf", "SALE_RETURN", "1.000", "single", "RT-000001", "Test a.manager"]);
+    const customers = await exportReport(world.a.as.ACCOUNTANT, { report: "customers", ...day });
+    expect(customers.rows).toEqual([["Ada Okafor", "08031234567", today, today, "800.00", 1, "800.00", 1]]);
+    const stock = await exportReport(world.a.as.MANAGER, { report: "stock", ...day });
+    expect(stock.rows).toEqual([["A Seed Sachet", "A-001", "single", "75.000", "75.000", "0.000", "100.000", "22.000", "22.0", "3", "2.000"]]);
     await expect(exportReport(world.a.as.ADMIN, { report: "everything" })).rejects.toBeInstanceOf(ValidationError);
   });
 });

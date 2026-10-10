@@ -1,4 +1,4 @@
-import { ArrowLeftRight, BadgePercent, ChartColumn, CloudOff, Download, HandCoins, Undo2, Users, type LucideIcon } from "lucide-react";
+import { ArrowLeftRight, BadgePercent, Boxes, ChartColumn, CloudOff, Download, HandCoins, Undo2, UserRoundCheck, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { cn } from "cn";
 import { formatDay, shopToday } from "@/lib/format";
@@ -6,14 +6,16 @@ import type { AppContext } from "@/server/auth/context";
 import type { Period } from "@/server/business/reports";
 import { can } from "@/server/permissions";
 
-type Tab = "sales" | "collections" | "debts" | "stock-movements";
+type Tab = "sales" | "collections" | "debts" | "stock-movements" | "customers" | "stock";
 
 /** The row of links shared by the report screens. Only the ones the person may open are shown. */
 export function ReportTabs({ context, current }: { context: AppContext; current: Tab | null }) {
   const tabs: { key: Tab | string; href: string; label: string; icon: LucideIcon; show: boolean }[] = [
     { key: "sales", href: "/reports/sales", label: "Sales", icon: ChartColumn, show: can(context, "report.sales.view") },
     { key: "collections", href: "/reports/collections", label: "Collections", icon: HandCoins, show: can(context, "report.collections.view") },
+    { key: "customers", href: "/reports/customers", label: "Customers", icon: UserRoundCheck, show: can(context, "report.sales.view") && can(context, "customer.statement.view") },
     { key: "debts", href: "/reports/debts", label: "Customer debts", icon: Users, show: can(context, "report.customerDebt.view") },
+    { key: "stock", href: "/reports/stock", label: "Stock figures", icon: Boxes, show: can(context, "report.stock.view") },
     { key: "stock-movements", href: "/reports/stock-movements", label: "Stock movements", icon: ArrowLeftRight, show: can(context, "report.stock.view") },
     { key: "returns", href: "/returns", label: "Returns", icon: Undo2, show: can(context, "report.sales.view") },
     { key: "discounts", href: "/sales/discounts", label: "Discounts & approvals", icon: BadgePercent, show: can(context, "report.discounts.view") },

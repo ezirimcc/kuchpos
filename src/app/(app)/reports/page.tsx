@@ -14,7 +14,9 @@ export default async function ReportsPage() {
   const cards = [
     { href: "/reports/sales", title: "Sales", text: "What was sold, returned and earned: by day, product, category, cashier, hour and how it was paid.", show: can(context, "report.sales.view") },
     { href: "/reports/collections", title: "Collections", text: "Money actually received, by payment method — for sales and against debts, less what was given back.", show: can(context, "report.collections.view") },
+    { href: "/reports/customers", title: "Customers", text: "New against returning customers, how many come back, and what each customer has been worth.", show: can(context, "report.sales.view") && can(context, "customer.statement.view") },
     { href: "/reports/debts", title: "Customer debts", text: "Who owes what, and for how long.", show: can(context, "report.customerDebt.view") },
+    { href: "/reports/stock", title: "Stock figures", text: "What sells and what sits: sell-through, days of stock left, losses, products that have run out, and how fast stock turns over.", show: can(context, "report.stock.view") },
     { href: "/reports/stock-movements", title: "Stock movements", text: "Everything that came in, went out or moved between the Shelf and the Storeroom.", show: can(context, "report.stock.view") },
     { href: "/stock", title: "Stock on hand", text: "What is on the Shelf and in the Storeroom now.", show: can(context, "stock.view") },
     { href: "/stock/expiring", title: "Expiring soon", text: "Deliveries whose expiry date is near.", show: can(context, "report.stock.view") },

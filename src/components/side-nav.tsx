@@ -2,6 +2,7 @@
 
 import {
   ChartColumn,
+  ChartNoAxesCombined,
   History,
   LayoutDashboard,
   type LucideIcon,
@@ -35,6 +36,7 @@ const ICONS: Record<string, LucideIcon> = {
   staff: UserCog,
   activity: History,
   settings: Settings,
+  overview: ChartNoAxesCombined,
   businesses: Store,
   owners: ShieldCheck,
   system: ServerCog,

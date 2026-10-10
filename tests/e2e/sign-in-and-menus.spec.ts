@@ -61,7 +61,7 @@ test.describe("each role sees its own menu", () => {
     await expectSignedInAs(page, "Owner");
     await expect(page).toHaveURL(/\/owner\/businesses$/);
     await expect(page.getByTestId("business-banner")).toContainText("No business open");
-    expect(await menuLabels(page)).toEqual(["Businesses", "Owners", "System check"]);
+    expect(await menuLabels(page)).toEqual(["Overview", "Businesses", "Owners", "System check"]);
 
     await openFromMenu(page, "System check");
     const rules = page.getByTestId("system-rule");

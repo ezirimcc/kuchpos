@@ -534,10 +534,362 @@ export async function getStockMovements(
 }
 
 // ---------------------------------------------------------------------------
+// Customers: new and returning, retention, lifetime value
+// ---------------------------------------------------------------------------
+
+export type CustomerValueRow = {
+  customerId: string;
+  name: string;
+  phone: string;
+  firstPurchase: Date;
+  lastPurchase: Date;
+  /** In the period: what they bought (net of returns) and on how many sales. */
+  periodPurchases: string;
+  periodVisits: number;
+  /** Since their first purchase: what they have bought in all, net of returns, and on how many sales. */
+  lifetimeValue: string;
+  lifetimeVisits: number;
+};
+
+export type CustomerReport = {
+  period: Period;
+  previous: Period;
+  /** Named customers who bought in the period: those buying for the first time, and those who had bought before. */
+  newCustomers: number;
+  returningCustomers: number;
+  newSales: string;
+  returningSales: string;
+  /** Sales to nobody in particular cannot be told apart, so they are shown on their own. */
+  walkInSales: string;
+  walkInCount: number;
+  /** Of the customers who bought in the period before, how many bought again in this one, and that share in percent. */
+  boughtBefore: number;
+  cameBack: number;
+  retentionRate: string | null;
+  /** Lifetime value: every customer who has ever bought, added up; and the average. A history, not a forecast. */
+  customersEver: number;
+  lifetimeTotal: string;
+  averageLifetimeValue: string | null;
+  /** The customers worth most over their lifetime, the biggest first. */
+  rows: CustomerValueRow[];
+};
+
+/** How customers are doing: new against returning, how many come back, and what each has been worth. */
+export async function getCustomerReport(context: AppContext, input: unknown = {}): Promise<CustomerReport & Paged> {
+  authorize(context, "report.sales.view");
+  authorize(context, "customer.statement.view");
+  const data = parseInput(periodSchema.extend({ page: pageNumber, all: z.boolean().optional().default(false) }), input);
+  const range = rangeOf(data);
+  const previous = before(range);
+  const db = businessDb(context);
+
+  // Every sale that still stands, to a named customer or not, with the moment it was made.
+  const [sales, refunds, customers] = await Promise.all([
+    db.sale.findMany({
+      where: { cancellation: null },
+      select: { customerId: true, total: true, createdAt: true, deviceTime: true, offline: true },
+    }),
+    db.saleReturn.findMany({ select: { customerId: true, refundTotal: true, createdAt: true } }),
+    db.customer.findMany({ select: { id: true, name: true, phone: true } }),
+  ]);
+  const inRange = (moment: Date, within: Range) => moment >= within.start && moment < within.end;
+
+  type Tally = { first: Date; last: Date; lifetime: Decimal; visits: number; period: Decimal; periodVisits: number; boughtPrevious: boolean };
+  const tallies = new Map<string, Tally>();
+  let walkIn = ZERO;
+  let walkInCount = 0;
+  for (const sale of sales) {
+    const made = sale.offline && sale.deviceTime ? sale.deviceTime : sale.createdAt;
+    const amount = money(sale.total);
+    if (!sale.customerId) {
+      if (inRange(made, range)) {
+        walkIn = walkIn.plus(amount);
+        walkInCount += 1;
+      }
+      continue;
+    }
+    let tally = tallies.get(sale.customerId);
+    if (!tally) {
+      tally = { first: made, last: made, lifetime: ZERO, visits: 0, period: ZERO, periodVisits: 0, boughtPrevious: false };
+      tallies.set(sale.customerId, tally);
+    }
+    if (made < tally.first) tally.first = made;
+    if (made > tally.last) tally.last = made;
+    tally.lifetime = tally.lifetime.plus(amount);
+    tally.visits += 1;
+    if (inRange(made, range)) {
+      tally.period = tally.period.plus(amount);
+      tally.periodVisits += 1;
+    }
+    if (inRange(made, previous)) tally.boughtPrevious = true;
+  }
+  // What came back is not a purchase.
+  for (const refund of refunds) {
+    const amount = money(refund.refundTotal);
+    if (!refund.customerId) {
+      if (inRange(refund.createdAt, range)) walkIn = walkIn.minus(amount);
+      continue;
+    }
+    const tally = tallies.get(refund.customerId);
+    if (!tally) continue;
+    tally.lifetime = tally.lifetime.minus(amount);
+    if (inRange(refund.createdAt, range)) tally.period = tally.period.minus(amount);
+  }
+
+  const buyers = [...tallies.entries()].filter(([, tally]) => tally.periodVisits > 0);
+  const isNew = (tally: Tally) => tally.first >= range.start;
+  const fresh = buyers.filter(([, tally]) => isNew(tally));
+  const returning = buyers.filter(([, tally]) => !isNew(tally));
+  const boughtBefore = [...tallies.values()].filter((tally) => tally.boughtPrevious);
+  const cameBack = boughtBefore.filter((tally) => tally.periodVisits > 0);
+  const lifetimeTotal = sumMoney([...tallies.values()].map((tally) => tally.lifetime));
+  const customerOf = new Map(customers.map((customer) => [customer.id, customer]));
+
+  const ranked = [...tallies.entries()]
+    .sort(([, a], [, b]) => b.lifetime.comparedTo(a.lifetime) || b.visits - a.visits)
+    .map(([customerId, tally]) => ({
+      customerId,
+      name: customerOf.get(customerId)?.name ?? "",
+      phone: customerOf.get(customerId)?.phone ?? "",
+      firstPurchase: tally.first,
+      lastPurchase: tally.last,
+      periodPurchases: moneyToString(tally.period),
+      periodVisits: tally.periodVisits,
+      lifetimeValue: moneyToString(tally.lifetime),
+      lifetimeVisits: tally.visits,
+    }));
+  return {
+    period: { from: range.from, to: range.to, days: range.days },
+    previous: { from: previous.from, to: previous.to, days: previous.days },
+    newCustomers: fresh.length,
+    returningCustomers: returning.length,
+    newSales: moneyToString(sumMoney(fresh.map(([, tally]) => tally.period))),
+    returningSales: moneyToString(sumMoney(returning.map(([, tally]) => tally.period))),
+    walkInSales: moneyToString(walkIn),
+    walkInCount,
+    boughtBefore: boughtBefore.length,
+    cameBack: cameBack.length,
+    retentionRate: boughtBefore.length > 0 ? new Decimal(cameBack.length).times(100).dividedBy(boughtBefore.length).toFixed(1) : null,
+    customersEver: tallies.size,
+    lifetimeTotal: moneyToString(lifetimeTotal),
+    averageLifetimeValue: tallies.size > 0 ? lifetimeTotal.dividedBy(tallies.size).toFixed(2) : null,
+    rows: data.all ? ranked.slice(0, EXPORT_LIMIT) : ranked.slice((data.page - 1) * PAGE_SIZE, data.page * PAGE_SIZE),
+    ...paged(ranked.length, data.page),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Stock: turnover, sell-through, shrinkage, stock-outs, days of stock left
+// ---------------------------------------------------------------------------
+
+export type StockKpiRow = {
+  productId: string;
+  name: string;
+  code: string | null;
+  baseUnitName: string;
+  /** In base units: held now, held when the period began, received and sold (net of returns) in it. */
+  onHand: string;
+  atStart: string;
+  received: string;
+  sold: string;
+  /** Sold ÷ (held at the start + received), in percent. */
+  sellThrough: string | null;
+  /** Held now ÷ average sold per day in the period. Null when nothing was sold. */
+  daysLeft: string | null;
+  /** Lost in the period: downward adjustments and goods written off when returned. */
+  lost: string;
+  onShelf: string;
+};
+
+export type StockReport = {
+  period: Period;
+  /** Products on sale, and how many of them have none on the Shelf, and none anywhere, today. */
+  productsOnSale: number;
+  noneOnShelf: number;
+  noneAnywhere: number;
+  shelfOutRate: string | null;
+  stockOutRate: string | null;
+  /** The figures below need cost prices, so they are null for people who do not see those. */
+  stockValueNow: string | null;
+  stockValueAtStart: string | null;
+  stockValueAtEnd: string | null;
+  costOfGoodsSold: string | null;
+  /** Cost of goods sold ÷ average of the stock value at the start and the end of the period. */
+  turnover: string | null;
+  /** Stock value at the end ÷ net sales in the period. */
+  stockToSales: string | null;
+  /** Cost of what was lost, and that as a share of net sales in percent. */
+  shrinkageCost: string | null;
+  shrinkageRate: string | null;
+  rows: StockKpiRow[];
+};
+
+const stockSchema = periodSchema.extend({
+  search: z.string().trim().max(120).optional().default(""),
+  /** "out" for products with none on the Shelf, "slow" for products that sold nothing in the period. */
+  show: z.string().trim().optional().default(""),
+  page: pageNumber,
+  all: z.boolean().optional().default(false),
+});
+
+/**
+ * How stock is doing in a period. Past stock levels are rebuilt from the stock history;
+ * past stock VALUES use today's average cost, so they are a close estimate, not exact.
+ */
+export async function getStockReport(context: AppContext, input: unknown = {}): Promise<StockReport & Paged> {
+  authorize(context, "report.stock.view");
+  const data = parseInput(stockSchema, input);
+  const range = rangeOf(data);
+  const db = businessDb(context);
+  const seesCost = can(context, "cost.view");
+
+  const [products, inPeriod, since, soldLines, returnedLines, shelf] = await Promise.all([
+    db.product.findMany({
+      where: { deactivatedAt: null },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        averageCost: true,
+        units: { where: { retiredAt: null }, select: { name: true, isBase: true, forSale: true, price: true } },
+        stockBalances: { select: { locationId: true, quantity: true } },
+      },
+    }),
+    db.stockMovement.groupBy({ by: ["productId", "type"], where: { createdAt: { gte: range.start, lt: range.end } }, _sum: { quantityDelta: true } }),
+    db.stockMovement.groupBy({ by: ["productId"], where: { createdAt: { gte: range.end } }, _sum: { quantityDelta: true } }),
+    db.saleLine.groupBy({ by: ["productId"], where: { sale: madeIn(range) }, _sum: { baseQuantity: true } }),
+    db.saleReturnLine.findMany({
+      where: { return: { createdAt: { gte: range.start, lt: range.end } } },
+      select: { productId: true, baseQuantity: true, lineCost: true, disposition: true },
+    }),
+    db.location.findFirst({ where: { kind: "SHELF" }, select: { id: true } }),
+  ]);
+
+  const quantity = (value: { toFixed(places: number): string } | null | undefined) => new Decimal(value?.toFixed(3) ?? "0");
+  const moved = new Map<string, Map<string, Decimal>>();
+  for (const group of inPeriod) {
+    const types = moved.get(group.productId) ?? new Map<string, Decimal>();
+    types.set(group.type, quantity(group._sum.quantityDelta));
+    moved.set(group.productId, types);
+  }
+  const after = new Map(since.map((group) => [group.productId, quantity(group._sum.quantityDelta)]));
+  const sold = new Map(soldLines.map((group) => [group.productId, quantity(group._sum.baseQuantity)]));
+  const cameBack = new Map<string, Decimal>();
+  const writtenOff = new Map<string, { quantity: Decimal; cost: Decimal }>();
+  for (const line of returnedLines) {
+    cameBack.set(line.productId, (cameBack.get(line.productId) ?? ZERO).plus(quantity(line.baseQuantity)));
+    if (line.disposition === "WRITTEN_OFF") {
+      const lost = writtenOff.get(line.productId) ?? { quantity: ZERO, cost: ZERO };
+      writtenOff.set(line.productId, { quantity: lost.quantity.plus(quantity(line.baseQuantity)), cost: lost.cost.plus(money(line.lineCost)) });
+    }
+  }
+
+  let valueNow = ZERO;
+  let valueStart = ZERO;
+  let valueEnd = ZERO;
+  let shrinkage = ZERO;
+  let onSale = 0;
+  let noneOnShelf = 0;
+  let noneAnywhere = 0;
+  const rows = products.map((product) => {
+    const average = new Decimal(product.averageCost.toFixed(4));
+    const onHand = product.stockBalances.reduce((sum, balance) => sum.plus(quantity(balance.quantity)), ZERO);
+    const onShelf = product.stockBalances.filter((balance) => balance.locationId === shelf?.id).reduce((sum, balance) => sum.plus(quantity(balance.quantity)), ZERO);
+    const types = moved.get(product.id) ?? new Map<string, Decimal>();
+    const netInPeriod = [...types.values()].reduce((sum, amount) => sum.plus(amount), ZERO);
+    const atEnd = onHand.minus(after.get(product.id) ?? ZERO);
+    const atStart = atEnd.minus(netInPeriod);
+    const received = (types.get("RECEIPT") ?? ZERO).plus(types.get("RECEIPT_CORRECTION") ?? ZERO);
+    const netSold = Decimal.max((sold.get(product.id) ?? ZERO).minus(cameBack.get(product.id) ?? ZERO), 0);
+    // An adjustment is a net figure per product and period; only a net loss counts as shrinkage.
+    const adjustedDown = Decimal.max((types.get("ADJUSTMENT") ?? ZERO).negated(), 0);
+    const lost = adjustedDown.plus(writtenOff.get(product.id)?.quantity ?? ZERO);
+    const available = atStart.plus(received);
+
+    valueNow = valueNow.plus(onHand.times(average));
+    valueStart = valueStart.plus(Decimal.max(atStart, 0).times(average));
+    valueEnd = valueEnd.plus(Decimal.max(atEnd, 0).times(average));
+    shrinkage = shrinkage.plus(adjustedDown.times(average)).plus(writtenOff.get(product.id)?.cost ?? ZERO);
+    const sells = product.units.some((unit) => unit.forSale && unit.price !== null);
+    if (sells) {
+      onSale += 1;
+      if (!onShelf.greaterThan(0)) noneOnShelf += 1;
+      if (!onHand.greaterThan(0)) noneAnywhere += 1;
+    }
+    return {
+      productId: product.id,
+      name: product.name,
+      code: product.code,
+      baseUnitName: product.units.find((unit) => unit.isBase)?.name ?? "",
+      onHand: onHand.toFixed(3),
+      atStart: atStart.toFixed(3),
+      received: received.toFixed(3),
+      sold: netSold.toFixed(3),
+      sellThrough: available.greaterThan(0) ? Decimal.min(netSold.times(100).dividedBy(available), 100).toFixed(1) : null,
+      daysLeft: netSold.greaterThan(0) ? onHand.times(range.days).dividedBy(netSold).toFixed(0) : null,
+      lost: lost.toFixed(3),
+      onShelf: onShelf.toFixed(3),
+      sells,
+    };
+  });
+
+  // Net sales and the cost of what was sold come from the same sums as the sales report.
+  const trading = seesCost ? summarise(await salesFacts(db, range), true) : null;
+  const cogs = trading ? new Decimal(trading.cost ?? "0") : ZERO;
+  const netSales = trading ? new Decimal(trading.netSales) : ZERO;
+  const averageValue = valueStart.plus(valueEnd).dividedBy(2);
+
+  const words = data.search.toLowerCase();
+  const listed = rows
+    .filter((row) => !words || row.name.toLowerCase().includes(words) || (row.code ?? "").toLowerCase().includes(words))
+    .filter((row) => (data.show === "out" ? row.sells && !new Decimal(row.onShelf).greaterThan(0) : data.show === "slow" ? new Decimal(row.sold).isZero() && new Decimal(row.onHand).greaterThan(0) : true))
+    // The products that will run out soonest first; those that sold nothing last.
+    .sort((a, b) =>
+      a.daysLeft === null || b.daysLeft === null
+        ? (a.daysLeft === null ? 1 : 0) - (b.daysLeft === null ? 1 : 0) || a.name.localeCompare(b.name)
+        : new Decimal(a.daysLeft).comparedTo(b.daysLeft) || a.name.localeCompare(b.name),
+    )
+    .map((row): StockKpiRow => ({
+      productId: row.productId,
+      name: row.name,
+      code: row.code,
+      baseUnitName: row.baseUnitName,
+      onHand: row.onHand,
+      atStart: row.atStart,
+      received: row.received,
+      sold: row.sold,
+      sellThrough: row.sellThrough,
+      daysLeft: row.daysLeft,
+      lost: row.lost,
+      onShelf: row.onShelf,
+    }));
+  const rate = (count: number) => (onSale > 0 ? new Decimal(count).times(100).dividedBy(onSale).toFixed(1) : null);
+  return {
+    period: { from: range.from, to: range.to, days: range.days },
+    productsOnSale: onSale,
+    noneOnShelf,
+    noneAnywhere,
+    shelfOutRate: rate(noneOnShelf),
+    stockOutRate: rate(noneAnywhere),
+    stockValueNow: seesCost ? moneyToString(valueNow.toDecimalPlaces(2)) : null,
+    stockValueAtStart: seesCost ? moneyToString(valueStart.toDecimalPlaces(2)) : null,
+    stockValueAtEnd: seesCost ? moneyToString(valueEnd.toDecimalPlaces(2)) : null,
+    costOfGoodsSold: seesCost ? moneyToString(cogs) : null,
+    turnover: seesCost && averageValue.greaterThan(0) ? cogs.dividedBy(averageValue).toFixed(2) : null,
+    stockToSales: seesCost && netSales.greaterThan(0) ? valueEnd.dividedBy(netSales).toFixed(2) : null,
+    shrinkageCost: seesCost ? moneyToString(shrinkage.toDecimalPlaces(2)) : null,
+    shrinkageRate: seesCost ? percent(shrinkage, netSales) : null,
+    rows: data.all ? listed.slice(0, EXPORT_LIMIT) : listed.slice((data.page - 1) * PAGE_SIZE, data.page * PAGE_SIZE),
+    ...paged(listed.length, data.page),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
-const exportSchema = z.object({ report: z.enum(["sales", "collections", "debts", "stock-movements"]) }).passthrough();
+const exportSchema = z.object({ report: z.enum(["sales", "collections", "debts", "stock-movements", "customers", "stock"]) }).passthrough();
 
 export type ReportExport = { filename: string; header: string[]; rows: (string | number | null)[][] };
 
@@ -578,6 +930,22 @@ export async function exportReport(context: AppContext, input: unknown): Promise
       filename: `customer-debts_${shopToday()}.csv`,
       header: ["Customer", "Phone", "Credit limit", "0-30 days", "31-60 days", "61-90 days", "Over 90 days", "Owes in all", "Oldest unpaid sale"],
       rows: data.rows.map((row) => [row.name, row.phone, row.creditLimit, row.current, row.days31, row.days61, row.older, row.total, iso(row.oldestSale).slice(0, 10)]),
+    };
+  }
+  if (report === "customers") {
+    const data = await getCustomerReport(context, { ...filters, all: true });
+    return {
+      filename: `customers_${stamp(data.period)}.csv`,
+      header: ["Customer", "Phone", "First purchase", "Last purchase", "Bought in the period", "Sales in the period", "Bought in all", "Sales in all"],
+      rows: data.rows.map((row) => [row.name, row.phone, iso(row.firstPurchase).slice(0, 10), iso(row.lastPurchase).slice(0, 10), row.periodPurchases, row.periodVisits, row.lifetimeValue, row.lifetimeVisits]),
+    };
+  }
+  if (report === "stock") {
+    const data = await getStockReport(context, { ...filters, all: true });
+    return {
+      filename: `stock-figures_${stamp(data.period)}.csv`,
+      header: ["Product", "Code", "Unit", "Held now", "On the Shelf now", "Held at the start", "Received", "Sold", "Sell-through %", "Days of stock left", "Lost"],
+      rows: data.rows.map((row) => [row.name, row.code, row.baseUnitName, row.onHand, row.onShelf, row.atStart, row.received, row.sold, row.sellThrough, row.daysLeft, row.lost]),
     };
   }
   const data = await getStockMovements(context, { ...filters, all: true });

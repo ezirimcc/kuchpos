@@ -1127,6 +1127,28 @@ test("the accountant reads and exports the reports; today's sales report equals 
   await page.getByLabel("What happened").selectOption({ label: "Returned by customer" });
   await expect(page.getByTestId("movement-row")).toHaveCount(1);
   await expect(page.getByTestId("movement-row")).toContainText("Tomato Seed Sachet");
+
+  // Customers: new against returning, retention, and what each has been worth.
+  await page.getByRole("link", { name: "Customers", exact: true }).last().click();
+  await expect(page.getByRole("heading", { name: "Customer report" })).toBeVisible();
+  await expect(page.getByTestId("kpi-new-returning")).toContainText("new");
+  await expect(page.getByTestId("customer-value-Chief Okoro")).toBeVisible();
+  await expect(page.getByTestId("kpi-lifetime")).not.toHaveText("—");
+
+  // Stock figures: sell-through, days left, losses; with money for those who see costs.
+  await page.getByRole("link", { name: "Stock figures" }).click();
+  await expect(page.getByRole("heading", { name: "Stock figures" })).toBeVisible();
+  await expect(page.getByTestId("kpi-stock-value")).toBeVisible();
+  await expect(page.getByTestId("kpi-turnover")).toContainText("times");
+  await expect(page.locator("html")).toHaveAttribute("data-ready", "true");
+  await page.getByLabel("Search products").fill("tomato");
+  await expect(page.getByTestId("stock-figures-Tomato Seed Sachet")).toBeVisible();
+  // One sachet was written off when it was returned damaged.
+  await expect(page.getByTestId("kpi-shrinkage")).not.toHaveText("₦0.00");
+
+  // This month's net sales, to compare with the owner's overview below.
+  await page.goto("/reports/sales");
+  const netThisMonth = (await page.getByTestId("kpi-net-sales").innerText()).trim();
   await signOut(page);
 
   // The storekeeper has stock movements only, and nothing to export.
@@ -1136,6 +1158,11 @@ test("the accountant reads and exports the reports; today's sales report equals 
   await expect(page.getByTestId("report-card").filter({ hasText: "Stock movements" })).toHaveCount(1);
   await expect(page.getByTestId("report-card").filter({ hasText: "Collections" })).toHaveCount(0);
   await page.goto("/reports/sales");
+  await expect(page).toHaveURL(/\/$/);
+  await page.goto("/reports/stock");
+  await expect(page.getByTestId("kpi-stock-out")).toBeVisible();
+  await expect(page.getByTestId("kpi-stock-value")).toHaveCount(0);
+  await page.goto("/reports/customers");
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/reports/stock-movements");
   await expect(page.getByTestId("export-csv")).toHaveCount(0);
@@ -1149,6 +1176,16 @@ test("the accountant reads and exports the reports; today's sales report equals 
   await openFromMenu(page, "Reports");
   await expect(page.getByTestId("report-card").filter({ hasText: "My sales" })).toHaveCount(1);
   await expect(page.getByTestId("report-card").filter({ hasText: "Collections" })).toHaveCount(0);
+  await signOut(page);
+
+  // The owner sees every business side by side, with the same figure as the business's own report.
+  await signIn(page, "owner");
+  await expectSignedInAs(page, "Owner");
+  await openFromMenu(page, "Overview");
+  await expect(page.getByRole("heading", { name: "Overview of all businesses" })).toBeVisible();
+  await expect(page.getByTestId("overview-row-Green Valley Agro (sample)")).toContainText(netThisMonth);
+  await expect(page.getByTestId("overview-row-Sunrise Farm Supplies (sample)")).toBeVisible();
+  await expect(page.getByTestId("overview-total")).toContainText("All businesses");
 });
 
 test("the cashier closes the till with a count and is not told the result; the manager sees it and can recount", async ({ page }) => {

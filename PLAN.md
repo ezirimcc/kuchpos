@@ -284,7 +284,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🤖 A discounted sale sent straight to the server without a valid approval is refused.
 - 🤖 The discount is shared over the lines to the kobo and tax is worked out on what was charged; five wrong tries stop further tries for ten minutes; approvals cannot be changed or removed in the database.
 
-### M12 · Offline checkout  ← moved here because outages are frequent (built 2026-10-09; waiting for the owner's check)
+### M12 · Offline checkout  ← moved here because outages are frequent ✅ (approved 2026-10-10, tag `m12`)
 **Goal:** Requirement C13/C22 — keep selling when the internet drops. Must be finished before any business goes live.
 - Confirm the offline rules first (SPEC §8 and Q22).
 - The app can be "installed" on the checkout computer and opens without internet.

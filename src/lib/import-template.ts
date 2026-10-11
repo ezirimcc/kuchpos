@@ -91,13 +91,13 @@ export const SALES_SHEET = {
   columns: {
     date: column("Date", true, "Day/month/year.", "02/10/2026"),
     time: column("Time", false, "Hour:minute, 24-hour clock. Helps the report by hour.", "14:35", 12),
-    receipt: column("Receipt number", true, "Your own receipt or reference number.", "0457"),
+    receipt: column("Receipt number", true, "Your own receipt or reference number, 16 characters at most. It is kept, with IMP- in front.", "0457", 22),
     code: column("Product code", true, "As on the Products sheet.", "TOM-001"),
     unit: column("Unit", true, "", "sachet"),
     quantity: column("Quantity", true, "", "3"),
     price: column("Price per unit", true, "In Naira: what one of this unit was sold for.", "500"),
     discount: column("Discount on the whole sale", false, "In Naira. Fill it on the first row of the sale only.", "", 26),
-    paidBy: column("Paid by", true, "Cash, or the name of one of the shop's other payment methods.", "Cash"),
+    paidBy: column("Paid by", true, "Cash, or the name of one of the shop's other payment methods. One way of paying for a sale; a part not paid goes under Amount on credit.", "Cash", 30),
     customerPhone: column("Customer phone", false, "Must be on the Customers sheet.", ""),
     onCredit: column("Amount on credit", false, "In Naira. Needs the customer. Fill it on the first row of the sale only.", "", 20),
     soldBy: column("Sold by", false, "A name, kept as a note.", ""),
@@ -125,8 +125,10 @@ export const IMPORT_INSTRUCTIONS = [
   "5. Dates are day/month/year, for example 03/10/2026.",
   "6. Product codes tie the sheets together: a code used on Stock, Deliveries or Sales must be on the Products sheet.",
   "7. In KuchPos, sign in as the admin, open Settings, then Import from Excel, and choose this file. You are shown what will be brought in, and every row that has a problem, before anything is saved.",
-  "8. Products, Customers and Stock are brought in first. Deliveries and Sales are brought in afterwards, in a second step.",
+  "8. Products, Customers and Stock are brought in first (step 2 on that page). Deliveries and Sales are brought in afterwards (step 3), in the order they happened. No date may be earlier than the day the records start.",
   "9. A product or customer that is already in KuchPos is left as it is, so the same file can be used again after adding more rows. Stock rows are different: once a product's starting stock is in, delete its row from the Stock sheet before using the file again.",
+  "10. A delivery (by its reference and supplier) or a sale (by its receipt number) can be brought in only once. For later deliveries and sales, use a file that holds only the new ones.",
+  "11. Money that customers paid back on their debts since the starting day is not in this workbook. After the import, record each one in KuchPos as a repayment on the customer's page.",
 ] as const;
 /** The largest workbook the import accepts, and the most rows it reads from one sheet. */
 export const IMPORT_MAX_BYTES = 5 * 1024 * 1024;

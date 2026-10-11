@@ -1,4 +1,5 @@
 import { IMPORT_MAX_BYTES } from "@/lib/import-template";
+import { previewHistoryImport, runHistoryImport } from "@/server/business/import-history";
 import { previewSetupImport, runSetupImport } from "@/server/business/imports";
 import { ValidationError } from "@/server/errors";
 import { answerFromOwnPages } from "@/server/passive";
@@ -20,10 +21,12 @@ export async function POST(request: Request): Promise<Response> {
     if (file.size > IMPORT_MAX_BYTES) throw tooLarge;
     const input = { fileName: file.name, startingDay: String(form.get("startingDay") ?? "") };
     const bytes = Buffer.from(await file.arrayBuffer());
+    // Which sheets: Products, Customers and Stock ("setup"), or Deliveries and Sales ("history").
+    const history = form.get("part") === "history";
     if (form.get("mode") === "run") {
-      const done = await runSetupImport(context, input, bytes);
-      return { done: true, number: done.number, preview: done.preview };
+      const done = history ? await runHistoryImport(context, input, bytes) : await runSetupImport(context, input, bytes);
+      return { done: true, number: done.number, exceptions: "exceptions" in done ? done.exceptions : 0, preview: done.preview };
     }
-    return { done: false, preview: await previewSetupImport(context, input, bytes) };
+    return { done: false, preview: history ? await previewHistoryImport(context, input, bytes) : await previewSetupImport(context, input, bytes) };
   });
 }

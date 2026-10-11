@@ -2,8 +2,8 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { formatDateTime, offlineReceiptNumber, plainNumber, saleReceiptNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
-import { formatNaira, moneyToString, movingAverageCost, parseMoney, roundMoney, shareDiscount, sumMoney, taxIncludedIn } from "@/lib/money";
+import { formatDateTime, offlineReceiptNumber, saleReceiptNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
+import { formatNaira, moneyToString, movingAverageCost, parseMoney, sumMoney } from "@/lib/money";
 import type { PaymentKindValue } from "@/lib/payment-kinds";
 import { quantityToString } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
@@ -17,6 +17,7 @@ import { claimApproval } from "@/server/approval-claim";
 import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
 import { authorize, can } from "@/server/permissions";
+import { type CheckedPayment, writeSale } from "@/server/sale-write";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
 
 /**
@@ -210,14 +211,6 @@ export type SaleResult = {
   /** Cash to hand back to the customer. */
   change: string;
   alreadySaved: boolean;
-};
-
-type CheckedPayment = {
-  method: { id: string; name: string; kind: PaymentKindValue };
-  amount: Decimal;
-  tendered: Decimal | null;
-  change: Decimal | null;
-  reference: string | null;
 };
 
 const NOTHING_SOLD = "Nothing was sold. Please correct what is marked.";
@@ -462,15 +455,6 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
   }
   const change = sumMoney(payments.map((payment) => payment.change ?? new Decimal(0)));
 
-  // What each product loses from each location, in base units.
-  const perPlace = new Map<string, Map<string, Decimal>>();
-  for (const line of checked) {
-    const places = perPlace.get(line.productId) ?? new Map<string, Decimal>();
-    places.set(line.location.id, (places.get(line.location.id) ?? new Decimal(0)).plus(line.baseQuantity));
-    perPlace.set(line.productId, places);
-  }
-  // Always in the same order (product, then location), so two sales cannot block each other.
-  const productOrder = [...perPlace.keys()].sort();
   const locationName = new Map(locations.map((location) => [location.id, location.name]));
 
   const save = () =>
@@ -588,203 +572,41 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
           }
         }
 
-        // The tax rate at this moment; it is copied onto the sale and never looked up again.
-        const business = await tx.business.findFirst({ select: { taxRatePercent: true } });
-        const rate = new Decimal(business?.taxRatePercent.toFixed(2) ?? "0");
-
-        const short: Record<string, string> = {};
-        // Offline sales only: what each line could not take out of stock, in base units.
-        const shortOf = new Map<number, Decimal>();
-        const costOf = new Map<string, Decimal>();
-        for (const productId of productOrder) {
-          // The product's "turn", as for every other stock change; its average cost is read here.
-          const product = await tx.product.update({
-            where: { id: productId },
-            data: { updatedAt: new Date() },
-            select: { averageCost: true },
-          });
-          costOf.set(productId, new Decimal(product.averageCost.toFixed(4)));
-
-          const places = [...perPlace.get(productId)!.entries()].sort(([a], [b]) => a.localeCompare(b));
-          for (const [locationId, quantity] of places) {
-            // Taken out only if that much is there — one statement, so two cashiers can never
-            // both sell the last one.
-            const needed = quantityToString(quantity);
-            const lowered = await tx.stockBalance.updateMany({
-              where: { productId, locationId, quantity: { gte: needed } },
-              data: { quantity: { decrement: needed } },
-            });
-            if (lowered.count === 1) continue;
-            const there = await tx.stockBalance.findFirst({ where: { productId, locationId }, select: { quantity: true } });
-            if (offline) {
-              // The goods have left the shop. Take what the system holds (this product's turn is
-              // ours, so nobody else can change it meanwhile) and note the rest, line by line.
-              const held = new Decimal(there?.quantity.toFixed(3) ?? "0");
-              if (held.greaterThan(0)) {
-                const taken = await tx.stockBalance.updateMany({
-                  where: { productId, locationId, quantity: { gte: quantityToString(held) } },
-                  data: { quantity: { decrement: quantityToString(held) } },
-                });
-                if (taken.count !== 1) throw new Error("Stock changed while it was being taken for an offline sale.");
-              }
-              let left = held;
-              for (const line of checked) {
-                if (line.productId !== productId || line.location.id !== locationId) continue;
-                const moved = Decimal.min(left, line.baseQuantity);
-                left = left.minus(moved);
-                if (moved.lessThan(line.baseQuantity)) shortOf.set(line.index, line.baseQuantity.minus(moved));
-              }
-              const first = checked.find((line) => line.productId === productId && line.location.id === locationId)!;
-              notes.push({
-                kind: "STOCK_SHORT",
-                summary:
-                  `${plainNumber(needed)} ${first.baseUnitName} of "${first.productName}" was sold, but the system held only ` +
-                  `${plainNumber(quantityToString(held))} in ${locationName.get(locationId)}. Count that product and adjust the stock.`,
-              });
-              continue;
-            }
-            for (const line of checked) {
-              if (line.productId !== productId || line.location.id !== locationId) continue;
-              short[`lines.${line.index}.quantity`] =
-                `Only ${plainNumber(there?.quantity.toFixed(3) ?? "0")} ${line.baseUnitName} of "${line.productName}" is in ` +
-                `${locationName.get(locationId)}. This sale needs ${plainNumber(needed)} ${line.baseUnitName}.`;
-            }
-          }
-        }
-        // Throwing here undoes everything above, including the products that had enough.
-        if (Object.keys(short).length > 0) {
-          throw new ValidationError("Nothing was sold: there is not enough stock.", short);
-        }
-
-        // The discount is shared out over the lines, so each line knows what was really charged for it.
-        const shares = shareDiscount(
-          checked.map((line) => line.lineTotal),
+        const { id: saleId } = await writeSale(tx, context, {
+          requestId: data.requestId,
+          terminal,
+          sequence,
+          receiptNumber,
+          lines: checked,
+          locationName,
           discount,
-        );
-        const lines = checked.map((line, position) => {
-          const lineRate = line.taxable ? rate : new Decimal(0);
-          const baseUnitCost = costOf.get(line.productId)!;
-          return {
-            line,
-            lineNumber: position + 1,
-            discountAmount: shares[position],
-            taxRatePercent: lineRate,
-            // Tax is what is inside the amount actually charged.
-            taxAmount: taxIncludedIn(line.lineTotal.minus(shares[position]), lineRate),
-            baseUnitCost,
-            lineCost: roundMoney(line.baseQuantity.times(baseUnitCost)),
-          };
+          discountPercent,
+          discountReason: data.discount?.reason ?? null,
+          total,
+          customer,
+          credit,
+          owedAfter,
+          creditNote: overLimit ? `Over the credit limit, allowed by ${overLimitAllowedBy}.` : null,
+          payments,
+          tillSessionId: till.id,
+          cashier: { userId: context.actor.userId, name: context.actor.name },
+          deviceTime: data.deviceTime ? new Date(data.deviceTime) : null,
+          offline: !!offline,
+          sentBy: offline?.sentBy ?? null,
+          acceptShortage: !!offline,
+          notes,
         });
-
-        const sale = await tx.sale.create({
-          data: {
-            businessId,
-            requestId: data.requestId,
-            terminalId: terminal.id,
-            terminalCode: terminal.code,
-            sequence,
-            receiptNumber,
-            total: moneyToString(total),
-            discountAmount: moneyToString(discount),
-            discountPercent: discountPercent ? discountPercent.toFixed(2) : null,
-            discountReason: discount.greaterThan(0) ? (data.discount?.reason ?? null) : null,
-            taxRatePercent: rate.toFixed(2),
-            taxTotal: moneyToString(sumMoney(lines.map((entry) => entry.taxAmount))),
-            costTotal: moneyToString(sumMoney(lines.map((entry) => entry.lineCost))),
-            cashierUserId: context.actor.userId,
-            cashierName: context.actor.name,
-            deviceTime: data.deviceTime ? new Date(data.deviceTime) : null,
-            offline: !!offline,
-            sentByUserId: offline?.sentBy.userId ?? null,
-            sentByName: offline?.sentBy.name ?? null,
-            tillSessionId: till.id,
-            customerId: customer?.id ?? null,
-            customerName: customer?.name ?? null,
-            customerPhone: customer?.phone ?? null,
-            creditAmount: moneyToString(credit),
-          },
-        });
-        if (customer && owedAfter) {
-          await tx.customerAccountEntry.create({
-            data: {
-              businessId,
-              customerId: customer.id,
-              type: "CREDIT_SALE",
-              amount: moneyToString(credit),
-              balanceAfter: moneyToString(owedAfter),
-              saleId: sale.id,
-              documentNumber: receiptNumber,
-              note: overLimit ? `Over the credit limit, allowed by ${overLimitAllowedBy}.` : null,
-              createdByUserId: context.actor.userId,
-              createdByName: context.actor.name,
-            },
-          });
-          if (overLimit) {
-            await tx.activityLog.create({
-              data: activityRow(context, {
-                action: "sale.credit_over_limit",
-                summary:
-                  `${overLimitAllowedBy} let ${customer.name} go over their credit limit on sale ${receiptNumber}` +
-                  `${overLimitAllowedBy === context.actor.name ? "" : ` (sold by ${context.actor.name})`}: ` +
-                  `${formatNaira(credit)} on credit, now owing ${formatNaira(owedAfter)}.`,
-                targetType: "customer",
-                targetId: customer.id,
-              }),
-            });
-          }
-        }
-        await tx.saleLine.createMany({
-          data: lines.map(({ line, ...extra }) => ({
-            businessId,
-            saleId: sale.id,
-            lineNumber: extra.lineNumber,
-            productId: line.productId,
-            productUnitId: line.productUnitId,
-            productName: line.productName,
-            unitName: line.unitName,
-            unitFactor: line.unitFactor,
-            quantity: line.quantity,
-            baseQuantity: quantityToString(line.baseQuantity),
-            stockShort: quantityToString(shortOf.get(line.index) ?? new Decimal(0)),
-            unitPrice: moneyToString(line.unitPrice),
-            lineTotal: moneyToString(line.lineTotal),
-            discountAmount: moneyToString(extra.discountAmount),
-            taxable: line.taxable,
-            taxRatePercent: extra.taxRatePercent.toFixed(2),
-            taxAmount: moneyToString(extra.taxAmount),
-            baseUnitCost: extra.baseUnitCost.toFixed(4),
-            lineCost: moneyToString(extra.lineCost),
-            locationId: line.location.id,
-            locationName: line.location.name,
-          })),
-        });
-        await tx.stockMovement.createMany({
-          data: checked.flatMap((line) => {
-            // An offline line that was partly (or wholly) not in stock moves only what was there,
-            // written in the base unit.
-            const lacking = shortOf.get(line.index);
-            const moved = lacking ? line.baseQuantity.minus(lacking) : line.baseQuantity;
-            if (!moved.greaterThan(0)) return [];
-            return [{
-            businessId,
-            productId: line.productId,
-            locationId: line.location.id,
-            type: "SALE" as const,
-            quantityDelta: `-${quantityToString(moved)}`,
-            unitName: lacking ? line.baseUnitName : line.unitName,
-            unitFactor: lacking ? "1.000" : line.unitFactor,
-            unitQuantity: lacking ? `-${quantityToString(moved)}` : `-${line.quantity}`,
-            documentType: "sale",
-            documentId: sale.id,
-            documentNumber: receiptNumber,
-            userId: context.actor.userId,
-            userName: context.actor.name,
-            }];
-          }),
-        });
-        if (notes.length > 0) {
-          await tx.offlineException.createMany({
-            data: notes.map((note) => ({ businessId, saleId: sale.id, kind: note.kind, summary: note.summary.slice(0, 500) })),
+        if (customer && owedAfter && overLimit) {
+          await tx.activityLog.create({
+            data: activityRow(context, {
+              action: "sale.credit_over_limit",
+              summary:
+                `${overLimitAllowedBy} let ${customer.name} go over their credit limit on sale ${receiptNumber}` +
+                `${overLimitAllowedBy === context.actor.name ? "" : ` (sold by ${context.actor.name})`}: ` +
+                `${formatNaira(credit)} on credit, now owing ${formatNaira(owedAfter)}.`,
+              targetType: "customer",
+              targetId: customer.id,
+            }),
           });
         }
         // Approvals the seller gave themselves are recorded like any other, and every approval is
@@ -812,31 +634,11 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
           spent.push(created.id);
         }
         if (spent.length > 0) {
-          await tx.approvalUse.createMany({ data: spent.map((approvalId) => ({ businessId, approvalId, saleId: sale.id })) });
-        }
-
-        // The payments are written last: if they cannot be saved, nothing of the sale is.
-        if (payments.length > 0) {
-          await tx.payment.createMany({
-            data: payments.map((payment) => ({
-              businessId,
-              saleId: sale.id,
-              methodId: payment.method.id,
-              methodName: payment.method.name,
-              kind: payment.method.kind,
-              amount: moneyToString(payment.amount),
-              tendered: payment.tendered ? moneyToString(payment.tendered) : null,
-              changeGiven: payment.change ? moneyToString(payment.change) : null,
-              reference: payment.reference,
-              tillSessionId: till.id,
-              receivedByUserId: context.actor.userId,
-              receivedByName: context.actor.name,
-            })),
-          });
+          await tx.approvalUse.createMany({ data: spent.map((approvalId) => ({ businessId, approvalId, saleId })) });
         }
 
         return {
-          id: sale.id,
+          id: saleId,
           receiptNumber,
           total: moneyToString(total),
           change: moneyToString(change),
@@ -1008,6 +810,11 @@ export type SaleDetail = {
    * computer's clock), who sent it to the server, and what was found out of the ordinary.
    */
   offline: { madeAt: Date; sentAt: Date; sentByName: string | null; exceptions: string[] } | null;
+  /**
+   * Set when the sale was not made in KuchPos but brought in from the shop's Excel records:
+   * when it was brought in, and what was found out of the ordinary (stock that was not there).
+   */
+  imported: { broughtInAt: Date; byName: string; exceptions: string[] } | null;
   /** Who it was sold to, as they were named then; null for a walk-in. */
   customer: { id: string; name: string; phone: string } | null;
   /** The part of the total put on the customer's account, and what they owed straight afterwards. */
@@ -1055,6 +862,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         accountEntries: { where: { type: "CREDIT_SALE" }, select: { balanceAfter: true } },
         approvalUses: { select: { approval: { select: { kind: true, approvedByName: true } } } },
         offlineExceptions: { orderBy: { createdAt: "asc" }, select: { summary: true } },
+        importRun: { select: { createdAt: true, createdByName: true } },
         returns: { orderBy: { number: "asc" }, select: { id: true, number: true, refundTotal: true, createdAt: true, createdByName: true } },
         terminal: { select: { paperWidth: true } },
         _count: { select: { receiptPrints: true } },
@@ -1094,6 +902,13 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
           sentAt: row.createdAt,
           sentByName: row.sentByName,
           // What a manager is to look at is not for the cashier's eyes.
+          exceptions: can(context, "report.sales.view") ? row.offlineExceptions.map((entry) => entry.summary) : [],
+        }
+      : null,
+    imported: row.importRun
+      ? {
+          broughtInAt: row.importRun.createdAt,
+          byName: row.importRun.createdByName,
           exceptions: can(context, "report.sales.view") ? row.offlineExceptions.map((entry) => entry.summary) : [],
         }
       : null,

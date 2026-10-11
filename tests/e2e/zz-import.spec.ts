@@ -17,6 +17,7 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
   await expect(page.getByRole("heading", { name: "Import from Excel" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download the blank workbook (Excel)" })).toHaveAttribute("href", "/templates/kuchpos-import-template.xlsx");
 
+  const setup = page.getByTestId("import-form-setup");
   const products: Rows = [
     { code: "XL-MAIZE", name: "Excel Maize Seed", category: "Brought in", unit: "kg", contains: "1", price: "1200", fractions: "Yes" },
     { code: "XL-HOE", name: "Excel Hoe", category: "Brought in", unit: "piece", contains: "1", price: "3500" },
@@ -24,18 +25,18 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
   const customers: Rows = [{ name: "Excel Farms Ltd", phone: "08099912345", city: "Owerri", state: "Imo", creditLimit: "100000", owed: "25000" }];
 
   // A workbook with a mistake: half a hoe.
-  await page.getByLabel("Excel file").setInputFiles({
+  await setup.getByLabel("Excel file").setInputFiles({
     name: "shop-wrong.xlsx",
     mimeType: XLSX,
     buffer: await makeWorkbook({ products, customers, stock: [{ code: "XL-HOE", unit: "piece", quantity: "2.5", cost: "2000" }] }),
   });
-  await page.getByRole("button", { name: "Check the file" }).click();
-  await expect(page.getByTestId("import-problems")).toContainText("Stock, row 4");
-  await expect(page.getByTestId("import-problems")).toContainText("is counted in whole units");
-  await expect(page.getByRole("button", { name: "Bring it in" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Check the file" }).click();
+  await expect(page.getByTestId("import-problems-setup")).toContainText("Stock, row 4");
+  await expect(page.getByTestId("import-problems-setup")).toContainText("is counted in whole units");
+  await expect(setup.getByRole("button", { name: "Bring it in" })).toHaveCount(0);
 
   // Corrected.
-  await page.getByLabel("Excel file").setInputFiles({
+  await setup.getByLabel("Excel file").setInputFiles({
     name: "shop-right.xlsx",
     mimeType: XLSX,
     buffer: await makeWorkbook({
@@ -47,18 +48,18 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
       ],
     }),
   });
-  await expect(page.getByTestId("import-preview")).toHaveCount(0);
-  await page.getByRole("button", { name: "Check the file" }).click();
-  const preview = page.getByTestId("import-preview");
+  await expect(page.getByTestId("import-preview-setup")).toHaveCount(0);
+  await setup.getByRole("button", { name: "Check the file" }).click();
+  const preview = page.getByTestId("import-preview-setup");
   await expect(preview).toContainText("New products: 2");
   await expect(preview).toContainText("New customers: 1, owing ₦25,000.00");
   await expect(preview).toContainText("2 lines, worth ₦56,400.00 at cost");
-  await page.getByRole("button", { name: "Bring it in" }).click();
-  await expect(page.getByTestId("import-message")).toHaveText("Brought in: 2 products, 1 customer and 2 lines of stock.");
+  await setup.getByRole("button", { name: "Bring it in" }).click();
+  await expect(page.getByTestId("import-message-setup")).toHaveText("Brought in: 2 products, 1 customer and 2 lines of stock.");
   await expect(page.getByRole("row", { name: /IM-000001.*shop-right\.xlsx/ })).toBeVisible();
 
   // The same file again is refused.
-  await page.getByLabel("Excel file").setInputFiles({
+  await setup.getByLabel("Excel file").setInputFiles({
     name: "shop-right.xlsx",
     mimeType: XLSX,
     buffer: await makeWorkbook({
@@ -70,13 +71,42 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
       ],
     }),
   });
-  await page.getByRole("button", { name: "Check the file" }).click();
-  await expect(page.getByTestId("import-preview")).toContainText(/nothing to bring in|already brought in|already has opening stock/);
-  await expect(page.getByRole("button", { name: "Bring it in" })).toHaveCount(0);
+  await setup.getByRole("button", { name: "Check the file" }).click();
+  await expect(page.getByTestId("import-preview-setup")).toContainText(/nothing to bring in|already brought in|already has opening stock/);
+  await expect(setup.getByRole("button", { name: "Bring it in" })).toHaveCount(0);
+
+  // Step 3: the deliveries and sales since. One sale takes more hoes than the records hold.
+  const history = page.getByTestId("import-form-history");
+  const now = new Date(Date.now() + 60 * 60 * 1000);
+  const todayTyped = `${String(now.getUTCDate()).padStart(2, "0")}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${now.getUTCFullYear()}`;
+  await history.getByLabel("Excel file").setInputFiles({
+    name: "shop-history.xlsx",
+    mimeType: XLSX,
+    buffer: await makeWorkbook({
+      deliveries: [{ date: todayTyped, reference: "XL-D1", supplier: "Excel Tools Supply", code: "XL-HOE", unit: "piece", quantity: "3", cost: "2100" }],
+      sales: [
+        { date: todayTyped, time: "00:05", receipt: "XL-900", code: "XL-HOE", unit: "piece", quantity: "20", price: "3500", paidBy: "Cash", soldBy: "Excel Seller" },
+        { date: todayTyped, time: "00:06", receipt: "XL-901", code: "XL-MAIZE", unit: "kg", quantity: "2.5", price: "1200", paidBy: "Cash", customerPhone: "08099912345", onCredit: "1000" },
+      ],
+    }),
+  });
+  await history.getByRole("button", { name: "Check the file" }).click();
+  const historyPreview = page.getByTestId("import-preview-history");
+  await expect(historyPreview).toContainText("Deliveries: 1 (1 line), costing ₦6,300.00");
+  await expect(historyPreview).toContainText("Sales: 2 (2 lines), worth ₦73,000.00");
+  await expect(page.getByTestId("import-short")).toContainText("1 sale takes more out of stock than the records hold");
+  await history.getByRole("button", { name: "Bring it in" }).click();
+  await expect(page.getByTestId("import-message-history")).toContainText("Brought in: 1 delivery and 2 sales. 1 product was sold beyond the stock on record");
+  await expect(page.getByRole("row", { name: /IM-000002.*shop-history\.xlsx.*1 delivery, 2 sales/ })).toBeVisible();
+
+  await gotoReady(page, "/sales?q=IMP-XL-900");
+  await page.getByRole("link", { name: "IMP-XL-900" }).click();
+  await expect(page.getByTestId("imported-notice")).toContainText("brought in from the shop's Excel records");
+  await expect(page.getByTestId("imported-notice")).toContainText('20 piece of "Excel Hoe" was sold, but the system held only 15 in');
 
   // What came in is there.
   await gotoReady(page, "/customers?q=Excel+Farms");
-  await expect(page.getByRole("row", { name: /Excel Farms Ltd/ })).toContainText("₦25,000.00");
+  await expect(page.getByRole("row", { name: /Excel Farms Ltd/ })).toContainText("₦26,000.00");
   await gotoReady(page, "/products?q=XL-");
   await expect(page.getByRole("row", { name: /Excel Hoe/ })).toBeVisible();
   await expect(page.getByRole("row", { name: /Excel Maize Seed/ })).toBeVisible();

@@ -115,3 +115,23 @@ export function cellDay(cell: Cell): string | null {
   const date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : null;
 }
+
+/**
+ * A time of day as minutes after midnight: from text typed hour:minute on a 24-hour clock
+ * ("14:35"), or from a cell Excel keeps as a time. Null if it is not a time.
+ */
+export function cellMinutes(cell: Cell): number | null {
+  if (cell instanceof Date) return Number.isNaN(cell.getTime()) ? null : cell.getUTCHours() * 60 + cell.getUTCMinutes();
+  if (typeof cell !== "string") return null;
+  const text = cell.trim();
+  const typed = /^(\d{1,2})[:.](\d{2})(?::\d{2})?$/.exec(text);
+  if (typed) {
+    const hours = Number.parseInt(typed[1], 10);
+    const minutes = Number.parseInt(typed[2], 10);
+    return hours <= 23 && minutes <= 59 ? hours * 60 + minutes : null;
+  }
+  // Excel keeps a time as the part of a day that has passed: 0.5 is noon. (A count of
+  // minutes, not money or stock, so ordinary arithmetic is right here.)
+  if (/^0?\.\d+$/.test(text)) return Math.min(1439, Math.round(Number.parseFloat(text) * 1440));
+  return null;
+}

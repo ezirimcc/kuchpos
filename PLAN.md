@@ -356,7 +356,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q20 — provide a sample of your current Excel layout (made-up or non-sensitive rows).
 
-**Progress (C66 changed the shape: one five-sheet workbook per shop, plus export buttons):** step 1, export for Excel on the list pages — built. Step 2, import of Products, Customers and Stock — built 2026-10-11, waiting for the owner's check. Step 3, import of Deliveries and Sales since the starting day — not built yet.
+**Progress (C66 changed the shape: one five-sheet workbook per shop, plus export buttons):** step 1, export for Excel on the list pages — built. Step 2, import of Products, Customers and Stock — built 2026-10-11, waiting for the owner's check. Step 3, import of Deliveries and Sales since the starting day — built 2026-10-11, waiting for the owner's check.
 
 ### M16 · Hardening
 **Goal:** Ready to be trusted with real money.

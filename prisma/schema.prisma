@@ -909,6 +909,10 @@ model Sale {
   /// The till session it was sold in. Empty only for sales made before till sessions existed.
   tillSessionId   String?  @db.Char(36)
   tillSession     TillSession? @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Set when the sale was not made in KuchPos but brought in from the shop's Excel records
+  /// (C66): it keeps its own date, has no till session, and its number starts with "IMP-".
+  importRunId     String?  @db.Char(36)
+  importRun       ImportRun? @relation(fields: [importRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   lines           SaleLine[]
   payments        Payment[]
@@ -928,6 +932,7 @@ model Sale {
   @@index([businessId, cashierUserId, createdAt])
   @@index([tillSessionId])
   @@index([customerId, createdAt])
+  @@index([importRunId])
   @@map("sale")
 }
 
@@ -1063,6 +1068,8 @@ enum DocumentKind {
   REPAYMENT
   SALE_RETURN
   IMPORT
+  /// Sales brought in from Excel: their place in `sale.sequence` (2,000,000,000 + number).
+  IMPORTED_SALE
 }
 
 /// The number the next document of each kind will get in a business (deliveries, transfers,
@@ -1397,13 +1404,15 @@ model ImportRun {
   /// sha256 of the file exactly as it was uploaded.
   fileHash        String     @db.Char(64)
   fileName        String     @db.VarChar(200)
-  /// The day the opening stock was counted and the opening debts were owed (SETUP only).
+  /// The day the shop's records in KuchPos start: opening stock counted, opening debts owed; no delivery or sale is earlier.
   startingDay     DateTime?  @db.Date
   /// How many of each thing were brought in, and how many were already there and left alone (JSON text).
   summary         String     @db.Text
   createdByUserId String?
   createdByName   String
   createdAt       DateTime   @default(now()) @db.DateTime(3)
+
+  sales           Sale[]
 
   @@unique([businessId, part, fileHash])
   @@unique([businessId, number])

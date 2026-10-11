@@ -25,7 +25,7 @@ export default async function ImportPage() {
       <PageHeader
         icon={FileSpreadsheet}
         title="Import from Excel"
-        description={<>Bring this shop&apos;s products, customers and counted stock into KuchPos from one Excel file.</>}
+        description={<>Bring this shop&apos;s records into KuchPos from one Excel file: products, customers and counted stock first, then the deliveries and sales since.</>}
       />
 
       <Card>
@@ -44,15 +44,29 @@ export default async function ImportPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>2. Check it, then bring it in</CardTitle>
+          <CardTitle>2. Products, customers and stock</CardTitle>
           <CardDescription>
             The sheets Products, Customers and Stock are brought in here. All stock goes onto the Shelf; move part of it to the
             Storeroom afterwards with a transfer if you wish. Products and customers already in KuchPos are left as they are.
-            (Deliveries and Sales are a later step and are ignored for now.)
+            Check the file first; nothing is saved until you bring it in.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ImportForm today={today} defaultStartingDay={USUAL_STARTING_DAY <= today ? USUAL_STARTING_DAY : today} />
+          <ImportForm part="setup" today={today} defaultStartingDay={USUAL_STARTING_DAY <= today ? USUAL_STARTING_DAY : today} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>3. Deliveries and sales since the starting day</CardTitle>
+          <CardDescription>
+            Do this after step 2, with the same workbook: the sheets Deliveries and Sales are brought in, in the order things happened.
+            Each sale keeps its own date and its own receipt number with IMP- in front, and goes through no till. A delivery or
+            receipt that is already in KuchPos must be taken out of the file before it is used again.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ImportForm part="history" today={today} defaultStartingDay={USUAL_STARTING_DAY <= today ? USUAL_STARTING_DAY : today} />
         </CardContent>
       </Card>
 
@@ -82,8 +96,17 @@ export default async function ImportPage() {
                     <TableCell>{run.fileName}</TableCell>
                     <TableCell>{run.startingDay ? formatDay(run.startingDay) : "—"}</TableCell>
                     <TableCell>
-                      {run.summary.products} products, {run.summary.customers} customers, {run.summary.stockLines} lines of stock
-                      {typeof run.summary.stockValue === "string" ? ` (${nairaFromText(run.summary.stockValue)} at cost)` : ""}
+                      {run.part === "HISTORY" ? (
+                        <>
+                          {run.summary.deliveries} {run.summary.deliveries === 1 ? "delivery" : "deliveries"}, {run.summary.sales} {run.summary.sales === 1 ? "sale" : "sales"}
+                          {typeof run.summary.salesTotal === "string" ? ` (${nairaFromText(run.summary.salesTotal)})` : ""}
+                        </>
+                      ) : (
+                        <>
+                          {run.summary.products} products, {run.summary.customers} customers, {run.summary.stockLines} lines of stock
+                          {typeof run.summary.stockValue === "string" ? ` (${nairaFromText(run.summary.stockValue)} at cost)` : ""}
+                        </>
+                      )}
                     </TableCell>
                     <TableCell>{run.byName}</TableCell>
                     <TableCell>{formatDateTime(run.at)}</TableCell>
@@ -95,7 +118,9 @@ export default async function ImportPage() {
           <p className="mt-4 text-sm text-muted-foreground">
             See what arrived: <Link href="/products" className="text-link hover:underline">Products</Link>,{" "}
             <Link href="/customers" className="text-link hover:underline">Customers</Link>,{" "}
-            <Link href="/stock" className="text-link hover:underline">Stock</Link>.
+            <Link href="/stock" className="text-link hover:underline">Stock</Link>,{" "}
+            <Link href="/stock/receipts" className="text-link hover:underline">Deliveries</Link>,{" "}
+            <Link href="/sales" className="text-link hover:underline">Sales</Link>.
           </p>
         </CardContent>
       </Card>

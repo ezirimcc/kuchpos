@@ -9,6 +9,7 @@ import * as counts from "@/server/business/counts";
 import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
 import * as exports from "@/server/business/exports";
+import * as importHistory from "@/server/business/import-history";
 import * as imports from "@/server/business/imports";
 import * as offline from "@/server/business/offline";
 import * as paymentMethods from "@/server/business/payment-methods";
@@ -34,6 +35,9 @@ import { createUser, createWorld, TEST_PASSWORD, type World } from "../support/w
 
 const IMPORT_ABOUT = { fileName: "shop.xlsx", startingDay: "2026-10-01" };
 /** A different workbook each time, so no call is refused as "this file was already brought in". */
+/** A sale of the sample product (code A-001), with a receipt number of its own each time. */
+const historyFile = () =>
+  makeWorkbook({ sales: [{ date: "01/10/2026", receipt: randomUUID().slice(0, 8), code: "A-001", unit: "single", quantity: "1", price: "100", paidBy: "Cash" }] });
 const importFile = () =>
   makeWorkbook({ products: [{ code: `IMP-${randomUUID().slice(0, 8)}`, name: `Imported ${randomUUID().slice(0, 8)}`, unit: "piece", contains: "1", price: "100" }] });
 
@@ -640,6 +644,16 @@ const OPERATIONS: Operation[] = [
     run: async (context) => imports.runSetupImport(context, IMPORT_ABOUT, await importFile()),
   },
   {
+    name: "importHistory.previewHistoryImport",
+    allowed: BUSINESS_ADMINS,
+    run: async (context) => importHistory.previewHistoryImport(context, IMPORT_ABOUT, await historyFile()),
+  },
+  {
+    name: "importHistory.runHistoryImport",
+    allowed: BUSINESS_ADMINS,
+    run: async (context) => importHistory.runHistoryImport(context, IMPORT_ABOUT, await historyFile()),
+  },
+  {
     name: "imports.listImports",
     allowed: BUSINESS_ADMINS,
     run: (context) => imports.listImports(context),
@@ -1111,6 +1125,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(returns).map((name) => `returns.${name}`),
       ...Object.keys(reports).map((name) => `reports.${name}`),
       ...Object.keys(exports).map((name) => `exports.${name}`),
+      ...Object.keys(importHistory).map((name) => `importHistory.${name}`),
       ...Object.keys(imports).filter((name) => name !== "importNumber" && name !== "OPENING_STOCK_SUPPLIER").map((name) => `imports.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),

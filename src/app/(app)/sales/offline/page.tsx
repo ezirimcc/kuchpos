@@ -48,7 +48,7 @@ export default async function OfflineExceptionsPage({ searchParams }: PageProps<
       <PageHeader
         icon={CloudOff}
         title="Offline exceptions"
-        description="Sales made without internet are always accepted, because the goods have already left the shop. Anything out of the ordinary about one is listed here for a manager to look at — most often a product that sold more than the system held, which means it should be counted."
+        description="Sales made without internet are always accepted, because the goods have already left the shop. Anything out of the ordinary about one is listed here for a manager to look at — most often a product that sold more than the system held, which means it should be counted. Sales brought in from Excel that took more stock than the records allowed are listed here too."
       />
 
       <Suspense>

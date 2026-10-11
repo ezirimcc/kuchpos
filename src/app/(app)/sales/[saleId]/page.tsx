@@ -91,6 +91,20 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
         </Alert>
       )}
 
+      {sale.imported && (
+        <Alert data-testid="imported-notice">
+          This sale was not made in KuchPos: it was brought in from the shop&apos;s Excel records by {sale.imported.byName} on{" "}
+          {formatDateTime(sale.imported.broughtInAt)}. It went through no till.
+          {sale.imported.exceptions.length > 0 && (
+            <ul className="mt-1 list-disc pl-5">
+              {sale.imported.exceptions.map((exception, index) => (
+                <li key={index}>{exception}</li>
+              ))}
+            </ul>
+          )}
+        </Alert>
+      )}
+
       {sale.discountAmount !== "0.00" && (
         <Alert data-testid="discount-notice">
           A discount of {nairaFromText(sale.discountAmount)}

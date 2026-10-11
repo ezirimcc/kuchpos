@@ -91,6 +91,7 @@ function receiptFor(kit: StoredKit, sale: SaleToSave, receiptNumber: string): Of
     discountReason: null,
     discountApprovedBy: null,
     offline: null,
+    imported: null,
     customer: customer ? { id: customer.id, name: customer.name, phone: customer.phone } : null,
     creditAmount: "0.00",
     owedAfter: null,

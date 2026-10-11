@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { nairaFromText } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { listCustomers } from "@/server/business/customers";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Customers — KuchPos" };
 
@@ -44,6 +45,7 @@ export default async function CustomersPage({ searchParams }: PageProps<"/custom
             <UserPlus className="size-4" aria-hidden /> New customer
           </Link>
         )}
+        <ExportLink context={context} list="customers" params={{ search, ...others }} />
       </PageHeader>
 
       <Suspense>

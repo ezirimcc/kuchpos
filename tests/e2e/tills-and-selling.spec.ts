@@ -1146,6 +1146,21 @@ test("the accountant reads and exports the reports; today's sales report equals 
   // One sachet was written off when it was returned damaged.
   await expect(page.getByTestId("kpi-shrinkage")).not.toHaveText("₦0.00");
 
+  // The list pages can be exported too: the file holds every row the list would show.
+  await gotoReady(page, "/products");
+  const exporting = page.waitForEvent("download");
+  await page.getByTestId("export-csv").click();
+  const productsFile = await exporting;
+  expect(productsFile.suggestedFilename()).toBe(`products_${today}.csv`);
+  let productsText = "";
+  for await (const chunk of await productsFile.createReadStream()) productsText += chunk.toString("utf8");
+  expect(productsText).toContain("Product,Code,Barcode,Category,Unit,");
+  expect(productsText).toContain("Tomato Seed Sachet");
+  for (const address of ["/customers", "/sales", "/returns", "/stock", "/stock/receipts", "/stock/transfers", "/stock/adjustments", "/till/sessions", "/activity"]) {
+    await page.goto(address);
+    await expect(page.getByTestId("export-csv"), address).toBeVisible();
+  }
+
   // This month's net sales, to compare with the owner's overview below.
   await page.goto("/reports/sales");
   const netThisMonth = (await page.getByTestId("kpi-net-sales").innerText()).trim();
@@ -1166,6 +1181,10 @@ test("the accountant reads and exports the reports; today's sales report equals 
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/reports/stock-movements");
   await expect(page.getByTestId("export-csv")).toHaveCount(0);
+  await page.goto("/stock");
+  await expect(page.getByRole("heading", { name: "Stock", exact: true })).toBeVisible();
+  await expect(page.getByTestId("export-csv")).toHaveCount(0);
+  expect((await page.request.get("/reports/export?list=stock")).status()).toBe(403);
   const refused = await page.request.get("/reports/export?report=stock-movements");
   expect(refused.status()).toBe(403);
   await signOut(page);

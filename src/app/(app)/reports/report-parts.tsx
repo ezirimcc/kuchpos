@@ -93,9 +93,22 @@ export function periodText(period: Period): string {
 }
 
 /** A link that downloads the report on screen as a CSV file (it opens in Excel). Shown only to those who may export. */
-export function ExportLink({ context, report, params }: { context: AppContext; report: string; params: Record<string, string> }) {
+export function ExportLink({
+  context,
+  report,
+  list,
+  params,
+}: {
+  context: AppContext;
+  /** One of the reports… */
+  report?: string;
+  /** …or one of the list pages (Products, Customers, Sales and so on). */
+  list?: string;
+  /** The filters on screen, named as the operation behind the page names them. */
+  params: Record<string, string>;
+}) {
   if (!can(context, "report.export")) return null;
-  const query = new URLSearchParams({ report, ...Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "")) });
+  const query = new URLSearchParams({ ...(list ? { list } : { report: report ?? "" }), ...Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "")) });
   return (
     // A plain link on purpose: it is a file download, not a page of the app.
     <a

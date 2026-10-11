@@ -11,6 +11,7 @@ import { formatDateTime, transferNumber } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { listTransfers } from "@/server/business/transfers";
 import { StockTabs } from "../stock-tabs";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Transfers — KuchPos" };
 
@@ -37,6 +38,7 @@ export default async function TransfersPage({ searchParams }: PageProps<"/stock/
             <ArrowLeftRight className="size-4" aria-hidden /> New transfer
           </Link>
         )}
+        <ExportLink context={context} list="transfers" params={{ search: filters.q, from: filters.from, to: filters.to }} />
       </PageHeader>
       <StockTabs context={context} current="transfers" />
 

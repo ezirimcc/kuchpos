@@ -13,6 +13,7 @@ import { requirePagePermission } from "@/server/auth/request";
 import { listAdjustments } from "@/server/business/adjustments";
 import { StockTabs } from "../stock-tabs";
 import { StatusBadge } from "./status-badge";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Stock adjustments — KuchPos" };
 
@@ -45,6 +46,7 @@ export default async function AdjustmentsPage({ searchParams }: PageProps<"/stoc
             <Scale className="size-4" aria-hidden /> New adjustment
           </Link>
         )}
+        <ExportLink context={context} list="adjustments" params={{ search: filters.q, status: filters.status, from: filters.from, to: filters.to }} />
       </PageHeader>
       <StockTabs context={context} current="adjustments" />
 

@@ -11,6 +11,7 @@ import { formatDay, nairaFromText, receiptNumber } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { listReceipts } from "@/server/business/stock";
 import { StockTabs } from "../stock-tabs";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Deliveries — KuchPos" };
 
@@ -27,7 +28,9 @@ export default async function ReceiptsPage({ searchParams }: PageProps<"/stock/r
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader icon={ClipboardList} title="Deliveries" description="Every delivery recorded, newest first. A corrected delivery is marked, and keeps its full history." />
+      <PageHeader icon={ClipboardList} title="Deliveries" description="Every delivery recorded, newest first. A corrected delivery is marked, and keeps its full history.">
+        <ExportLink context={context} list="deliveries" params={{ search: filters.q, from: filters.from, to: filters.to }} />
+      </PageHeader>
       <StockTabs context={context} current="receipts" />
 
       <Suspense>

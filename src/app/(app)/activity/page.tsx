@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/page-header";
 import { Pagination } from "@/components/pagination";
 import { requirePagePermission } from "@/server/auth/request";
 import { listActivity } from "@/server/business/activity-log";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Activity log — KuchPos" };
 
@@ -33,7 +34,9 @@ export default async function ActivityPage({ searchParams }: PageProps<"/activit
         icon={History}
         title="Activity log"
         description={`Who did what in ${context.business?.name}, newest first. Entries can never be changed or removed.`}
-      />
+      >
+        <ExportLink context={context} list="activity" params={{ search: filters.q, from: filters.from, to: filters.to }} />
+      </PageHeader>
 
       <Suspense>
         <div className="flex flex-wrap items-center gap-3">

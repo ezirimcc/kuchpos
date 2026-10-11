@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { toCsv } from "@/lib/csv";
 import { resolveContext } from "@/server/auth/context";
+import { exportList } from "@/server/business/exports";
 import { exportReport } from "@/server/business/reports";
 import { ForbiddenError, NotSignedInError, ValidationError } from "@/server/errors";
 
@@ -12,7 +13,8 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const context = await resolveContext(await headers());
     const params = Object.fromEntries(new URL(request.url).searchParams.entries());
-    const report = await exportReport(context, params);
+    // A list page's table, or one of the reports.
+    const report = params.list ? await exportList(context, params) : await exportReport(context, params);
     return new Response(toCsv(report.header, report.rows), {
       headers: {
         "content-type": "text/csv; charset=utf-8",

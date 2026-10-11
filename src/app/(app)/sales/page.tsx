@@ -13,6 +13,7 @@ import { formatDateTime, nairaFromText } from "@/lib/format";
 import { requirePageContext } from "@/server/auth/request";
 import { listSales } from "@/server/business/sales";
 import { can } from "@/server/permissions";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Sales — KuchPos" };
 
@@ -55,6 +56,7 @@ export default async function SalesPage({ searchParams }: PageProps<"/sales">) {
             <ShoppingCart className="size-4" aria-hidden /> New sale
           </Link>
         )}
+        <ExportLink context={context} list="sales" params={{ search: filters.q, from: filters.from, to: filters.to }} />
       </PageHeader>
 
       <Suspense>

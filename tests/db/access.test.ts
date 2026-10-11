@@ -8,6 +8,7 @@ import * as catalog from "@/server/business/catalog";
 import * as counts from "@/server/business/counts";
 import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
+import * as exports from "@/server/business/exports";
 import * as offline from "@/server/business/offline";
 import * as paymentMethods from "@/server/business/payment-methods";
 import * as reports from "@/server/business/reports";
@@ -622,6 +623,11 @@ const OPERATIONS: Operation[] = [
     run: (context) => overview.getOwnerOverview(context),
   },
   {
+    name: "exports.exportList",
+    allowed: REPORT_READERS,
+    run: (context) => exports.exportList(context, { list: "sales" }),
+  },
+  {
     name: "reports.exportReport",
     allowed: REPORT_READERS,
     run: (context) => reports.exportReport(context, { report: "sales" }),
@@ -1082,6 +1088,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(offline).map((name) => `offline.${name}`),
       ...Object.keys(returns).map((name) => `returns.${name}`),
       ...Object.keys(reports).map((name) => `reports.${name}`),
+      ...Object.keys(exports).map((name) => `exports.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

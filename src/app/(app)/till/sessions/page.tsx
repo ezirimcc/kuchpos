@@ -14,6 +14,7 @@ import { requirePageContext } from "@/server/auth/request";
 import { listTillSessions } from "@/server/business/till";
 import { can } from "@/server/permissions";
 import { Difference } from "./difference";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Till sessions — KuchPos" };
 
@@ -45,6 +46,7 @@ export default async function TillSessionsPage({ searchParams }: PageProps<"/til
             <Wallet className="size-4" aria-hidden /> This checkout&apos;s till
           </Link>
         )}
+        <ExportLink context={context} list="tills" params={filters} />
       </PageHeader>
 
       <Suspense>

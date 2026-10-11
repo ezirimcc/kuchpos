@@ -11,6 +11,7 @@ import { requirePagePermission } from "@/server/auth/request";
 import { listCategories } from "@/server/business/catalog";
 import { listStockOnHand } from "@/server/business/stock";
 import { StockTabs } from "./stock-tabs";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Stock on hand — KuchPos" };
 
@@ -30,7 +31,9 @@ export default async function StockPage({ searchParams }: PageProps<"/stock">) {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader icon={Warehouse} title="Stock" description="How much of each product is in each place, counted in its base unit." />
+      <PageHeader icon={Warehouse} title="Stock" description="How much of each product is in each place, counted in its base unit.">
+        <ExportLink context={context} list="stock" params={{ search: filters.q, category: filters.category, inStock: filters.instock }} />
+      </PageHeader>
       <StockTabs context={context} current="on-hand" />
 
       <Suspense>

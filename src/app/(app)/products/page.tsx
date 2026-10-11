@@ -12,6 +12,7 @@ import { nairaFromText, plainNumber } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { listCategories, listProducts } from "@/server/business/catalog";
 import { can } from "@/server/permissions";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Products & Categories — KuchPos" };
 
@@ -53,6 +54,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/product
             </Link>
           </>
         )}
+        <ExportLink context={context} list="products" params={{ search: filters.q, category: filters.category, includeInactive: filters.all === "1" && canManage ? "1" : "" }} />
       </PageHeader>
 
       <Suspense>

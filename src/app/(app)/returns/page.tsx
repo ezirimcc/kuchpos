@@ -17,6 +17,7 @@ import { formatDateTime, nairaFromText, returnNumber } from "@/lib/format";
 import { requirePageContext } from "@/server/auth/request";
 import { listReturns } from "@/server/business/returns";
 import { can } from "@/server/permissions";
+import { ExportLink } from "@/app/(app)/reports/report-parts";
 
 export const metadata: Metadata = { title: "Returns — KuchPos" };
 
@@ -42,7 +43,9 @@ export default async function ReturnsPage({ searchParams }: PageProps<"/returns"
         icon={Undo2}
         title="Returns"
         description={list.ownOnly ? "Goods you have taken back from customers, newest first." : "Goods taken back from customers, newest first. A saved return is never changed."}
-      />
+      >
+        <ExportLink context={context} list="returns" params={{ search: filters.q, from: filters.from, to: filters.to }} />
+      </PageHeader>
 
       {can(context, "return.request") && (
         <Card>

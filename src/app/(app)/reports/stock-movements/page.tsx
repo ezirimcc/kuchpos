@@ -15,6 +15,7 @@ import { ExportLink, PeriodLinks, periodText, ReportTabs } from "../report-parts
 export const metadata: Metadata = { title: "Stock movements — KuchPos" };
 
 const TYPES: Record<MovementType, string> = {
+  OPENING_BALANCE: "Opening stock (brought in)",
   RECEIPT: "Delivery received",
   RECEIPT_CORRECTION: "Delivery corrected",
   TRANSFER_OUT: "Moved out",

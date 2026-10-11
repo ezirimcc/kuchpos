@@ -475,7 +475,7 @@ export async function getCustomer(context: AppContext, input: unknown): Promise<
 export type StatementLine = {
   id: string;
   createdAt: Date;
-  type: "CREDIT_SALE" | "REPAYMENT" | "SALE_CANCELLED" | "SALE_RETURN";
+  type: "CREDIT_SALE" | "REPAYMENT" | "SALE_CANCELLED" | "SALE_RETURN" | "OPENING_BALANCE";
   documentNumber: string;
   /** The sale it belongs to, for linking; null for a repayment. */
   saleId: string | null;
@@ -666,14 +666,23 @@ export async function recordRepayment(context: AppContext, input: unknown): Prom
           }
           unpaid.unshift(...unpaid.splice(chosen, 1));
         }
+        // Debt that belongs to no sale: what the customer already owed when the shop started
+        // using KuchPos (brought in by an import). It is the oldest debt of all, so it is paid
+        // off before any sale — except a sale the person picked, which always comes first.
+        const owedOnSales = sumMoney(unpaid.map((sale) => sale.outstanding));
+        const fromBefore = Decimal.max(balance.plus(received).minus(owedOnSales), 0);
         let left = received;
         const allocations: { saleId: string; amount: Decimal }[] = [];
-        for (const sale of unpaid) {
-          if (!left.greaterThan(0)) break;
+        const payOff = (sale: (typeof unpaid)[number]) => {
+          if (!left.greaterThan(0)) return;
           const part = Decimal.min(left, sale.outstanding);
           allocations.push({ saleId: sale.saleId, amount: part });
           left = left.minus(part);
-        }
+        };
+        const [first, ...others] = unpaid;
+        if (data.saleId && first) payOff(first);
+        left = left.minus(Decimal.min(left, fromBefore));
+        for (const sale of data.saleId ? others : unpaid) payOff(sale);
 
         const repayment = await tx.repayment.create({
           data: {

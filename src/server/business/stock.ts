@@ -2,19 +2,17 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { addMonths, dateToDay, dayToDate, formatDay, receiptNumber, shopToday } from "@/lib/format";
-import { formatNaira, moneyToString, movingAverageCost, sumMoney } from "@/lib/money";
+import { addMonths, dateToDay, dayToDate, shopToday } from "@/lib/format";
 import { quantityToString } from "@/lib/quantity";
-import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
-import { businessDb, businessIdOf } from "@/server/db/scoped";
+import { businessDb } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
-import { takeDocumentNumber } from "@/server/document-number";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
+import { writeGoodsReceipt } from "@/server/receipt-write";
 
 /**
  * Stock for the business in use: receiving goods, the add-only movement ledger,
@@ -140,7 +138,6 @@ function daysBetween(earlier: string, later: string): number {
  */
 export async function receiveGoods(context: AppContext, input: unknown): Promise<ReceiveResult> {
   authorize(context, "stock.receive");
-  const businessId = businessIdOf(context);
   const data = parseInput(receiveSchema, input);
   const db = businessDb(context);
 
@@ -189,155 +186,21 @@ export async function receiveGoods(context: AppContext, input: unknown): Promise
     throw new ValidationError("Nothing was saved. Please correct the highlighted fields.", fieldErrors);
   }
 
-  const totalCost = sumMoney(checked.map((line) => line.lineCost));
-
-  // What each product gains in this delivery, in base units and in cost.
-  const perProduct = new Map<string, { quantity: Decimal; cost: Decimal }>();
-  for (const line of checked) {
-    const sum = perProduct.get(line.productId) ?? { quantity: new Decimal(0), cost: new Decimal(0) };
-    perProduct.set(line.productId, {
-      quantity: sum.quantity.plus(line.baseQuantity),
-      cost: sum.cost.plus(line.lineCost),
-    });
-  }
-  // Always in the same order, so two deliveries saved at the same moment cannot block each other.
-  const productOrder = [...perProduct.keys()].sort();
-
   const save = () =>
     db.$transaction(
       async (tx) => {
-        const number = await takeDocumentNumber(tx, businessId, "GOODS_RECEIPT");
-        // Each product's "turn" is taken before anything that refers to the product is written.
-        // (Writing a line first would hold a weaker lock on the product, and asking for the
-        // stronger one afterwards can deadlock with a sale of the same product.)
-        for (const productId of productOrder) {
-          await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
-        }
-
-        const receipt = await tx.goodsReceipt.create({
-          data: {
-            businessId,
-            requestId: data.requestId,
-            number,
-            supplierId: supplier.id,
-            supplierName: supplier.name,
-            locationId: location.id,
-            locationName: location.name,
-            receivedOn: receivedDate,
-            backdated,
-            backdateNote: backdated ? data.backdateNote : null,
-            invoiceNumber: data.invoiceNumber || null,
-            note: data.note || null,
-            totalCost: moneyToString(totalCost),
-            createdByUserId: context.actor.userId,
-            createdByName: context.actor.name,
-          },
+        const saved = await writeGoodsReceipt(tx, context, {
+          requestId: data.requestId,
+          supplier,
+          location,
+          receivedOn,
+          backdated,
+          backdateNote: backdated ? data.backdateNote || null : null,
+          invoiceNumber: data.invoiceNumber || null,
+          note: data.note || null,
+          lines: checked,
         });
-
-        const lineRows = checked.map((line, index) => ({
-          businessId,
-          lineNumber: index + 1,
-          productId: line.productId,
-          productUnitId: line.productUnitId,
-          productName: line.productName,
-          unitName: line.unitName,
-          unitFactor: line.unitFactor,
-          quantity: line.quantity,
-          baseQuantity: quantityToString(line.baseQuantity),
-          unitCost: line.unitCost,
-          lineCost: moneyToString(line.lineCost),
-          batchNumber: line.batchNumber,
-          expiryDate: line.expiryDate,
-        }));
-        await tx.goodsReceiptLine.createMany({
-          data: lineRows.map((line) => ({ ...line, receiptId: receipt.id })),
-        });
-
-        // The delivery exactly as first saved is kept as version 1, which can never be changed.
-        const original = await tx.goodsReceiptVersion.create({
-          data: {
-            businessId,
-            receiptId: receipt.id,
-            version: 1,
-            supplierId: supplier.id,
-            supplierName: supplier.name,
-            locationId: location.id,
-            locationName: location.name,
-            receivedOn: receivedDate,
-            invoiceNumber: data.invoiceNumber || null,
-            note: data.note || null,
-            totalCost: moneyToString(totalCost),
-            createdByUserId: context.actor.userId,
-            createdByName: context.actor.name,
-            createdAt: receipt.createdAt,
-          },
-          select: { id: true },
-        });
-        await tx.goodsReceiptVersionLine.createMany({
-          data: lineRows.map((line) => ({ ...line, versionId: original.id })),
-        });
-
-        for (const productId of productOrder) {
-          const added = perProduct.get(productId)!;
-          // Touching the product row makes any other delivery of the same product wait its turn,
-          // so the stock total read on the next line is the true total.
-          const product = await tx.product.update({
-            where: { id: productId },
-            data: { updatedAt: new Date() },
-            select: { averageCost: true },
-          });
-          const before = await tx.stockBalance.aggregate({ where: { productId }, _sum: { quantity: true } });
-          const average = movingAverageCost({
-            quantityBefore: new Decimal(before._sum.quantity?.toFixed(3) ?? "0"),
-            averageBefore: new Decimal(product.averageCost.toFixed(4)),
-            quantityAdded: added.quantity,
-            costAdded: added.cost,
-          });
-          await tx.product.update({ where: { id: productId }, data: { averageCost: average.toFixed(4) } });
-
-          const increased = await tx.stockBalance.updateMany({
-            where: { productId, locationId: location.id },
-            data: { quantity: { increment: quantityToString(added.quantity) } },
-          });
-          if (increased.count === 0) {
-            await tx.stockBalance.create({
-              data: { businessId, productId, locationId: location.id, quantity: quantityToString(added.quantity) },
-            });
-          }
-        }
-
-        await tx.stockMovement.createMany({
-          data: checked.map((line) => ({
-            businessId,
-            productId: line.productId,
-            locationId: location.id,
-            type: "RECEIPT" as const,
-            quantityDelta: quantityToString(line.baseQuantity),
-            unitName: line.unitName,
-            unitFactor: line.unitFactor,
-            unitQuantity: line.quantity,
-            documentType: "goods_receipt",
-            documentId: receipt.id,
-            documentNumber: receiptNumber(number),
-            userId: context.actor.userId,
-            userName: context.actor.name,
-          })),
-        });
-
-        await tx.activityLog.create({
-          data: activityRow(context, {
-            action: backdated ? "stock.received_backdated" : "stock.received",
-            summary:
-              `${context.actor.name} recorded delivery ${receiptNumber(number)} from ${supplier.name} into ${location.name}: ` +
-              `${checked.length} line${checked.length === 1 ? "" : "s"}, ${formatNaira(totalCost)}.` +
-              (backdated ? ` BACKDATED to ${formatDay(receivedOn)} — reason: ${data.backdateNote}` : ""),
-            targetType: "goods_receipt",
-            targetId: receipt.id,
-            details: { number, receivedOn, backdated, lines: checked.length, totalCost: moneyToString(totalCost) },
-          }),
-        });
-
-        return { id: receipt.id, number, alreadySaved: false };
+        return { ...saved, alreadySaved: false };
       },
       // Each statement sees the latest saved data, so the stock total read after taking the
       // product's turn includes any delivery that finished a moment earlier.

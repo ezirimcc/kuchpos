@@ -1,5 +1,6 @@
 import { Settings } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ActionForm, CheckboxField, SelectField, SubmitButton, TextAreaField, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +11,7 @@ import { formatDateTime, plainNumber } from "@/lib/format";
 import { MAX_IDLE_SIGN_OUT_MINUTES, MIN_IDLE_SIGN_OUT_MINUTES } from "@/server/auth/config";
 import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
+import { can } from "@/server/permissions";
 import { getBusinessSettings } from "@/server/business/settings";
 import { listPaymentMethods } from "@/server/business/payment-methods";
 import { PAYMENT_KINDS, paymentKindLabel } from "@/lib/payment-kinds";
@@ -50,6 +52,20 @@ export default async function SettingsPage() {
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <PageHeader icon={Settings} title="Settings" description={<>Settings for {settings.name}.</>} />
+
+      {can(context, "import.run") && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Import from Excel</CardTitle>
+            <CardDescription>Bring this shop&apos;s products, customers and counted stock in from one Excel file.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/settings/import" className="font-medium text-link underline-offset-4 hover:underline">
+              Open Import from Excel
+            </Link>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

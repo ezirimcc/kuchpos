@@ -411,6 +411,11 @@ export async function getDebtReport(context: AppContext): Promise<{ rows: DebtRo
   for (const group of paid) settled.set(group.saleId, money(group._sum.amount));
   for (const group of returned) settled.set(group.saleId, (settled.get(group.saleId) ?? ZERO).plus(money(group._sum.debtReduced)));
 
+  const openings = ids.length
+    ? await db.customerAccountEntry.findMany({ where: { customerId: { in: ids }, type: "OPENING_BALANCE" }, select: { customerId: true, createdAt: true } })
+    : [];
+  const openedOn = new Map(openings.map((entry) => [entry.customerId, entry.createdAt]));
+
   const now = Date.now();
   const rows = customers.map((customer) => {
     const ages = { current: ZERO, days31: ZERO, days61: ZERO, older: ZERO };
@@ -424,6 +429,17 @@ export async function getDebtReport(context: AppContext): Promise<{ rows: DebtRo
       const key = age <= 30 ? "current" : age <= 60 ? "days31" : age <= 90 ? "days61" : "older";
       ages[key] = ages[key].plus(owed);
       if (!oldest || made < oldest) oldest = made;
+    }
+    // Whatever is owed beyond the unpaid sales was owed before KuchPos: it is aged from the
+    // day it was brought in for (the date of the opening line on the account).
+    const onSales = ages.current.plus(ages.days31).plus(ages.days61).plus(ages.older);
+    const fromBefore = money(customer.balance).minus(onSales);
+    const opened = openedOn.get(customer.id);
+    if (fromBefore.greaterThan(0) && opened) {
+      const age = Math.floor((now - opened.getTime()) / DAY_MS);
+      const key = age <= 30 ? "current" : age <= 60 ? "days31" : age <= 90 ? "days61" : "older";
+      ages[key] = ages[key].plus(fromBefore);
+      if (!oldest || opened < oldest) oldest = opened;
     }
     return { customer, ...ages, oldest };
   });
@@ -456,7 +472,7 @@ export async function getDebtReport(context: AppContext): Promise<{ rows: DebtRo
 // Stock movements
 // ---------------------------------------------------------------------------
 
-const MOVEMENT_TYPES = ["RECEIPT", "RECEIPT_CORRECTION", "TRANSFER_OUT", "TRANSFER_IN", "ADJUSTMENT", "SALE", "SALE_CANCELLATION", "SALE_RETURN"] as const;
+const MOVEMENT_TYPES = ["OPENING_BALANCE", "RECEIPT", "RECEIPT_CORRECTION", "TRANSFER_OUT", "TRANSFER_IN", "ADJUSTMENT", "SALE", "SALE_CANCELLATION", "SALE_RETURN"] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
 const movementsSchema = periodSchema.extend({
@@ -799,7 +815,9 @@ export async function getStockReport(context: AppContext, input: unknown = {}): 
     const types = moved.get(product.id) ?? new Map<string, Decimal>();
     const netInPeriod = [...types.values()].reduce((sum, amount) => sum.plus(amount), ZERO);
     const atEnd = onHand.minus(after.get(product.id) ?? ZERO);
-    const atStart = atEnd.minus(netInPeriod);
+    // Stock the business already held when it started with KuchPos was there "at the start",
+    // even though it was brought in on the first day of the records.
+    const atStart = atEnd.minus(netInPeriod).plus(types.get("OPENING_BALANCE") ?? ZERO);
     const received = (types.get("RECEIPT") ?? ZERO).plus(types.get("RECEIPT_CORRECTION") ?? ZERO);
     const netSold = Decimal.max((sold.get(product.id) ?? ZERO).minus(cameBack.get(product.id) ?? ZERO), 0);
     // An adjustment is a net figure per product and period; only a net loss counts as shrinkage.

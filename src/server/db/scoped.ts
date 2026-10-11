@@ -69,6 +69,7 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   TillCashDecision: { filter: (businessId) => ({ businessId }), stamp: true },
   SaleReturn: { filter: (businessId) => ({ businessId }), stamp: true },
   SaleReturnLine: { filter: (businessId) => ({ businessId }), stamp: true },
+  ImportRun: { filter: (businessId) => ({ businessId }), stamp: true },
   DocumentCounter: { filter: (businessId) => ({ businessId }), stamp: true },
   Sale: { filter: (businessId) => ({ businessId }), stamp: true },
   SaleLine: { filter: (businessId) => ({ businessId }), stamp: true },

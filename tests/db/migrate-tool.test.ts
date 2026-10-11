@@ -100,6 +100,7 @@ describe("database update tool for the hosting server", () => {
       "till_cash_decision",
       "sale_return",
       "sale_return_line",
+      "import_run",
     ];
     // A delivery itself can be corrected (which raises its version) but never deleted.
     expect(triggers.map((trigger) => trigger.name).sort()).toEqual(

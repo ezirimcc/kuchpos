@@ -93,6 +93,7 @@ model Business {
   tillCashDecisions TillCashDecision[]
   saleReturns     SaleReturn[]
   saleReturnLines SaleReturnLine[]
+  importRuns      ImportRun[]
   approvalRequestDecisions ApprovalRequestDecision[]
   sales         Sale[]
   saleLines     SaleLine[]
@@ -468,6 +469,8 @@ enum StockMovementType {
   SALE_CANCELLATION
   /// Goods a customer brought back that went back on the Shelf or into the Storeroom.
   SALE_RETURN
+  /// Stock a business already held when it started using KuchPos, brought in by an import.
+  OPENING_BALANCE
 }
 
 /// Every change to stock. Add-only: database triggers refuse changes and deletions.
@@ -1059,6 +1062,7 @@ enum DocumentKind {
   TILL_SESSION
   REPAYMENT
   SALE_RETURN
+  IMPORT
 }
 
 /// The number the next document of each kind will get in a business (deliveries, transfers,
@@ -1251,6 +1255,8 @@ enum AccountEntryType {
   SALE_CANCELLED
   /// Goods from a credit sale came back: the refund is taken off what is still owed on it.
   SALE_RETURN
+  /// What a customer already owed when the business started using KuchPos, brought in by an import.
+  OPENING_BALANCE
 }
 
 /// One line of a customer's account. Add-only: the history of a debt is never rewritten.
@@ -1370,6 +1376,38 @@ enum ApprovalMethod {
   OWN_SALE
   /// The cashier sent a request and a manager or admin approved it from their own computer.
   REMOTE
+}
+
+enum ImportPart {
+  /// Products, customers and the stock counted on the starting day.
+  SETUP
+  /// Deliveries and sales made since the starting day.
+  HISTORY
+}
+
+/// One import from an Excel workbook (SPEC §4.8). Add-only. The same file cannot be brought
+/// in twice for the same part: its fingerprint is kept under a unique index.
+model ImportRun {
+  id              String     @id @default(uuid()) @db.Char(36)
+  businessId      String     @db.Char(36)
+  business        Business   @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// 1, 2, 3… within the business; shown as IM-000012.
+  number          Int
+  part            ImportPart
+  /// sha256 of the file exactly as it was uploaded.
+  fileHash        String     @db.Char(64)
+  fileName        String     @db.VarChar(200)
+  /// The day the opening stock was counted and the opening debts were owed (SETUP only).
+  startingDay     DateTime?  @db.Date
+  /// How many of each thing were brought in, and how many were already there and left alone (JSON text).
+  summary         String     @db.Text
+  createdByUserId String?
+  createdByName   String
+  createdAt       DateTime   @default(now()) @db.DateTime(3)
+
+  @@unique([businessId, part, fileHash])
+  @@unique([businessId, number])
+  @@map("import_run")
 }
 
 enum ReturnDisposition {

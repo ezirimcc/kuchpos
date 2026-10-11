@@ -64,6 +64,7 @@ const ADD_ONLY_TABLES = [
   "till_cash_decision",
   "sale_return",
   "sale_return_line",
+  "import_run",
 ];
 
 /**

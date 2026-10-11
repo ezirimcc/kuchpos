@@ -9,6 +9,7 @@ import * as counts from "@/server/business/counts";
 import * as customers from "@/server/business/customers";
 import * as dashboard from "@/server/business/dashboard";
 import * as exports from "@/server/business/exports";
+import * as imports from "@/server/business/imports";
 import * as offline from "@/server/business/offline";
 import * as paymentMethods from "@/server/business/payment-methods";
 import * as reports from "@/server/business/reports";
@@ -28,7 +29,13 @@ import * as businesses from "@/server/platform/businesses";
 import * as overview from "@/server/platform/overview";
 import * as owners from "@/server/platform/owners";
 import * as system from "@/server/platform/system";
+import { makeWorkbook } from "../support/workbook";
 import { createUser, createWorld, TEST_PASSWORD, type World } from "../support/world";
+
+const IMPORT_ABOUT = { fileName: "shop.xlsx", startingDay: "2026-10-01" };
+/** A different workbook each time, so no call is refused as "this file was already brought in". */
+const importFile = () =>
+  makeWorkbook({ products: [{ code: `IMP-${randomUUID().slice(0, 8)}`, name: `Imported ${randomUUID().slice(0, 8)}`, unit: "piece", contains: "1", price: "100" }] });
 
 /**
  * Calls every server operation directly — no screens involved — as each kind
@@ -623,6 +630,21 @@ const OPERATIONS: Operation[] = [
     run: (context) => overview.getOwnerOverview(context),
   },
   {
+    name: "imports.previewSetupImport",
+    allowed: BUSINESS_ADMINS,
+    run: async (context) => imports.previewSetupImport(context, IMPORT_ABOUT, await importFile()),
+  },
+  {
+    name: "imports.runSetupImport",
+    allowed: BUSINESS_ADMINS,
+    run: async (context) => imports.runSetupImport(context, IMPORT_ABOUT, await importFile()),
+  },
+  {
+    name: "imports.listImports",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => imports.listImports(context),
+  },
+  {
     name: "exports.exportList",
     allowed: REPORT_READERS,
     run: (context) => exports.exportList(context, { list: "sales" }),
@@ -1089,6 +1111,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(returns).map((name) => `returns.${name}`),
       ...Object.keys(reports).map((name) => `reports.${name}`),
       ...Object.keys(exports).map((name) => `exports.${name}`),
+      ...Object.keys(imports).filter((name) => name !== "importNumber" && name !== "OPENING_STOCK_SUPPLIER").map((name) => `imports.${name}`),
       ...Object.keys(suppliers).map((name) => `suppliers.${name}`),
       ...Object.keys(businesses).map((name) => `businesses.${name}`),
       ...Object.keys(owners).map((name) => `owners.${name}`),

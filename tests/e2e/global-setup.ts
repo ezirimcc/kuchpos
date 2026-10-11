@@ -10,6 +10,7 @@ const SCREENS = [
   "/staff",
   "/activity",
   "/settings",
+  "/settings/import",
   "/account",
   "/products",
   "/products/new",

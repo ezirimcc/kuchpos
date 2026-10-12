@@ -1715,3 +1715,28 @@ model ApprovalUse {
   @@index([saleId])
   @@map("approval_use")
 }
+
+/// Things that went wrong unexpectedly (C68), for the owners to read on the Error log page.
+/// Not business records: a plain technical diary, cleared after 90 days. It holds no
+/// passwords, no request headers and nothing typed into a form — only where it happened,
+/// who was signed in, and the error's own message.
+model ErrorLog {
+  id         String   @id @default(uuid()) @db.Char(36)
+  createdAt  DateTime @default(now()) @db.DateTime(3)
+  /// "action" (a form or button), "request" (a screen asking the server by itself), "page" (drawing a screen), "route".
+  kind       String   @db.VarChar(20)
+  /// The address or the name of what was being done.
+  place      String   @db.VarChar(300)
+  message    String   @db.VarChar(1000)
+  /// The technical trace, for whoever maintains the app.
+  detail     String?  @db.Text
+  /// The code shown to the person on the "something went wrong" screen, if there was one.
+  digest     String?  @db.VarChar(100)
+  businessId String?  @db.Char(36)
+  userId     String?
+  userName   String?
+  appVersion String?  @db.VarChar(60)
+
+  @@index([createdAt])
+  @@map("error_log")
+}

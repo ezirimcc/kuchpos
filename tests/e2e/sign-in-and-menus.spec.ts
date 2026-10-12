@@ -61,13 +61,18 @@ test.describe("each role sees its own menu", () => {
     await expectSignedInAs(page, "Owner");
     await expect(page).toHaveURL(/\/owner\/businesses$/);
     await expect(page.getByTestId("business-banner")).toContainText("No business open");
-    expect(await menuLabels(page)).toEqual(["Overview", "Businesses", "Owners", "System check"]);
+    expect(await menuLabels(page)).toEqual(["Overview", "Businesses", "Owners", "System check", "Error log"]);
 
     await openFromMenu(page, "System check");
     const rules = page.getByTestId("system-rule");
     await expect(rules).toHaveCount(6);
     await expect(page.getByText("NOT enforced")).toHaveCount(0);
     await expect(page.getByText("Universal time (correct)")).toBeVisible();
+
+    // The app's own error log: owners only (C68).
+    await openFromMenu(page, "Error log");
+    await expect(page.getByRole("heading", { name: "Error log" })).toBeVisible();
+    await expect(page.getByTestId("errors-summary")).toBeVisible();
   });
 });
 

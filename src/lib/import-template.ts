@@ -128,7 +128,8 @@ export const IMPORT_INSTRUCTIONS = [
   "8. Products, Customers and Stock are brought in first (step 2 on that page). Deliveries and Sales are brought in afterwards (step 3), in the order they happened. No date may be earlier than the day the records start.",
   "9. A product or customer that is already in KuchPos is left as it is, so the same file can be used again after adding more rows. Stock rows are different: once a product's starting stock is in, delete its row from the Stock sheet before using the file again.",
   "10. A delivery (by its reference and supplier) or a sale (by its receipt number) can be brought in only once. For later deliveries and sales, use a file that holds only the new ones.",
-  "11. Money that customers paid back on their debts since the starting day is not in this workbook. After the import, record each one in KuchPos as a repayment on the customer's page.",
+  "11. Deliveries and Sales together: at most 6,000 rows in one file. If you have more, make several files by date (a week or two each) and bring them in one after another, the earliest first.",
+  "12. Money that customers paid back on their debts since the starting day is not in this workbook. After the import, record each one in KuchPos as a repayment on the customer's page.",
 ] as const;
 /** The largest workbook the import accepts, and the most rows it reads from one sheet. */
 export const IMPORT_MAX_BYTES = 5 * 1024 * 1024;

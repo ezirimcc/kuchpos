@@ -112,8 +112,14 @@ export type SalesRow = {
 
 type Bucket = { label: string; saleIds: Set<string>; sales: Decimal; refunds: Decimal; cost: Decimal };
 
-async function salesFacts(db: Db, range: Range) {
-  const [sales, returns] = await Promise.all([
+/**
+ * The sales and returns of a period. The lines and payments of each sale are read only when
+ * the breakdown asked for needs them (by product or category; by how it was paid): for six
+ * months of a busy shop they are tens of thousands of rows, and reading them for nothing
+ * made the report take a quarter of a minute.
+ */
+async function salesFacts(db: Db, range: Range, need: { lines?: boolean; payments?: boolean } = {}) {
+  const [sales, returns, lineCount, lines, payments] = await Promise.all([
     db.sale.findMany({
       where: madeIn(range),
       select: {
@@ -127,8 +133,6 @@ async function salesFacts(db: Db, range: Range) {
         createdAt: true,
         deviceTime: true,
         offline: true,
-        lines: { select: { productId: true, productName: true, lineTotal: true, discountAmount: true, lineCost: true } },
-        payments: { select: { methodName: true, amount: true } },
       },
     }),
     db.saleReturn.findMany({
@@ -144,8 +148,29 @@ async function salesFacts(db: Db, range: Range) {
         lines: { select: { productId: true, productName: true, refundAmount: true, lineCost: true, disposition: true } },
       },
     }),
+    // How many lines were sold in all (for "items per sale"): one count, not one per sale.
+    db.saleLine.count({ where: { sale: madeIn(range) } }),
+    need.lines
+      ? db.saleLine.findMany({ where: { sale: madeIn(range) }, select: { saleId: true, productId: true, productName: true, lineTotal: true, discountAmount: true, lineCost: true } })
+      : [],
+    need.payments ? db.payment.findMany({ where: { sale: madeIn(range) }, select: { saleId: true, methodName: true, amount: true } }) : [],
   ]);
-  return { sales, returns };
+  const gather = <Row extends { saleId: string }>(rows: Row[]) => {
+    const bySale = new Map<string, Row[]>();
+    for (const row of rows) {
+      const list = bySale.get(row.saleId);
+      if (list) list.push(row);
+      else bySale.set(row.saleId, [row]);
+    }
+    return bySale;
+  };
+  const linesOf = gather(lines);
+  const paymentsOf = gather(payments);
+  return {
+    sales: sales.map((sale) => ({ ...sale, lines: linesOf.get(sale.id) ?? [], payments: paymentsOf.get(sale.id) ?? [] })),
+    returns,
+    lineCount,
+  };
 }
 
 function summarise(facts: Awaited<ReturnType<typeof salesFacts>>, seesCost: boolean): SalesSummary {
@@ -153,7 +178,7 @@ function summarise(facts: Awaited<ReturnType<typeof salesFacts>>, seesCost: bool
   const discounts = sumMoney(facts.sales.map((sale) => money(sale.discountAmount)));
   const refunds = sumMoney(facts.returns.map((entry) => money(entry.refundTotal)));
   const net = sales.minus(refunds);
-  const lines = facts.sales.reduce((count, sale) => count + sale.lines.length, 0);
+  const lines = facts.lineCount;
   const cost = sumMoney(facts.sales.map((sale) => money(sale.costTotal))).minus(sumMoney(facts.returns.map((entry) => money(entry.restockedCost))));
   const profit = net.minus(cost);
   const count = facts.sales.length;
@@ -189,7 +214,10 @@ export async function getSalesReport(
   const previous = before(range);
   const db = businessDb(context);
   const seesCost = can(context, "cost.view");
-  const [facts, earlier] = await Promise.all([salesFacts(db, range), salesFacts(db, previous)]);
+  const [facts, earlier] = await Promise.all([
+    salesFacts(db, range, { lines: by === "product" || by === "category", payments: by === "method" }),
+    salesFacts(db, previous),
+  ]);
 
   const madeAt = (sale: { offline: boolean; deviceTime: Date | null; createdAt: Date }) => (sale.offline && sale.deviceTime ? sale.deviceTime : sale.createdAt);
   const hourOf = (moment: Date) => new Date(moment.getTime() + SHOP_OFFSET_MS).getUTCHours();

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Bug,
   ChartColumn,
   ChartNoAxesCombined,
   History,
@@ -40,6 +41,7 @@ const ICONS: Record<string, LucideIcon> = {
   businesses: Store,
   owners: ShieldCheck,
   system: ServerCog,
+  errors: Bug,
 };
 
 function NavLink({ item, active, collapsed }: { item: SideNavItem; active: boolean; collapsed: boolean }) {

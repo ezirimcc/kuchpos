@@ -1,6 +1,7 @@
 import "server-only";
 import { headers } from "next/headers";
 import { type AppContext, resolveContext } from "./auth/context";
+import { recordError } from "./db/error-record";
 import { ForbiddenError, NotFoundError, NotSignedInError, ValidationError } from "./errors";
 
 /**
@@ -30,13 +31,14 @@ export async function answerFromOwnPages(request: Request, work: (context: AppCo
   if (!sameSite || request.headers.get("sec-fetch-site") === "cross-site") {
     return Response.json({ error: "not-allowed" }, { status: 403, headers: { "cache-control": "no-store" } });
   }
-  return answer(work, { passive: false });
+  return answer(work, { passive: false }, `${request.method} ${new URL(request.url).pathname}`);
 }
 
-async function answer(work: (context: AppContext) => Promise<unknown>, options: { passive: boolean }): Promise<Response> {
+async function answer(work: (context: AppContext) => Promise<unknown>, options: { passive: boolean }, place?: string): Promise<Response> {
   const fresh = { "cache-control": "no-store" };
+  let context: AppContext | null = null;
   try {
-    const context = await resolveContext(await headers(), options);
+    context = await resolveContext(await headers(), options);
     return Response.json(await work(context), { headers: fresh });
   } catch (error) {
     if (error instanceof NotSignedInError) return Response.json({ error: "signed-out" }, { status: 401, headers: fresh });
@@ -47,6 +49,7 @@ async function answer(work: (context: AppContext) => Promise<unknown>, options: 
       return Response.json({ error: "refused", message: error.message, fieldErrors: error.fieldErrors }, { status: 422, headers: fresh });
     }
     console.error("Request failed:", error);
+    await recordError({ kind: "request", place: place ?? "A screen asking the server by itself", error, context });
     return Response.json({ error: "failed" }, { status: 500, headers: fresh });
   }
 }

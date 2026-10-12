@@ -38,7 +38,7 @@ Nothing is built or installed on the server. Secrets live only in a `.env` file 
 9. **Placeholder page.** File Manager → `domains/kuch99.com/public_html/pos` → delete `index.html` (keep `.htaccess`). Otherwise the front address shows DirectAdmin's placeholder instead of the app.
 10. **Check.** Open `https://pos.kuch99.com/api/health` — it should say the app is ok and the database is connected.
 
-11. **Keep the app awake.** The host puts the app to sleep when nobody has used it for a few minutes, and waking it takes many seconds. DirectAdmin → Cron Jobs → create a job that runs every 5 minutes (minute `*/5`, every other field `*`) with the command:
+11. **Keep the app awake.** The host puts the app to sleep when nobody has used it for a few minutes, and waking it takes many seconds. DirectAdmin → Cron Jobs → create a job that runs every 2 minutes (minute `*/2`, every other field `*`; it was every 5 minutes until 2026-10-12) with the command:
     `curl -fsS -m 60 https://pos.kuch99.com/api/health > /dev/null 2>&1`
 
 ## Uploading a new version (every update)

@@ -59,6 +59,7 @@ const SCREENS = [
   "/owner/businesses",
   "/owner/owners",
   "/owner/system",
+  "/owner/errors",
   "/api/health",
 ];
 

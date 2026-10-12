@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { type AppContext, resolveContext } from "./auth/context";
+import { recordError } from "./db/error-record";
 import { AppError, NotSignedInError, ValidationError } from "./errors";
 import type { FormState } from "@/lib/form-state";
 
@@ -16,11 +17,12 @@ export async function runAction(
   work: (context: AppContext) => Promise<unknown>,
 ): Promise<FormState> {
   let signedOut: NotSignedInError | null = null;
+  let context: AppContext | null = null;
   try {
     // Looked up fresh, not through the per-request cache that pages use: the page is
     // re-drawn in this same request after the action, and must see what the action changed
     // (for example, which business an owner has just opened).
-    const context = await resolveContext(await headers());
+    context = await resolveContext(await headers());
     await work(context);
   } catch (error) {
     if (error instanceof NotSignedInError) {
@@ -31,6 +33,7 @@ export async function runAction(
       return { status: "error", message: error.message, fieldErrors: {} };
     } else {
       console.error("Action failed:", error);
+      await recordError({ kind: "action", place: `The action that ends with "${options.success}"`, error, context });
       return {
         status: "error",
         message: "Something went wrong and nothing was saved. Please try again.",

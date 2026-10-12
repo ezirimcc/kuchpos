@@ -9,6 +9,7 @@ import type { PrismaClient } from "../src/generated/prisma/client";
  * When a table is added to the schema, add it to this list.
  */
 const TABLES = [
+  "error_log",
   "activity_log",
   "stock_movement",
   "document_counter",

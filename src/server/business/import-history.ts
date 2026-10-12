@@ -57,6 +57,13 @@ const MAX_RECEIPT_LENGTH = 16;
 /** A sale with no time typed is taken to have been made at midday. */
 const MIDDAY_MINUTES = 12 * 60;
 const MAX_ATTEMPTS = 3;
+/**
+ * The most rows of deliveries and sales in one file. Measured on a large sample (M16):
+ * 9,000 rows took over a minute on a fast computer, and the hosting server is slower and
+ * gives each request a limited time. A file over the limit is refused before anything is
+ * read into the database; nothing is lost, it only has to be split by date.
+ */
+const MAX_ROWS_A_FILE = 6_000;
 const SOLD_BY_UNKNOWN = "Brought in from Excel";
 
 const inputSchema = z.object({
@@ -144,6 +151,12 @@ async function checkHistory(context: AppContext, input: unknown, bytes: Buffer):
   const workbook = await readWorkbook(bytes);
   const deliveryRows = rowsOf(workbook, DELIVERIES_SHEET, problems);
   const saleRows = rowsOf(workbook, SALES_SHEET, problems);
+  if (deliveryRows.length + saleRows.length > MAX_ROWS_A_FILE) {
+    throw new ValidationError(
+      `This file has ${(deliveryRows.length + saleRows.length).toLocaleString("en-NG")} rows of deliveries and sales. Bring in at most ${MAX_ROWS_A_FILE.toLocaleString("en-NG")} rows at a time: ` +
+        "split it into several files by date (for example a week or two to a file) and bring them in one after another, the earliest first.",
+    );
+  }
   if (deliveryRows.length + saleRows.length === 0) {
     throw new ValidationError("Nothing to bring in: the Deliveries and Sales sheets have no rows from row 4 down. Rows 1 to 3 (headings, notes, example) are never imported.");
   }

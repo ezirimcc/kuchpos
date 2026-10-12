@@ -38,6 +38,24 @@ export default defineConfig({
           },
         },
       },
+      {
+        // The speed test on a large sample (M16): slow by nature, run only by `npm run test:speed`.
+        resolve: { alias },
+        test: {
+          name: "speed",
+          environment: "node",
+          include: ["tests/speed/**/*.test.ts"],
+          globalSetup: ["tests/support/global-setup.ts"],
+          fileParallelism: false,
+          testTimeout: 3_600_000,
+          hookTimeout: 3_600_000,
+          env: {
+            DATABASE_URL: process.env.TEST_DATABASE_URL ?? "",
+            BETTER_AUTH_SECRET: "test-only-secret-not-used-anywhere-else",
+            BETTER_AUTH_URL: "http://localhost:3000",
+          },
+        },
+      },
     ],
   },
 });

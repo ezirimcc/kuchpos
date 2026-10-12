@@ -19,8 +19,9 @@ describe("the columns that say who did something", () => {
       const column = /^\s+(\w*[uU]serId)\s+String/.exec(line);
       if (column && model) (found[model] ??= []).push(column[1]);
     }
-    // Not work done: being signed in, the sign-in record itself, and the activity log (looked at separately).
-    for (const name of ["session", "account", "activityLog"]) delete found[name];
+    // Not work done: being signed in, the sign-in record itself, the activity log (looked at
+    // separately), and the error log (something going wrong on a person's screen is not their work).
+    for (const name of ["session", "account", "activityLog", "errorLog"]) delete found[name];
     const sorted = (columns: Record<string, string[]>) => Object.fromEntries(Object.entries(columns).sort(([a], [b]) => a.localeCompare(b)).map(([name, list]) => [name, [...list].sort()]));
     expect(sorted(USER_COLUMNS)).toEqual(sorted(found));
   });

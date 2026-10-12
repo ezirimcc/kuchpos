@@ -1,3 +1,4 @@
+import { recordError } from "@/server/error-log";
 import { headers } from "next/headers";
 import { toCsv } from "@/lib/csv";
 import { resolveContext } from "@/server/auth/context";
@@ -27,6 +28,7 @@ export async function GET(request: Request): Promise<Response> {
     if (error instanceof ForbiddenError) return new Response("You are not allowed to export this report.", { status: 403 });
     if (error instanceof ValidationError) return new Response(error.message, { status: 422 });
     console.error("Export failed:", error);
+    await recordError({ kind: "route", place: "GET /reports/export", error });
     return new Response("The report could not be exported. Please try again.", { status: 500 });
   }
 }

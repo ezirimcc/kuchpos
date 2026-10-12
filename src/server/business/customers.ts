@@ -133,7 +133,8 @@ export async function listCustomers(
   const data = parseInput(listSchema, input);
   const { search, owing, page } = data;
   const digits = search.replace(/[\s\-().]/g, "");
-  const showsPurchases = can(context, "customer.statement.view");
+  // Admin, accountant and owner (C70); a manager sees statements but not what each customer has bought in all.
+  const showsPurchases = can(context, "customer.purchases.view");
 
   const where: Prisma.CustomerWhereInput = {
     ...(owing === "1" ? { balance: { gt: 0 } } : {}),

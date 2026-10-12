@@ -72,14 +72,18 @@ export function BarList({ title, note, points, testId }: { title: string; note?:
     <Frame title={title} note={note} testId={testId}>
       <ul className="flex flex-col gap-2.5" aria-label={`${title}. The figures are in the table below.`}>
         {points.map((point, index) => (
-          <li key={index} className="grid grid-cols-[minmax(0,12rem)_1fr_auto] items-center gap-3 text-sm">
-            <span className="truncate" title={point.label}>
-              {point.label}
+          // The name and the amount on one line, the bar on its own line beneath: it then has the
+          // whole width to itself however narrow the box is. (Side by side, a narrow box left the bar no room at all.)
+          <li key={index} className="flex flex-col gap-1 text-sm">
+            <span className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate" title={point.label}>
+                {point.label}
+              </span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">{point.shown}</span>
             </span>
-            <span className="h-3 rounded-full bg-muted">
-              <span className="block h-3 rounded-full bg-primary" style={{ width: `${share(point.value, largest)}%` }} data-testid="chart-bar" />
+            <span className="block h-2.5 w-full rounded-full bg-muted">
+              <span className="block h-2.5 rounded-full bg-primary" style={{ width: `${share(point.value, largest)}%` }} data-testid="chart-bar" />
             </span>
-            <span className="tabular-nums text-muted-foreground">{point.shown}</span>
           </li>
         ))}
       </ul>
@@ -107,6 +111,50 @@ export function ShareBar({ title, note, parts, testId }: { title: string; note?:
           </li>
         ))}
       </ul>
+    </Frame>
+  );
+}
+
+/**
+ * A line over time with the area under it shaded, for one thing followed through a period (a
+ * product's sales). Every point of the period is given, including those with nothing, so the
+ * line falls to the bottom where nothing was sold.
+ */
+export function LineChart({ title, note, points, testId }: { title: string; note?: string; points: ChartPoint[]; testId?: string }) {
+  const largest = largestOf(points);
+  const every = Math.max(1, Math.ceil(points.length / 12));
+  const peak = points.find((point) => new Decimal(point.value).equals(largest));
+  // Positions in a 100 x 40 drawing. These are places on a picture, not amounts of money.
+  const WIDTH = 100;
+  const HEIGHT = 40;
+  const place = points.map((point, index) => ({
+    x: points.length === 1 ? WIDTH / 2 : (index * WIDTH) / (points.length - 1),
+    y: HEIGHT - (Number.parseFloat(share(point.value, largest)) * (HEIGHT - 2)) / 100,
+  }));
+  const line = place.map((spot) => `${spot.x.toFixed(2)},${spot.y.toFixed(2)}`).join(" ");
+  return (
+    <Frame title={title} note={note ?? (peak && !largest.isZero() ? `Highest: ${peak.shown} (${peak.label})` : undefined)} testId={testId}>
+      <div className="relative h-48 border-b">
+        <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" className="absolute inset-0 size-full overflow-visible" role="img" aria-label={`${title}. ${points.length} points; the figures are in the table below.`}>
+          {place.length > 1 && <polygon points={`0,${HEIGHT} ${line} ${WIDTH},${HEIGHT}`} className="fill-primary/25" />}
+          {place.length > 1 && <polyline points={line} fill="none" className="stroke-link" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" data-testid="chart-line" />}
+        </svg>
+        {/* One slice of the width for each point: resting the pointer on it shows that point's figure. */}
+        <div className="absolute inset-0 flex">
+          {points.map((point, index) => (
+            <div key={index} className="group relative h-full min-w-0 flex-1" title={`${point.label}: ${point.shown}`} data-testid="chart-point">
+              <span className="absolute inset-y-0 left-1/2 hidden w-px bg-foreground/20 group-hover:block" aria-hidden />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-1.5 flex text-[10px] text-muted-foreground" aria-hidden>
+        {points.map((point, index) => (
+          <div key={index} className="min-w-0 flex-1 overflow-visible text-center whitespace-nowrap">
+            {index % every === 0 ? <span className="inline-block">{point.label}</span> : null}
+          </div>
+        ))}
+      </div>
     </Frame>
   );
 }

@@ -85,7 +85,7 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
     buffer: await makeWorkbook({
       deliveries: [{ date: todayTyped, reference: "XL-D1", supplier: "Excel Tools Supply", code: "XL-HOE", unit: "piece", quantity: "3", cost: "2100" }],
       sales: [
-        { date: todayTyped, time: "00:05", receipt: "XL-900", code: "XL-HOE", unit: "piece", quantity: "20", price: "3500", paidBy: "Cash", soldBy: "Excel Seller" },
+        { date: todayTyped, time: "00:05", receipt: "XL-900", code: "XL-HOE", unit: "piece", quantity: "20", price: "3500", paidBy: "Cash", soldBy: "sf.cashier" },
         { date: todayTyped, time: "00:06", receipt: "XL-901", code: "XL-MAIZE", unit: "kg", quantity: "2.5", price: "1200", paidBy: "Cash", customerPhone: "08099912345", onCredit: "1000" },
       ],
     }),

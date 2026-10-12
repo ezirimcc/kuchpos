@@ -134,7 +134,7 @@ describe("a unit of a product", () => {
 describe("a customer", () => {
   it("with no record is deleted, with the history of their credit limit", async () => {
     const { id } = await createCustomer(world.a.as.CASHIER, { name: "Wrong Entry", phone: "08011112222" });
-    await setCreditLimit(world.a.as.MANAGER, { customerId: id, creditLimit: "20000" });
+    await setCreditLimit(world.a.as.ADMIN, { customerId: id, creditLimit: "20000" });
     expect((await getCustomer(world.a.as.MANAGER, { customerId: id })).canDelete).toBe(true);
     await expect(deleteCustomer(world.a.as.STOREKEEPER, { customerId: id })).rejects.toBeInstanceOf(ForbiddenError);
     await expect(deleteCustomer(world.b.as.ADMIN, { customerId: id })).rejects.toBeInstanceOf(NotFoundError);

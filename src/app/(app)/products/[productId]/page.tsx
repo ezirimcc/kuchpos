@@ -22,10 +22,11 @@ import {
   setUnitUsageAction,
   updateProductAction,
 } from "../actions";
+import { ProductSales } from "./product-sales";
 
 export const metadata: Metadata = { title: "Product — KuchPos" };
 
-export default async function ProductPage({ params }: PageProps<"/products/[productId]">) {
+export default async function ProductPage({ params, searchParams }: PageProps<"/products/[productId]">) {
   const context = await requirePagePermission("price.view");
   const { productId } = await params;
 
@@ -38,6 +39,8 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
     throw error;
   }
   const { product, priceHistory } = data;
+  const query = await searchParams;
+  const chosen = (name: string) => (typeof query[name] === "string" ? (query[name] as string) : "");
   const categories = await listCategories(context);
   const canManage = can(context, "product.manage");
   const canPrice = can(context, "price.manage");
@@ -264,6 +267,10 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
             )}
           </CardContent>
         </Card>
+      )}
+
+      {can(context, "report.sales.view") && can(context, "report.pages.view") && (
+        <ProductSales context={context} productId={product.id} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />
       )}
 
       <Card>

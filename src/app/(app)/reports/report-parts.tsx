@@ -62,20 +62,63 @@ export function quickPeriods(): { label: string; from: string; to: string }[] {
   ];
 }
 
+/**
+ * The periods used for analysis on the home page and on a product's or customer's page (C70):
+ * today, this week (from Monday), this month, this quarter, this year — each up to today.
+ */
+export function analysisPeriods(): { label: string; from: string; to: string }[] {
+  const today = shopToday();
+  // Monday = 0 … Sunday = 6, for the calendar day the shop is in.
+  const weekday = (new Date(`${today}T00:00:00.000Z`).getUTCDay() + 6) % 7;
+  const month = Number.parseInt(today.slice(5, 7), 10);
+  const quarterStart = String(month - ((month - 1) % 3)).padStart(2, "0");
+  return [
+    { label: "Today", from: today, to: today },
+    { label: "This week", from: dayBefore(today, weekday), to: today },
+    { label: "This month", from: `${today.slice(0, 8)}01`, to: today },
+    { label: "This quarter", from: `${today.slice(0, 5)}${quarterStart}-01`, to: today },
+    { label: "This year", from: `${today.slice(0, 4)}-01-01`, to: today },
+  ];
+}
+
 /** Links for the ready-made periods; the rest of the address (grouping, filters) is kept. */
-export function PeriodLinks({ path, period, keep }: { path: string; period: Period; keep?: Record<string, string> }) {
+export function PeriodLinks({
+  path,
+  period,
+  keep,
+  periods,
+  anchor,
+  picked,
+}: {
+  path: string;
+  period: Period | { from: string; to: string };
+  keep?: Record<string, string>;
+  /** Which ready-made periods to offer; the report ones when left out. */
+  periods?: { label: string; from: string; to: string }[];
+  /** A place on the page to land on after choosing (without the #). */
+  anchor?: string;
+  /**
+   * The label of the period that was clicked (the `p` in the address), when the page passes it
+   * on. Two periods can cover the same days — in January, "This month", "This quarter" and
+   * "This year" all do — and then only the one that was clicked is shown as chosen.
+   */
+  picked?: string;
+}) {
   const extra = Object.entries(keep ?? {})
     .filter(([, value]) => value !== "")
     .map(([key, value]) => `&${key}=${encodeURIComponent(value)}`)
     .join("");
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="period-links">
-      {quickPeriods().map((quick) => {
-        const chosen = quick.from === period.from && quick.to === period.to;
+      {(periods ?? quickPeriods()).map((quick, index, all) => {
+        const matches = (entry: { from: string; to: string }) => entry.from === period.from && entry.to === period.to;
+        const pickedOne = all.find((entry) => entry.label === picked && matches(entry));
+        // The one clicked, if it still fits the days shown; otherwise the first that fits.
+        const chosen = matches(quick) && (pickedOne ? pickedOne.label === quick.label : all.findIndex(matches) === index);
         return (
           <Link
             key={quick.label}
-            href={`${path}?from=${quick.from}&to=${quick.to}${extra}`}
+            href={`${path}?from=${quick.from}&to=${quick.to}${periods ? `&p=${encodeURIComponent(quick.label)}` : ""}${extra}${anchor ? `#${anchor}` : ""}`}
             aria-current={chosen ? "true" : undefined}
             className={cn(
               "rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors",

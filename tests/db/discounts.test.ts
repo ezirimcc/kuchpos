@@ -200,7 +200,7 @@ describe("a discount on a sale", () => {
 
   it("an approval for credit cannot be used for a discount", async () => {
     const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
-    await setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "100" });
+    await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "100" });
     const sale = cart(TEN_PERCENT);
     const credit = await approveAtScreen(world.a.as.CASHIER, {
       kind: "CREDIT_OVER_LIMIT",
@@ -208,7 +208,7 @@ describe("a discount on a sale", () => {
       lines: sale.lines,
       customerId: ada,
       creditAmount: "1080.00",
-      username: "a.manager",
+      username: "a.admin",
       password: TEST_PASSWORD,
     });
     expect((await refusal(complete(sale, "1080.00", credit.approvalId))).fieldErrors["discount.approvalId"]).toMatch(/could not be found/);
@@ -326,10 +326,10 @@ describe("the discounts and approvals report", () => {
 });
 
 describe("credit over a customer's limit", () => {
-  it("can be approved at the cashier's screen by a manager, for that customer, that amount and that sale only", async () => {
+  it("can be approved at the cashier's screen by an admin, for that customer, that amount and that sale only", async () => {
     const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
     const bola = (await createCustomer(world.a.as.CASHIER, { name: "Bola Ade", phone: "08055550000" })).id;
-    for (const customerId of [ada, bola]) await setCreditLimit(world.a.as.MANAGER, { customerId, creditLimit: "500" });
+    for (const customerId of [ada, bola]) await setCreditLimit(world.a.as.ADMIN, { customerId, creditLimit: "500" });
 
     const sale = cart();
     const onCredit = (customerId: string, creditAmount: string, creditApprovalId = "", requestId = sale.requestId) =>
@@ -343,7 +343,7 @@ describe("credit over a customer's limit", () => {
         lines: sale.lines,
         ...(creditApprovalId ? { creditApprovalId } : {}),
       });
-    const ask = (customerId: string, creditAmount: string, username = "a.manager") =>
+    const ask = (customerId: string, creditAmount: string, username = "a.admin") =>
       approveAtScreen(world.a.as.CASHIER, {
         kind: "CREDIT_OVER_LIMIT",
         saleRequestId: sale.requestId,
@@ -357,7 +357,8 @@ describe("credit over a customer's limit", () => {
     expect((await refusal(onCredit(ada, "1200.00"))).fieldErrors.creditAmount).toMatch(/only ₦500.00 more can go on credit/);
     expect((await refusal(ask(ada, "1200.00", "a.cashier"))).fieldErrors).toHaveProperty("password");
     expect((await refusal(ask(ada, "1200.00", "b.manager"))).fieldErrors).toHaveProperty("password");
-    // The accountant may not set credit limits, so may not allow this either.
+    // Neither the accountant nor (since C70) the manager may set credit limits, so neither may allow this.
+    expect((await refusal(ask(ada, "1200.00", "a.manager"))).fieldErrors).toHaveProperty("password");
     expect((await refusal(ask(ada, "1200.00", "a.accountant"))).fieldErrors).toHaveProperty("password");
 
     const { approvalId } = await ask(ada, "1200.00");
@@ -371,10 +372,10 @@ describe("credit over a customer's limit", () => {
     expect((await getCustomer(world.a.as.ADMIN, { customerId: ada })).balance).toBe("1200.00");
     const log = await getDb().activityLog.findFirstOrThrow({ where: { action: "sale.credit_over_limit" } });
     expect(log.summary).toBe(
-      `Test a.manager let Ada Okafor go over their credit limit on sale ${saved.receiptNumber} (sold by Test a.cashier): ₦1,200.00 on credit, now owing ₦1,200.00.`,
+      `Test a.admin let Ada Okafor go over their credit limit on sale ${saved.receiptNumber} (sold by Test a.cashier): ₦1,200.00 on credit, now owing ₦1,200.00.`,
     );
     const report = await listApprovals(world.a.as.ADMIN, { kind: "CREDIT_OVER_LIMIT" });
-    expect(report.rows[0]).toMatchObject({ kind: "CREDIT_OVER_LIMIT", amount: "1200.00", basis: "1200.00", approvedByName: "Test a.manager", sale: { receiptNumber: saved.receiptNumber } });
+    expect(report.rows[0]).toMatchObject({ kind: "CREDIT_OVER_LIMIT", amount: "1200.00", basis: "1200.00", approvedByName: "Test a.admin", sale: { receiptNumber: saved.receiptNumber } });
     // It is not counted as a discount.
     expect(report).toMatchObject({ discountTotal: "0.00", discountCount: 0 });
   });
@@ -493,7 +494,7 @@ describe("approval from the manager's own computer", () => {
 
   it("works for credit over a customer's limit too, showing the manager what the customer owes", async () => {
     const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
-    await setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "500" });
+    await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "500" });
     const sale = cart();
     const { requestId } = await requestApproval(world.a.as.CASHIER, {
       kind: "CREDIT_OVER_LIMIT",
@@ -502,9 +503,12 @@ describe("approval from the manager's own computer", () => {
       customerId: ada,
       creditAmount: "1200.00",
     });
-    const [waiting] = (await listWaitingApprovals(world.a.as.MANAGER)).requests;
+    // A manager is no longer asked about credit, and cannot answer (C70); an admin is and can.
+    expect((await listWaitingApprovals(world.a.as.MANAGER)).requests).toEqual([]);
+    await expect(decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: true })).rejects.toThrow();
+    const [waiting] = (await listWaitingApprovals(world.a.as.ADMIN)).requests;
     expect(waiting).toMatchObject({ kind: "CREDIT_OVER_LIMIT", amount: "1200.00", basis: "1200.00", details: { customer: { name: "Ada Okafor", owes: "0.00", creditLimit: "500.00" } } });
-    await decideApprovalRequest(world.a.as.MANAGER, { requestId, approve: true });
+    await decideApprovalRequest(world.a.as.ADMIN, { requestId, approve: true });
     const answer = (await getApprovalRequest(world.a.as.CASHIER, { requestId })) as { approvalId: string };
     await postSale(world.a.as.CASHIER, {
       requestId: sale.requestId,

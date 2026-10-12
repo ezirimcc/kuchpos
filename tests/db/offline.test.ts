@@ -219,7 +219,7 @@ describe("what an offline sale is allowed that an online one is not", () => {
     const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
     const saved = await send(made(1, 3, { customerId: ada }));
     expect((await getSale(world.a.as.MANAGER, { saleId: saved.id })).customer).toMatchObject({ name: "Ada Okafor" });
-    expect((await listCustomers(world.a.as.MANAGER)).customers[0]).toMatchObject({ purchases: "300.00", visits: 1, balance: "0.00" });
+    expect((await listCustomers(world.a.as.ADMIN)).customers[0]).toMatchObject({ purchases: "300.00", visits: 1, balance: "0.00" });
   });
 
   it("two computers printing the same offline number: the second keeps its sale and is given the next number, which is noted", async () => {

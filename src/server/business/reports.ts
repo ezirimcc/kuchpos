@@ -32,16 +32,16 @@ const SHOP_OFFSET_MS = 60 * 60 * 1000; // Africa/Lagos is one hour ahead of UTC 
 const MAX_DAYS = 5 * 366;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const periodSchema = z.object({
+export const periodSchema = z.object({
   from: z.string().trim().optional().default(""),
   to: z.string().trim().optional().default(""),
 });
 
 export type Period = { from: string; to: string; days: number };
-type Range = Period & { start: Date; end: Date };
+export type Range = Period & { start: Date; end: Date };
 
 /** The period asked for (whole shop days); this month so far when nothing is asked. At most five years. */
-function rangeOf(input: { from: string; to: string }): Range {
+export function rangeOf(input: { from: string; to: string }): Range {
   const today = shopToday();
   const to = dayToDate(input.to) ? input.to : today;
   const from = dayToDate(input.from) ? input.from : dayToDate(input.to) ? input.to.slice(0, 8) + "01" : today.slice(0, 8) + "01";
@@ -59,7 +59,7 @@ function before(range: Range): Range {
   return { from: day(start), to: day(new Date(end.getTime() - 1)), days: range.days, start, end };
 }
 
-const madeIn = (range: Range): Prisma.SaleWhereInput => ({
+export const madeIn = (range: Range): Prisma.SaleWhereInput => ({
   cancellation: null,
   OR: [
     { offline: false, createdAt: { gte: range.start, lt: range.end } },
@@ -209,6 +209,7 @@ export async function getSalesReport(
   input: unknown = {},
 ): Promise<{ period: Period; previous: Period; by: SalesGrouping; summary: SalesSummary; before: SalesSummary; rows: SalesRow[]; showsCost: boolean }> {
   authorize(context, "report.sales.view");
+  authorize(context, "report.pages.view");
   const data = parseInput(salesSchema, input);
   const by = (SALES_GROUPS as readonly string[]).includes(data.by) ? (data.by as SalesGrouping) : "day";
   const range = rangeOf(data);
@@ -341,6 +342,7 @@ export async function getCollectionsReport(
   input: unknown = {},
 ): Promise<{ period: Period; rows: CollectionRow[]; totals: Omit<CollectionRow, "methodName" | "kind">; cashNet: string }> {
   authorize(context, "report.collections.view");
+  authorize(context, "report.pages.view");
   const range = rangeOf(parseInput(periodSchema, input));
   const db = businessDb(context);
   const inRange = { gte: range.start, lt: range.end };
@@ -418,6 +420,7 @@ export type DebtRow = {
 /** Who owes what, and for how long: every customer with a debt, the longest-owed first. */
 export async function getDebtReport(context: AppContext): Promise<{ rows: DebtRow[]; totals: Pick<DebtRow, "current" | "days31" | "days61" | "older" | "total"> }> {
   authorize(context, "report.customerDebt.view");
+  authorize(context, "report.pages.view");
   const db = businessDb(context);
   const customers = await db.customer.findMany({
     where: { balance: { gt: 0 } },
@@ -537,6 +540,7 @@ export async function getStockMovements(
   input: unknown = {},
 ): Promise<{ period: Period; rows: MovementRow[]; locations: { id: string; name: string }[] } & Paged> {
   authorize(context, "report.stock.view");
+  authorize(context, "report.pages.view");
   const data = parseInput(movementsSchema, input);
   const range = rangeOf(data);
   const db = businessDb(context);
@@ -624,6 +628,7 @@ export type CustomerReport = {
 /** How customers are doing: new against returning, how many come back, and what each has been worth. */
 export async function getCustomerReport(context: AppContext, input: unknown = {}): Promise<CustomerReport & Paged> {
   authorize(context, "report.sales.view");
+  authorize(context, "report.pages.view");
   authorize(context, "customer.statement.view");
   const data = parseInput(periodSchema.extend({ page: pageNumber, all: z.boolean().optional().default(false) }), input);
   const range = rangeOf(data);
@@ -785,6 +790,7 @@ const stockSchema = periodSchema.extend({
  */
 export async function getStockReport(context: AppContext, input: unknown = {}): Promise<StockReport & Paged> {
   authorize(context, "report.stock.view");
+  authorize(context, "report.pages.view");
   const data = parseInput(stockSchema, input);
   const range = rangeOf(data);
   const db = businessDb(context);

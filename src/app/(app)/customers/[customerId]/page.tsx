@@ -12,8 +12,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { formatDateTime, nairaFromText } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { getCustomer, getCustomerStatement, getRepaymentOptions } from "@/server/business/customers";
+import { can } from "@/server/permissions";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { deleteCustomerAction, setCreditLimitAction, setCustomerActiveAction, updateCustomerAction } from "../actions";
+import { CustomerPurchases } from "./purchases";
 import { CustomerFields } from "../customer-fields";
 import { RepaymentForm } from "./repayment-form";
 
@@ -24,7 +26,9 @@ const ENTRY_LABELS = { CREDIT_SALE: "Bought on credit", REPAYMENT: "Repayment", 
 export default async function CustomerPage({ params, searchParams }: PageProps<"/customers/[customerId]">) {
   const context = await requirePagePermission("customer.balance.view");
   const { customerId } = await params;
-  const page = (await searchParams).page;
+  const query = await searchParams;
+  const page = query.page;
+  const chosen = (name: string) => (typeof query[name] === "string" ? (query[name] as string) : "");
 
   let customer: Awaited<ReturnType<typeof getCustomer>>;
   try {
@@ -118,6 +122,8 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
           </Table>
         </div>
       )}
+
+      {can(context, "customer.purchases.view") && <CustomerPurchases context={context} customerId={customer.id} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />}
 
       {statement ? (
         <div className="flex flex-col gap-2" data-testid="statement">

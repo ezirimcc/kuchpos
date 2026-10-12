@@ -231,7 +231,7 @@ describe("refunding", () => {
 
   it("a credit sale's refund comes off what is still owed on that sale first; only the rest is handed back", async () => {
     const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
-    await setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "50000" });
+    await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "50000" });
     // ₦2,700 of goods: ₦2,000 on credit, ₦700 in cash. Then ₦1,500 of the debt is repaid.
     const sale = await sell(3, 0, { customerId: ada, creditAmount: "2000.00", payments: [{ methodId: world.a.cashMethodId, amount: "700.00" }] });
     await recordRepayment(world.a.as.ACCOUNTANT, { requestId: randomUUID(), customerId: ada, amount: "1500", methodId: world.a.transferMethodId });
@@ -248,7 +248,7 @@ describe("refunding", () => {
     // Nothing is owed on it any more: the next pack is handed back in full.
     expect(await takeBack(sale.id, [{ saleLineId: sale.lineIds[0], quantity: "1" }])).toMatchObject({ debtReduced: "0.00", refundPaid: "900.00" });
     // What came back is not a purchase.
-    expect((await listCustomers(world.a.as.MANAGER)).customers[0]).toMatchObject({ purchases: "900.00", visits: 1 });
+    expect((await listCustomers(world.a.as.ADMIN)).customers[0]).toMatchObject({ purchases: "900.00", visits: 1 });
     // A debt wholly covered by the refund needs no way of handing money back.
     const second = await sell(0, 2, { customerId: ada, creditAmount: "200.00", payments: [] });
     expect(await takeBack(second.id, [{ saleLineId: second.lineIds[0], quantity: "1" }], { refundMethodId: "", terminalId: "" })).toMatchObject({ debtReduced: "100.00", refundPaid: "0.00" });

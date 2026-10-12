@@ -38,6 +38,7 @@ export const PERMISSIONS = {
   "repayment.record": "business",
   "customer.statement.view": "business",
   "customer.balance.view": "business",
+  "customer.purchases.view": "business",
   // Stock
   "stock.view": "business",
   "stock.receive": "business",
@@ -57,6 +58,8 @@ export const PERMISSIONS = {
   "report.customerDebt.view": "business",
   "report.discounts.view": "business",
   "report.export": "business",
+  "report.pages.view": "business",
+  "dashboard.analysis.view": "business",
   // Owner only
   "business.manage": "platform",
   "business.open": "platform",
@@ -97,7 +100,6 @@ const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
     "till.operateOwn",
     "till.reviewAny",
     "customer.manage",
-    "customer.setCreditLimit",
     "repayment.record",
     "customer.statement.view",
     "customer.balance.view",
@@ -136,6 +138,8 @@ const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
     "report.customerDebt.view",
     "report.discounts.view",
     "report.export",
+    "report.pages.view",
+    "customer.purchases.view",
   ]),
   CASHIER: new Set<Permission>([
     "price.view",
@@ -161,6 +165,7 @@ const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
     "stock.count",
     "stock.adjust.request",
     "report.stock.view",
+    "report.pages.view",
   ]),
 };
 

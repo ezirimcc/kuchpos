@@ -41,7 +41,7 @@ beforeEach(async () => {
   tillId = (await openTill(world.a.as.CASHIER, { terminalId: world.a.terminalId, openingFloat: "1000" })).id;
   ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "0803 123 4567", address: "12 Market Road", city: "Aba", state: "Abia" })).id;
   bola = (await createCustomer(world.a.as.CASHIER, { name: "Bola Ade", phone: "08055550000" })).id;
-  await setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "20000" });
+  await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "20000" });
 });
 
 // The golden rules, checked after every single test in this file.
@@ -143,7 +143,7 @@ describe("customer records", () => {
     await sell(10, { customerId: ada, credit: "1000.00" });
     for (const role of ["ADMIN", "MANAGER", "ACCOUNTANT"] as const) {
       const detail = await getCustomer(world.a.as[role], { customerId: ada });
-      expect(detail).toMatchObject({ balance: "1000.00", canSeeStatement: true, canManage: true, canRecordRepayment: true, canSetCreditLimit: role !== "ACCOUNTANT" });
+      expect(detail).toMatchObject({ balance: "1000.00", canSeeStatement: true, canManage: true, canRecordRepayment: true, canSetCreditLimit: role === "ADMIN" });
       expect(detail.unpaidSales).toHaveLength(1);
       expect((await getCustomerStatement(world.a.as[role], { customerId: ada })).lines).toHaveLength(1);
     }
@@ -188,7 +188,8 @@ describe("customer records", () => {
 });
 
 describe("the credit limit", () => {
-  it("is set by an admin or manager, with a history; empty means no credit at all", async () => {
+  it("is set by an admin (not a manager, C70), with a history; empty means no credit at all", async () => {
+    await expect(setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "1" })).rejects.toBeInstanceOf(ForbiddenError);
     await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "35000.50" });
     await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "35000.50" });
     await setCreditLimit(world.ownerInA, { customerId: ada, creditLimit: "" });
@@ -197,7 +198,7 @@ describe("the credit limit", () => {
     expect(detail.limitHistory.map((change) => [change.oldLimit, change.newLimit, change.changedByName])).toEqual([
       ["35000.50", null, "Test owner"],
       ["20000.00", "35000.50", "Test a.admin"],
-      [null, "20000.00", "Test a.manager"],
+      [null, "20000.00", "Test a.admin"],
     ]);
     for (const creditLimit of ["-1", "lots", "1,000", "10.005"]) {
       expect((await refusal(setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit }))).fieldErrors, creditLimit).toHaveProperty("creditLimit");
@@ -251,7 +252,7 @@ describe("selling on credit", () => {
     const before = await everything();
     expect((await refusal(sell(10, { credit: "1000.00" }))).fieldErrors.creditAmount).toMatch(/walk-in customer cannot buy on credit/);
     expect((await refusal(sell(10, { customerId: bola, credit: "1000.00" }))).fieldErrors.creditAmount).toBe(
-      "Bola Ade cannot buy on credit yet. An admin or manager must first give them a credit limit.",
+      "Bola Ade cannot buy on credit yet. An admin must first give them a credit limit.",
     );
     await expect(postSale(world.a.as.ACCOUNTANT, sale(10, { customerId: ada, credit: "1000.00" }))).rejects.toBeInstanceOf(ForbiddenError);
     expect(await everything()).toBe(before);
@@ -271,12 +272,12 @@ describe("selling on credit", () => {
     expect(await everything()).toBe(before);
   });
 
-  it("over the customer's limit is refused for a cashier and says how much room is left; a manager can allow it, and it is logged", async () => {
+  it("over the customer's limit is refused for a cashier — and for a manager — and says how much room is left; an admin can allow it, and it is logged", async () => {
     await sell(150, { customerId: ada, credit: "15000.00" });
     const before = await everything();
     const error = await refusal(sell(60, { customerId: ada, credit: "6000.00" }));
     expect(error.fieldErrors.creditAmount).toBe(
-      "Ada Okafor owes ₦15,000.00 and their limit is ₦20,000.00, so only ₦5,000.00 more can go on credit. A manager or admin can allow more, or raise the limit.",
+      "Ada Okafor owes ₦15,000.00 and their limit is ₦20,000.00, so only ₦5,000.00 more can go on credit. An admin can allow more, or raise the limit.",
     );
     expect(await everything()).toBe(before);
 
@@ -284,12 +285,13 @@ describe("selling on credit", () => {
     await sell(50, { customerId: ada, credit: "5000.00" });
     expect(await getCustomer(world.a.as.ADMIN, { customerId: ada })).toMatchObject({ balance: "20000.00", availableCredit: "0.00" });
 
-    const allowed = await sell(10, { customerId: ada, credit: "1000.00", as: world.a.as.MANAGER });
+    await expect(sell(10, { customerId: ada, credit: "1000.00", as: world.a.as.MANAGER })).rejects.toBeInstanceOf(ValidationError);
+    const allowed = await sell(10, { customerId: ada, credit: "1000.00", as: world.a.as.ADMIN });
     expect(await owes(ada)).toBe("21000.00");
     const statement = await getCustomerStatement(world.a.as.ADMIN, { customerId: ada });
-    expect(statement.lines[0]).toMatchObject({ documentNumber: allowed.receiptNumber, note: "Over the credit limit, allowed by Test a.manager." });
+    expect(statement.lines[0]).toMatchObject({ documentNumber: allowed.receiptNumber, note: "Over the credit limit, allowed by Test a.admin." });
     const log = await getDb().activityLog.findFirstOrThrow({ where: { action: "sale.credit_over_limit" } });
-    expect(log.summary).toBe(`Test a.manager let Ada Okafor go over their credit limit on sale ${allowed.receiptNumber}: ₦1,000.00 on credit, now owing ₦21,000.00.`);
+    expect(log.summary).toBe(`Test a.admin let Ada Okafor go over their credit limit on sale ${allowed.receiptNumber}: ₦1,000.00 on credit, now owing ₦21,000.00.`);
     // Lowering the limit below what is owed is allowed, and simply stops further credit.
     await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "1000" });
     expect((await refusal(sell(1, { customerId: ada, credit: "100.00" }))).fieldErrors.creditAmount).toMatch(/only ₦0.00 more can go on credit/);

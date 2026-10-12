@@ -122,7 +122,8 @@ type ImportedSale = {
   at: Date;
   day: string;
   receipt: string;
-  soldBy: string;
+  /** The staff member named under "Sold by"; null when the cell was empty. */
+  seller: { id: string; name: string } | null;
   customer: { id: string; name: string; phone: string } | null;
   lines: Omit<CheckedSaleLine, "location">[];
   subtotal: Decimal;
@@ -163,7 +164,7 @@ async function checkHistory(context: AppContext, input: unknown, bytes: Buffer):
 
   const references = [...new Set(deliveryRows.map(({ cells }) => cellText(cells.reference)).filter(Boolean))];
   const receipts = [...new Set(saleRows.map(({ cells }) => `${RECEIPT_PREFIX}${cellText(cells.receipt)}`))];
-  const [products, customers, methods, suppliers, deliveriesThere, salesThere, shelf, shelfStock, before] = await Promise.all([
+  const [products, customers, methods, suppliers, deliveriesThere, salesThere, shelf, shelfStock, before, staff] = await Promise.all([
     db.product.findMany({
       select: {
         id: true,
@@ -185,6 +186,8 @@ async function checkHistory(context: AppContext, input: unknown, bytes: Buffer):
     db.location.findFirst({ where: { kind: "SHELF" }, select: { id: true } }),
     db.stockBalance.findMany({ where: { location: { kind: "SHELF" } }, select: { productId: true, quantity: true } }),
     db.importRun.findFirst({ where: { part: "HISTORY", fileHash }, select: { number: true, createdAt: true, createdByName: true } }),
+    // Everyone who has an account in this business, disabled or not: a sale may have been made by someone who has since left.
+    db.user.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, username: true } }),
   ]);
   if (!shelf) throw new ValidationError("This business has no Shelf for the goods. Ask the owner to check its locations.");
 
@@ -210,6 +213,12 @@ async function checkHistory(context: AppContext, input: unknown, bytes: Buffer):
   const customerByPhone = new Map(customers.map((customer) => [customer.phone, customer]));
   const methodByName = new Map(methods.map((method) => [key(method.name), method]));
   const supplierNames = new Set(suppliers.map((supplier) => key(supplier.name)));
+  // "Sold by" may give a staff member's full name or their username (C70).
+  const staffByName = new Map<string, { id: string; name: string }>();
+  for (const person of staff) {
+    staffByName.set(key(person.name).replace(/\s+/g, " "), person);
+    staffByName.set(key(person.username), person);
+  }
 
   const money = (sheet: string, row: number, label: string, text: string): Decimal | null => {
     try {
@@ -394,8 +403,14 @@ async function checkHistory(context: AppContext, input: unknown, bytes: Buffer):
         sound = false;
       }
       const soldBy = cellText(cells.soldBy).replace(/\s+/g, " ");
-      if (soldBy.length > 100) {
-        say(S, row, "The name under Sold by is too long (100 characters at most).");
+      const seller = soldBy ? (staffByName.get(key(soldBy)) ?? null) : null;
+      if (soldBy && !seller) {
+        say(
+          S,
+          row,
+          `"${soldBy.slice(0, 60)}" under Sold by is not one of this shop's staff. Use a staff member's full name or username exactly as on the Staff page ` +
+            `(${staff.length > 0 ? staff.slice(0, 12).map((person) => person.name).join(", ") : "there are none yet"}${staff.length > 12 ? ", …" : ""}), add them on the Staff page first, or leave the cell empty.`,
+        );
         sound = false;
       }
       sale = {
@@ -404,7 +419,7 @@ async function checkHistory(context: AppContext, input: unknown, bytes: Buffer):
         at: at.getTime() > now.getTime() ? now : at,
         day: day ?? "",
         receipt,
-        soldBy: soldBy.slice(0, 100),
+        seller,
         customer,
         lines: [],
         subtotal: new Decimal(0),
@@ -694,8 +709,8 @@ export async function runHistoryImport(context: AppContext, input: unknown, byte
             creditNote: owedAfter ? `Sold on credit on ${formatDay(event.day)}, before KuchPos; brought in from Excel (${label}).` : null,
             payments,
             tillSessionId: null,
-            // The name on the shop's own record; not one of KuchPos's users.
-            cashier: { userId: null, name: event.soldBy || SOLD_BY_UNKNOWN },
+            // The staff member named in the shop's own record, if one was named.
+            cashier: event.seller ? { userId: event.seller.id, name: event.seller.name } : { userId: null, name: SOLD_BY_UNKNOWN },
             deviceTime: null,
             offline: false,
             sentBy: null,

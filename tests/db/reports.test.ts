@@ -57,7 +57,7 @@ beforeEach(async () => {
   });
   await openTill(world.a.as.CASHIER, { terminalId: world.a.terminalId, openingFloat: "1000" });
   const ada = (await createCustomer(world.a.as.CASHIER, { name: "Ada Okafor", phone: "08031234567" })).id;
-  await setCreditLimit(world.a.as.MANAGER, { customerId: ada, creditLimit: "50000" });
+  await setCreditLimit(world.a.as.ADMIN, { customerId: ada, creditLimit: "50000" });
   const cash = (amount: string) => [{ methodId: world.a.cashMethodId, amount }];
 
   const s1 = await sell("CASHIER", [{ unit: "pack", quantity: "1" }, { unit: "single", quantity: "2" }], { expectedTotal: "1100.00", payments: cash("1100.00") });
@@ -126,7 +126,7 @@ describe("the sales report", () => {
       [yesterday, 1, "100.00", "0.00", "100.00", "50.00", "50.00", "50.0"],
       [today, 3, "2300.00", "300.00", "2000.00", "1200.00", "800.00", "40.0"],
     ]);
-    expect((await getSalesReport(world.a.as.MANAGER, { from: yesterday, to: yesterday })).summary.salesCount).toBe(1);
+    expect((await getSalesReport(world.a.as.ACCOUNTANT, { from: yesterday, to: yesterday })).summary.salesCount).toBe(1);
   });
 
   it("breaks the same figures down by cashier, product, category, hour and how it was paid", async () => {
@@ -236,7 +236,7 @@ describe("the customer report", () => {
 
     // Looked at tomorrow, Ada is someone who bought in the period before and has not come back yet.
     const tomorrow = shopToday(new Date(Date.now() + 24 * 60 * 60 * 1000));
-    expect(await getCustomerReport(world.a.as.MANAGER, { from: tomorrow, to: tomorrow })).toMatchObject({
+    expect(await getCustomerReport(world.a.as.ACCOUNTANT, { from: tomorrow, to: tomorrow })).toMatchObject({
       newCustomers: 0,
       returningCustomers: 0,
       boughtBefore: 1,
@@ -245,7 +245,7 @@ describe("the customer report", () => {
       lifetimeTotal: "800.00",
     });
     // Over yesterday and today together she is still new, and yesterday's walk-in sale is counted.
-    expect(await getCustomerReport(world.a.as.MANAGER, { from: yesterday, to: today })).toMatchObject({ newCustomers: 1, walkInCount: 3, walkInSales: "1300.00" });
+    expect(await getCustomerReport(world.a.as.ACCOUNTANT, { from: yesterday, to: today })).toMatchObject({ newCustomers: 1, walkInCount: 3, walkInSales: "1300.00" });
   });
 });
 
@@ -335,6 +335,13 @@ describe("who may read and export reports", () => {
       await expect(getCustomerReport(world.a.as[role], day), role).rejects.toBeInstanceOf(ForbiddenError);
       await expect(exportReport(world.a.as[role], { report: "stock-movements", ...day }), role).rejects.toBeInstanceOf(ForbiddenError);
     }
+    // A manager reads the sales list but may not open the Reports pages (C70).
+    await expect(getSalesReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(getCollectionsReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(getDebtReport(world.a.as.MANAGER)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(getStockReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(getStockMovements(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(exportReport(world.a.as.MANAGER, { report: "sales", ...day })).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getStockMovements(world.a.as.CASHIER, day)).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getStockReport(world.a.as.CASHIER, day)).rejects.toBeInstanceOf(ForbiddenError);
 
@@ -356,7 +363,7 @@ describe("who may read and export reports", () => {
     });
     expect(toCsv(sales.header, sales.rows).split("\r\n")[1]).toBe("Test a.cashier,2,2100.00,300.00,1800.00,1050.00,750.00,41.7");
 
-    const collections = await exportReport(world.a.as.MANAGER, { report: "collections", ...day });
+    const collections = await exportReport(world.a.as.ACCOUNTANT, { report: "collections", ...day });
     expect(collections.rows.at(-1)).toEqual(["Total", "2200.00", "100.00", "600.00", "1700.00"]);
     const debts = await exportReport(world.a.as.ADMIN, { report: "debts" });
     expect(debts.rows).toEqual([["Ada Okafor", "08031234567", "50000.00", "300.00", "0.00", "0.00", "0.00", "300.00", today]]);
@@ -365,7 +372,7 @@ describe("who may read and export reports", () => {
     expect(movements.rows[0].slice(1)).toEqual(["A Seed Sachet", "A-001", "Shelf", "SALE_RETURN", "1.000", "single", "RT-000001", "Test a.manager"]);
     const customers = await exportReport(world.a.as.ACCOUNTANT, { report: "customers", ...day });
     expect(customers.rows).toEqual([["Ada Okafor", "08031234567", today, today, "800.00", 1, "800.00", 1]]);
-    const stock = await exportReport(world.a.as.MANAGER, { report: "stock", ...day });
+    const stock = await exportReport(world.a.as.ACCOUNTANT, { report: "stock", ...day });
     expect(stock.rows).toEqual([["A Seed Sachet", "A-001", "single", "75.000", "75.000", "0.000", "100.000", "22.000", "22.0", "3", "2.000"]]);
     await expect(exportReport(world.a.as.ADMIN, { report: "everything" })).rejects.toBeInstanceOf(ValidationError);
   });

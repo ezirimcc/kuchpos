@@ -13,6 +13,8 @@ export default async function ReportsPage() {
   const context = await requirePageContext();
   const cards = [
     { href: "/reports/sales", title: "Sales", text: "What was sold, returned and earned: by day, product, category, cashier, hour and how it was paid.", show: can(context, "report.sales.view") },
+    { href: "/reports/sales?by=product", title: "Sales by product", text: "Which products bring in the most, with their profit and margin.", show: can(context, "report.sales.view") },
+    { href: "/reports/sales?by=category", title: "Sales by category", text: "Which groups of products bring in the most.", show: can(context, "report.sales.view") },
     { href: "/reports/collections", title: "Collections", text: "Money actually received, by payment method — for sales and against debts, less what was given back.", show: can(context, "report.collections.view") },
     { href: "/reports/customers", title: "Customers", text: "New against returning customers, how many come back, and what each customer has been worth.", show: can(context, "report.sales.view") && can(context, "customer.statement.view") },
     { href: "/reports/debts", title: "Customer debts", text: "Who owes what, and for how long.", show: can(context, "report.customerDebt.view") },
@@ -23,7 +25,6 @@ export default async function ReportsPage() {
     { href: "/returns", title: "Returns", text: "Goods customers brought back, and what was refunded.", show: can(context, "report.sales.view") },
     { href: "/sales/discounts", title: "Discounts and approvals", text: "Every discount, credit over a limit and return that was approved, and by whom.", show: can(context, "report.discounts.view") },
     { href: "/sales/offline", title: "Offline exceptions", text: "What was out of the ordinary about sales made without internet.", show: can(context, "report.sales.view") },
-    { href: "/sales", title: "My sales", text: "The sales you have made.", show: !can(context, "report.sales.view") && can(context, "report.ownShift.view") },
   ].filter((card) => card.show);
   if (cards.length === 0) redirect("/");
 

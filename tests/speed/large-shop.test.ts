@@ -103,7 +103,7 @@ describe("a shop larger than the biggest one", () => {
           const credit = customer !== 0 && customer % 3 === 0 && random(5) === 0;
           const lines = 1 + random(3);
           const paidBy = random(3) === 0 ? "Bank transfer" : "Cash";
-          const soldBy = ["Ada", "Bola", "Chidi"][random(3)];
+          const soldBy = ["a.cashier", "a.manager", "a.admin"][random(3)];
           for (let l = 0; l < lines; l += 1) {
             const n = 1 + random(PRODUCTS);
             sales.push({

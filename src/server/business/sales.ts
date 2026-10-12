@@ -539,7 +539,7 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
           const owedBefore = owedAfter.minus(credit);
           if (account.creditLimit === null) {
             throw new ValidationError(NOTHING_SOLD, {
-              creditAmount: `${customer.name} cannot buy on credit yet. An admin or manager must first give them a credit limit.`,
+              creditAmount: `${customer.name} cannot buy on credit yet. An admin must first give them a credit limit.`,
             });
           }
           const limit = new Decimal(account.creditLimit.toFixed(2));
@@ -565,7 +565,7 @@ async function saveSale(context: AppContext, data: z.infer<typeof saleSchema>, o
               throw new ValidationError(NOTHING_SOLD, {
                 creditAmount:
                   `${customer.name} owes ${formatNaira(owedBefore)} and their limit is ${formatNaira(limit)}, so only ` +
-                  `${formatNaira(room)} more can go on credit. A manager or admin can allow more, or raise the limit.`,
+                  `${formatNaira(room)} more can go on credit. An admin can allow more, or raise the limit.`,
               });
             }
             overLimit = true;

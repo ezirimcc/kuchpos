@@ -100,7 +100,7 @@ export const SALES_SHEET = {
     paidBy: column("Paid by", true, "Cash, or the name of one of the shop's other payment methods. One way of paying for a sale; a part not paid goes under Amount on credit.", "Cash", 30),
     customerPhone: column("Customer phone", false, "Must be on the Customers sheet.", ""),
     onCredit: column("Amount on credit", false, "In Naira. Needs the customer. Fill it on the first row of the sale only.", "", 20),
-    soldBy: column("Sold by", false, "A name, kept as a note.", ""),
+    soldBy: column("Sold by", false, "The full name or username of a staff member, as on the Staff page; or leave empty.", "", 30),
   },
 } as const satisfies ImportSheet;
 

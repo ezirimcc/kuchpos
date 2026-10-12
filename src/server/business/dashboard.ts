@@ -112,7 +112,7 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
 
   // The last 14 shop days, for the chart on the home page. Cancelled sales are left out.
   let salesTrend: DashboardSnapshot["salesTrend"] = null;
-  if (seesAllSales) {
+  if (seesAllSales && can(context, "report.pages.view")) {
     const days = Array.from({ length: TREND_DAYS }, (_, index) => shopToday(new Date(startOfToday.getTime() - (TREND_DAYS - 1 - index) * DAY_MS)));
     const recent = await db.sale.findMany({
       where: { createdAt: { gte: new Date(startOfToday.getTime() - (TREND_DAYS - 1) * DAY_MS) }, cancellation: null },

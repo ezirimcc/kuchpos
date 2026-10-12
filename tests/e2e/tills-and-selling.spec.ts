@@ -536,10 +536,21 @@ test("a customer is added, given a credit limit, buys partly on credit, and repa
   const customerUrl = page.url();
   await signOut(page);
 
-  // The manager allows up to ₦5,000 of credit.
+  // A manager no longer sets credit limits (C70) and does not see what the customer has bought.
   await signIn(page, "gv.manager");
   await expectSignedInAs(page, "Manager");
   await gotoReady(page, customerUrl);
+  await expect(page.getByLabel("Credit limit (₦)")).toHaveCount(0);
+  await expect(page.getByTestId("customer-purchases-card")).toHaveCount(0);
+  await page.goto("/reports");
+  await expect(page).toHaveURL(/\/$/);
+  await signOut(page);
+
+  // The admin allows up to ₦5,000 of credit.
+  await signIn(page, "gv.admin");
+  await expectSignedInAs(page, "Admin");
+  await gotoReady(page, customerUrl);
+  await expect(page.getByTestId("customer-purchases-card")).toContainText("Nothing bought in this period.");
   await page.getByLabel("Credit limit (₦)").fill("5000");
   await page.getByRole("button", { name: "Save credit limit" }).click();
   await expect(page.getByTestId("customer-limit")).toHaveText("₦5,000.00");
@@ -691,10 +702,11 @@ test("a cashier's discount needs a manager's approval at the screen; changing th
   await page.getByLabel("Put on credit (₦)").fill("3000");
   await expect(page.getByTestId("complete-sale")).toBeDisabled();
   await page.getByTestId("ask-credit-approval").click();
-  await approval.getByLabel("Approver's username").fill("gv.manager");
+  // Only an admin (or the owner) may allow credit over the limit now (C70).
+  await approval.getByLabel("Approver's username").fill("gv.admin");
   await approval.getByLabel("Approver's password").fill(SAMPLE_PASSWORD);
   await approval.getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByTestId("credit-approved")).toContainText("allowed by Green Valley Manager");
+  await expect(page.getByTestId("credit-approved")).toContainText("allowed by Green Valley Admin");
   await page.getByTestId("complete-sale").click();
   await expect(page.getByTestId("receipt-credit")).toContainText("₦3,000.00");
   // A cashier has no discounts report.
@@ -1189,12 +1201,27 @@ test("the accountant reads and exports the reports; today's sales report equals 
   expect(refused.status()).toBe(403);
   await signOut(page);
 
-  // A cashier's Reports page leads only to their own sales.
+  // A cashier has no Reports: their own sales are under Sales.
   await signIn(page, "gv.cashier");
   await expectSignedInAs(page, "Cashier");
-  await openFromMenu(page, "Reports");
-  await expect(page.getByTestId("report-card").filter({ hasText: "My sales" })).toHaveCount(1);
-  await expect(page.getByTestId("report-card").filter({ hasText: "Collections" })).toHaveCount(0);
+  await page.goto("/reports");
+  await expect(page).toHaveURL(/\/$/);
+  await signOut(page);
+
+  // The admin's home page has the best-seller charts, with a choice of period; the product page draws its sales.
+  await signIn(page, "gv.admin");
+  await expectSignedInAs(page, "Admin");
+  await expect(page.getByTestId("top-products")).toContainText("Top 5 products by sales");
+  await expect(page.getByTestId("top-categories")).toContainText("Top 5 categories by sales");
+  await expect(page.getByTestId("top-customers")).toContainText("Top 5 customers by sales");
+  await page.getByTestId("home-analysis").getByRole("link", { name: "This quarter" }).click();
+  await expect(page.getByTestId("home-analysis").getByRole("link", { name: "This quarter" })).toHaveAttribute("aria-current", "true");
+  await expect(page.getByTestId("top-products").getByTestId("chart-bar").first()).toBeVisible();
+  await gotoReady(page, "/products?q=Tomato+Seed+Sachet");
+  await page.getByRole("link", { name: "Tomato Seed Sachet" }).first().click();
+  await expect(page.getByTestId("product-sales-card")).toContainText("How it has sold");
+  await expect(page.getByTestId("product-sales-chart").getByTestId("chart-line")).toHaveCount(1);
+  await expect(page.getByTestId("product-purchase-row").first().getByRole("link").first()).toHaveAttribute("href", /\/sales\//);
   await signOut(page);
 
   // The owner sees every business side by side, with the same figure as the business's own report.

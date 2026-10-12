@@ -17,7 +17,7 @@ export default async function NewCustomerPage() {
       <PageHeader
         icon={UserPlus}
         title="New customer"
-        description="A new customer can pay like anyone else. To let them buy on credit, a manager or admin sets a credit limit afterwards."
+        description="A new customer can pay like anyone else. To let them buy on credit, an admin sets a credit limit afterwards."
       />
       <NewCustomerForm />
     </div>

@@ -45,7 +45,8 @@ const SPEC_TABLE: Array<{ row: string; permission: Permission; allowed: Business
   { row: "Review any till session", permission: "till.reviewAny", allowed: [A, M, AC] },
   // Customers
   { row: "Create a customer, edit contact details", permission: "customer.manage", allowed: [A, M, AC, C] },
-  { row: "Set a customer's credit limit", permission: "customer.setCreditLimit", allowed: [A, M] },
+  { row: "Set a customer's credit limit; allow credit over the limit", permission: "customer.setCreditLimit", allowed: [A] },
+  { row: "See what each customer has bought: totals, visits, purchase history", permission: "customer.purchases.view", allowed: [A, AC] },
   { row: "Record a debt repayment", permission: "repayment.record", allowed: [A, M, AC, C] },
   { row: "View customer statements", permission: "customer.statement.view", allowed: [A, M, AC] },
   { row: "View customer balances (cashier: balance only)", permission: "customer.balance.view", allowed: [A, M, AC, C] },
@@ -68,6 +69,8 @@ const SPEC_TABLE: Array<{ row: string; permission: Permission; allowed: Business
   { row: "Customer debt report", permission: "report.customerDebt.view", allowed: [A, M, AC] },
   { row: "Discounts & approvals report", permission: "report.discounts.view", allowed: [A, M, AC] },
   { row: "Export reports to spreadsheet", permission: "report.export", allowed: [A, M, AC] },
+  { row: "Open the Reports pages", permission: "report.pages.view", allowed: [A, AC, S] },
+  { row: "Analysis charts on the home page", permission: "dashboard.analysis.view", allowed: [A] },
 ];
 
 const OWNER_ONLY: Permission[] = ["business.manage", "business.open", "owner.manage", "overview.view"];

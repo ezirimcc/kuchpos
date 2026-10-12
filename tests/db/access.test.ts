@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AppContext } from "@/server/auth/context";
 import * as activityLog from "@/server/business/activity-log";
+import * as analysis from "@/server/business/analysis";
 import * as adjustments from "@/server/business/adjustments";
 import * as approvals from "@/server/business/approvals";
 import * as catalog from "@/server/business/catalog";
@@ -291,6 +292,9 @@ const SELLERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "CASHIER"];
 const SALES_VIEWERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
 const CUSTOMER_KEEPERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT", "CASHIER"];
 const REPORT_READERS: Actor[] = ["ownerInA", "ADMIN", "MANAGER", "ACCOUNTANT"];
+/** Those who may open the Reports pages (C70): the manager reads the sales list but not the reports. */
+const REPORT_PAGE_READERS: Actor[] = ["ownerInA", "ADMIN", "ACCOUNTANT"];
+const STOCK_REPORT_READERS: Actor[] = ["ownerInA", "ADMIN", "ACCOUNTANT", "STOREKEEPER"];
 const OWNERS: Actor[] = ["ownerOutside", "ownerInA"];
 
 const OPERATIONS: Operation[] = [
@@ -619,33 +623,50 @@ const OPERATIONS: Operation[] = [
     run: (context) => approvals.listApprovals(context),
   },
   {
+    name: "analysis.getHomeAnalysis",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => analysis.getHomeAnalysis(context),
+  },
+  {
+    name: "analysis.getCustomerPurchases",
+    allowed: REPORT_PAGE_READERS,
+    run: (context) => analysis.getCustomerPurchases(context, { customerId: customerInA }),
+    runAgainstB: (context) => analysis.getCustomerPurchases(context, { customerId: customerInB }),
+  },
+  {
+    name: "analysis.getProductSales",
+    allowed: REPORT_PAGE_READERS,
+    run: (context) => analysis.getProductSales(context, { productId: world.a.product.id }),
+    runAgainstB: (context) => analysis.getProductSales(context, { productId: world.b.product.id }),
+  },
+  {
     name: "reports.getSalesReport",
-    allowed: REPORT_READERS,
+    allowed: REPORT_PAGE_READERS,
     run: (context) => reports.getSalesReport(context),
   },
   {
     name: "reports.getCollectionsReport",
-    allowed: REPORT_READERS,
+    allowed: REPORT_PAGE_READERS,
     run: (context) => reports.getCollectionsReport(context),
   },
   {
     name: "reports.getDebtReport",
-    allowed: REPORT_READERS,
+    allowed: REPORT_PAGE_READERS,
     run: (context) => reports.getDebtReport(context),
   },
   {
     name: "reports.getStockMovements",
-    allowed: DELIVERY_VIEWERS,
+    allowed: STOCK_REPORT_READERS,
     run: (context) => reports.getStockMovements(context),
   },
   {
     name: "reports.getCustomerReport",
-    allowed: REPORT_READERS,
+    allowed: REPORT_PAGE_READERS,
     run: (context) => reports.getCustomerReport(context),
   },
   {
     name: "reports.getStockReport",
-    allowed: DELIVERY_VIEWERS,
+    allowed: STOCK_REPORT_READERS,
     run: (context) => reports.getStockReport(context),
   },
   {
@@ -685,7 +706,7 @@ const OPERATIONS: Operation[] = [
   },
   {
     name: "reports.exportReport",
-    allowed: REPORT_READERS,
+    allowed: REPORT_PAGE_READERS,
     run: (context) => reports.exportReport(context, { report: "sales" }),
   },
   {
@@ -857,7 +878,7 @@ const OPERATIONS: Operation[] = [
   },
   {
     name: "customers.setCreditLimit",
-    allowed: PRODUCT_MANAGERS,
+    allowed: BUSINESS_ADMINS,
     run: (context) => customers.setCreditLimit(context, { customerId: customerInA, creditLimit: "5000" }),
     runAgainstB: (context) => customers.setCreditLimit(context, { customerId: customerInB, creditLimit: "5000" }),
   },
@@ -1178,6 +1199,7 @@ describe("every server operation is listed here", () => {
     const exported = [
       ...Object.keys(staff).map((name) => `staff.${name}`),
       ...Object.keys(activityLog).map((name) => `activityLog.${name}`),
+      ...Object.keys(analysis).map((name) => `analysis.${name}`),
       ...Object.keys(settings).map((name) => `settings.${name}`),
       ...Object.keys(catalog).map((name) => `catalog.${name}`),
       ...Object.keys(setup).map((name) => `setup.${name}`),
@@ -1194,7 +1216,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(approvals).map((name) => `approvals.${name}`),
       ...Object.keys(offline).map((name) => `offline.${name}`),
       ...Object.keys(returns).map((name) => `returns.${name}`),
-      ...Object.keys(reports).map((name) => `reports.${name}`),
+      ...Object.keys(reports).filter((name) => !["rangeOf", "madeIn", "periodSchema"].includes(name)).map((name) => `reports.${name}`),
       ...Object.keys(exports).map((name) => `exports.${name}`),
       ...Object.keys(importHistory).map((name) => `importHistory.${name}`),
       ...Object.keys(imports).filter((name) => name !== "importNumber" && name !== "OPENING_STOCK_SUPPLIER").map((name) => `imports.${name}`),

@@ -1092,7 +1092,7 @@ export function Checkout({
                   <p className={catalogue.canAllowOverLimit ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
                     {catalogue.canAllowOverLimit
                       ? "This takes the customer over their credit limit. You are allowed to let it through; it will be recorded."
-                      : `Over the customer's limit: only ${formatNaira(room!)} more can go on credit. A manager or admin can allow more.`}
+                      : `Over the customer's limit: only ${formatNaira(room!)} more can go on credit. An admin can allow more.`}
                   </p>
                 )}
                 {creditApproved && (

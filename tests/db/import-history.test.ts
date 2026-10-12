@@ -84,8 +84,8 @@ const history = (): { deliveries: Rows; sales: Rows } => ({
   ],
   sales: [
     { date: typed(day2), receipt: "0459", code: "A-001", unit: "pack", quantity: "4", price: "900", paidBy: "Cash" },
-    { date: typed(day1), time: "09:10", receipt: "0458", code: "TOM-001", unit: "carton", quantity: "1", price: "44000", discount: "500", paidBy: "bank transfer", customerPhone: "08031112222", onCredit: "20000", soldBy: "Ngozi" },
-    { date: typed(day1), time: "09:10", receipt: "0458", code: "a-001", unit: "single", quantity: "5", price: "100", discount: "500", paidBy: "Bank transfer", soldBy: "Ngozi" },
+    { date: typed(day1), time: "09:10", receipt: "0458", code: "TOM-001", unit: "carton", quantity: "1", price: "44000", discount: "500", paidBy: "bank transfer", customerPhone: "08031112222", onCredit: "20000", soldBy: "test a.cashier" },
+    { date: typed(day1), time: "09:10", receipt: "0458", code: "a-001", unit: "single", quantity: "5", price: "100", discount: "500", paidBy: "Bank transfer", soldBy: "test a.cashier" },
     { date: typed(day0), time: "14:35", receipt: "0457", code: "TOM-001", unit: "sachet", quantity: "50", price: "500", paidBy: "Cash" },
   ],
 });
@@ -156,11 +156,13 @@ describe("bringing in deliveries and sales", () => {
     const sales = (await listSales(world.a.as.MANAGER)).sales;
     expect(sales.map((sale) => [sale.receiptNumber, sale.total, sale.cashierName])).toEqual([
       ["IMP-0459", "3600.00", "Brought in from Excel"],
-      ["IMP-0458", "44000.00", "Ngozi"],
+      ["IMP-0458", "44000.00", "Test a.cashier"],
       ["IMP-0457", "25000.00", "Brought in from Excel"],
     ]);
     const first = await db.sale.findFirstOrThrow({ where: { receiptNumber: "IMP-0457" }, include: { payments: true, lines: true } });
     expect(first).toMatchObject({ tillSessionId: null, offline: false, cashierUserId: null, importRunId: done.id, terminalId: world.a.terminalId });
+    // A sale with a name under Sold by is filed under that staff member.
+    expect((await db.sale.findFirstOrThrow({ where: { receiptNumber: "IMP-0458" } })).cashierUserId).toBe(world.a.staff.CASHIER.id);
     expect(first.sequence).toBeGreaterThan(2_000_000_000);
     expect(first.createdAt.getTime()).toBe(moment(day0, 14, 35).getTime());
     expect(first.costTotal.toFixed(2)).toBe("19000.00");
@@ -297,13 +299,15 @@ describe("bringing in deliveries and sales", () => {
         sale({ receipt: "11", quantity: "1.5" }), // 16: half a sachet
         sale({ receipt: "12345678901234567" }), // 17: number too long
         sale({ receipt: "12", price: "" }), // 18: no price
+        sale({ receipt: "13", soldBy: "Somebody Else" }), // 19: not one of the staff
+        sale({ receipt: "14", soldBy: "A.MANAGER" }), // (a username, in any capitals, is fine)
       ],
     });
     const preview = await previewHistoryImport(world.a.as.ADMIN, about, file);
     expect(preview.canImport).toBe(false);
     expect(preview.problems.map((problem) => `${problem.sheet} ${problem.row}`)).toEqual([
       "Deliveries 4", "Deliveries 5", "Deliveries 6", "Deliveries 7", "Deliveries 8", "Deliveries 9",
-      "Sales 4", "Sales 5", "Sales 7", "Sales 9", "Sales 10", "Sales 11", "Sales 12", "Sales 13", "Sales 14", "Sales 15", "Sales 16", "Sales 17", "Sales 18",
+      "Sales 4", "Sales 5", "Sales 7", "Sales 9", "Sales 10", "Sales 11", "Sales 12", "Sales 13", "Sales 14", "Sales 15", "Sales 16", "Sales 17", "Sales 18", "Sales 19",
     ]);
     const said = (sheet: string, row: number) => preview.problems.find((problem) => problem.sheet === sheet && problem.row === row)!.message;
     expect(said("Deliveries", 4)).toMatch(/is before the day the records start/);
@@ -317,8 +321,9 @@ describe("bringing in deliveries and sales", () => {
     expect(said("Sales", 13)).toBe("The amount on credit, ₦501.00, is more than receipt 8 comes to (₦500.00).");
     expect(said("Sales", 14)).toBe("The discount of ₦501.00 is more than receipt 9 comes to (₦500.00).");
     expect(said("Sales", 15)).toMatch(/is not a time/);
+    expect(said("Sales", 19)).toMatch(/^"Somebody Else" under Sold by is not one of this shop's staff\. Use a staff member's full name or username exactly as on the Staff page \(.*Test a\.cashier.*\), add them on the Staff page first, or leave the cell empty\.$/);
 
-    expect((await refusal(runHistoryImport(world.a.as.ADMIN, about, file))).message).toBe("Nothing was brought in: the workbook has 19 problems. Correct them in Excel and upload it again.");
+    expect((await refusal(runHistoryImport(world.a.as.ADMIN, about, file))).message).toBe("Nothing was brought in: the workbook has 20 problems. Correct them in Excel and upload it again.");
     expect(await counts()).toEqual(before);
     // A workbook with only the other three sheets has nothing for this step.
     expect((await refusal(previewHistoryImport(world.a.as.ADMIN, about, await makeWorkbook({ products: [{ code: "X", name: "X", unit: "x", contains: "1" }] })))).message).toMatch(/Nothing to bring in/);

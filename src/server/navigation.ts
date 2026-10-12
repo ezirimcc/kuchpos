@@ -21,13 +21,9 @@ const BUSINESS_MENU: NavEntry[] = [
     label: "Reports",
     icon: "reports",
     href: "/reports",
-    anyOf: [
-      "report.sales.view",
-      "report.collections.view",
-      "report.ownShift.view",
-      "report.stock.view",
-      "report.customerDebt.view",
-    ],
+    // Opening the Reports pages is a permission of its own (C70): a manager has several of
+    // the reports' permissions for other screens, but not this one.
+    anyOf: ["report.pages.view"],
   },
   { label: "Staff", icon: "staff", href: "/staff", anyOf: ["staff.manage"] },
   { label: "Activity log", icon: "activity", href: "/activity", anyOf: ["activityLog.view"] },

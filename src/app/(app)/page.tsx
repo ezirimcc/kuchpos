@@ -17,6 +17,7 @@ import {
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ColumnChart } from "@/components/charts";
+import { HomeAnalysis } from "./home-analysis";
 import { formatDateTime, formatShortDay, nairaFromText, plainNumber, shopGreeting } from "@/lib/format";
 import { requirePageContext } from "@/server/auth/request";
 import { getDashboard } from "@/server/business/dashboard";
@@ -79,8 +80,10 @@ function Stat({
   );
 }
 
-export default async function HomePage() {
+export default async function HomePage({ searchParams }: PageProps<"/">) {
   const context = await requirePageContext();
+  const params = await searchParams;
+  const chosen = (name: string) => (typeof params[name] === "string" ? (params[name] as string) : "");
   // An owner with no business open starts at the list of businesses.
   if (!context.business) redirect("/owner/businesses");
 
@@ -168,6 +171,8 @@ export default async function HomePage() {
           </div>
         ))}
       </div>
+
+      {can(context, "dashboard.analysis.view") && <HomeAnalysis context={context} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />}
 
       {snapshot.salesTrend !== null && snapshot.salesTrend.some((point) => point.total !== "0.00") && (
         <ColumnChart

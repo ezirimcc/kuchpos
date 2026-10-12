@@ -156,7 +156,7 @@ async function workOutWhatIsAsked(context: AppContext, data: z.infer<typeof askS
   if (!customer) throw new ValidationError(NOT_APPROVED, { creditAmount: "Choose the customer first." });
   if (customer.creditLimit === null) {
     throw new ValidationError(NOT_APPROVED, {
-      creditAmount: `${customer.name} cannot buy on credit yet. An admin or manager must first give them a credit limit.`,
+      creditAmount: `${customer.name} cannot buy on credit yet. An admin must first give them a credit limit.`,
     });
   }
   let credit: Decimal;

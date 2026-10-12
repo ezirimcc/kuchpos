@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DeleteForm } from "@/components/delete-form";
 import { ActionForm, CheckboxField, SelectField, SubmitButton, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,8 @@ import { can } from "@/server/permissions";
 import {
   addUnitAction,
   retireUnitAction,
+  deleteProductAction,
+  deleteUnitAction,
   setProductActiveAction,
   setUnitPriceAction,
   setUnitUsageAction,
@@ -183,6 +186,11 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
                           </SubmitButton>
                         </ActionForm>
                       )}
+                      {data.deletableUnitIds.includes(unit.id) && (
+                        <div className="mt-2">
+                          <DeleteForm action={deleteUnitAction} fields={{ unitId: unit.id }} what={`the unit "${unit.name}" of ${product.name}`} />
+                        </div>
+                      )}
                     </TableCell>
                   )}
                 </TableRow>
@@ -243,9 +251,17 @@ export default async function ProductPage({ params }: PageProps<"/products/[prod
                 </SubmitButton>
               </ActionForm>
               <p className="mt-1 text-xs text-muted-foreground">
-                Products are never deleted. One that is out of use is hidden from the list and cannot be sold.
+                A product that has been received or sold is never deleted. One that is out of use is hidden from the list and cannot be sold.
               </p>
             </div>
+            {data.canDelete && (
+              <div className="mt-4 border-t pt-4">
+                <DeleteForm action={deleteProductAction} fields={{ productId: product.id }} what={`the product "${product.name}"`} />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  This product has never been received, counted or sold, so it can be deleted for good, with its units and prices.
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -325,6 +325,16 @@ const OPERATIONS: Operation[] = [
       staff.setStaffDisabled(context, { userId: world.b.staff.STOREKEEPER.id, disabled: true }),
   },
   {
+    name: "staff.deleteStaff",
+    allowed: BUSINESS_ADMINS,
+    // Deleting is only for records that were never used, so a fresh one is made each time.
+    run: async (context) => {
+      const idle = await createUser({ username: `idle.${randomUUID().slice(0, 8)}`, role: "CASHIER", businessId: world.a.id });
+      return staff.deleteStaff(context, { userId: idle.id });
+    },
+    runAgainstB: (context) => staff.deleteStaff(context, { userId: world.b.staff.STOREKEEPER.id }),
+  },
+  {
     name: "staff.resetStaffPassword",
     allowed: BUSINESS_ADMINS,
     run: (context) =>
@@ -376,6 +386,15 @@ const OPERATIONS: Operation[] = [
     allowed: RECEIVERS,
     run: (context) => suppliers.setSupplierActive(context, { supplierId: world.a.supplierId, active: false }),
     runAgainstB: (context) => suppliers.setSupplierActive(context, { supplierId: world.b.supplierId, active: false }),
+  },
+  {
+    name: "suppliers.deleteSupplier",
+    allowed: RECEIVERS,
+    run: async (context) => {
+      const spare = await getDb().supplier.create({ data: { businessId: world.a.id, name: `Spare ${randomUUID().slice(0, 8)}` }, select: { id: true } });
+      return suppliers.deleteSupplier(context, { supplierId: spare.id });
+    },
+    runAgainstB: (context) => suppliers.deleteSupplier(context, { supplierId: world.b.supplierId }),
   },
   {
     name: "stock.getReceivingOptions",
@@ -731,6 +750,12 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => paymentMethods.setPaymentMethodActive(context, { methodId: world.b.transferMethodId, active: false }),
   },
   {
+    name: "paymentMethods.deletePaymentMethod",
+    allowed: BUSINESS_ADMINS,
+    run: (context) => paymentMethods.deletePaymentMethod(context, { methodId: world.a.transferMethodId }),
+    runAgainstB: (context) => paymentMethods.deletePaymentMethod(context, { methodId: world.b.transferMethodId }),
+  },
+  {
     name: "till.getTill",
     allowed: SELLERS,
     run: (context) => till.getTill(context, { terminalId: world.a.terminalId }),
@@ -821,6 +846,15 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => customers.setCustomerActive(context, { customerId: customerInB, active: false }),
   },
   {
+    name: "customers.deleteCustomer",
+    allowed: CUSTOMER_KEEPERS,
+    run: async (context) => {
+      const spare = await getDb().customer.create({ data: { businessId: world.a.id, name: "Spare Customer", phone: `0809${Math.floor(1000000 + Math.random() * 8999999)}` }, select: { id: true } });
+      return customers.deleteCustomer(context, { customerId: spare.id });
+    },
+    runAgainstB: (context) => customers.deleteCustomer(context, { customerId: customerInB }),
+  },
+  {
     name: "customers.setCreditLimit",
     allowed: PRODUCT_MANAGERS,
     run: (context) => customers.setCreditLimit(context, { customerId: customerInA, creditLimit: "5000" }),
@@ -907,6 +941,16 @@ const OPERATIONS: Operation[] = [
     run: (context) => setup.setTerminalActive(context, { terminalId: world.a.terminalId, active: false }),
     runAgainstB: (context) => setup.setTerminalActive(context, { terminalId: world.b.terminalId, active: false }),
   },
+  {
+    name: "setup.deleteTerminal",
+    allowed: BUSINESS_ADMINS,
+    // A business keeps at least one terminal, so a second, unused one is made to be deleted.
+    run: async (context) => {
+      const spare = await getDb().terminal.create({ data: { businessId: world.a.id, code: "T9", name: "Spare" }, select: { id: true } });
+      return setup.deleteTerminal(context, { terminalId: spare.id });
+    },
+    runAgainstB: (context) => setup.deleteTerminal(context, { terminalId: world.b.terminalId }),
+  },
   // --- Products and prices (SPEC §5: "Products & prices") ---
   {
     name: "dashboard.getDashboard",
@@ -976,6 +1020,18 @@ const OPERATIONS: Operation[] = [
     runAgainstB: (context) => catalog.setProductActive(context, { productId: world.b.product.id, active: false }),
   },
   {
+    name: "catalog.deleteProduct",
+    allowed: PRODUCT_MANAGERS,
+    run: async (context) => {
+      const spare = await getDb().product.create({
+        data: { businessId: world.a.id, name: `Spare ${randomUUID().slice(0, 8)}`, allowsFraction: false, units: { create: [{ businessId: world.a.id, name: "single", activeName: "single", factor: "1", isBase: true, price: "100.00" }] } },
+        select: { id: true },
+      });
+      return catalog.deleteProduct(context, { productId: spare.id });
+    },
+    runAgainstB: (context) => catalog.deleteProduct(context, { productId: world.b.product.id }),
+  },
+  {
     name: "catalog.addUnit",
     allowed: PRODUCT_MANAGERS,
     run: (context) =>
@@ -1016,6 +1072,15 @@ const OPERATIONS: Operation[] = [
     allowed: PRODUCT_MANAGERS,
     run: (context) => catalog.retireUnit(context, { unitId: world.a.product.packUnitId }),
     runAgainstB: (context) => catalog.retireUnit(context, { unitId: world.b.product.packUnitId }),
+  },
+  {
+    name: "catalog.deleteUnit",
+    allowed: PRODUCT_MANAGERS,
+    run: async (context) => {
+      const spare = await getDb().productUnit.create({ data: { businessId: world.a.id, productId: world.a.product.id, name: "spare", activeName: "spare", factor: "7", forSale: false }, select: { id: true } });
+      return catalog.deleteUnit(context, { unitId: spare.id });
+    },
+    runAgainstB: (context) => catalog.deleteUnit(context, { unitId: world.b.product.packUnitId }),
   },
   // --- Activity log (SPEC §5: "View activity log") ---
   {

@@ -14,6 +14,7 @@ import {
 import { businessDb } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { authorize, BUSINESS_ROLES, type BusinessRole, ROLE_LABELS } from "@/server/permissions";
+import { isStillReferred, usersWhoDidSomething } from "@/server/usage";
 
 /** Staff accounts of the business in use. Every query goes through the scoped client. */
 
@@ -31,15 +32,19 @@ export type StaffSummary = {
   role: BusinessRole;
   active: boolean;
   createdAt: Date;
+  /** True for an account that has done no work at all (and is not one's own): it may be deleted (C67). */
+  canDelete: boolean;
 };
 
 export async function listStaff(context: AppContext): Promise<StaffSummary[]> {
   authorize(context, "staff.manage");
-  const rows = await businessDb(context).user.findMany({
+  const db = businessDb(context);
+  const rows = await db.user.findMany({
     // Active accounts first (MariaDB sorts empty "disabledAt" values first), then by name.
     orderBy: [{ disabledAt: "asc" }, { name: "asc" }],
     select: { id: true, name: true, username: true, role: true, disabledAt: true, createdAt: true },
   });
+  const busy = await usersWhoDidSomething(db, rows.map((row) => row.id));
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -47,6 +52,7 @@ export async function listStaff(context: AppContext): Promise<StaffSummary[]> {
     role: row.role as BusinessRole,
     active: row.disabledAt === null,
     createdAt: row.createdAt,
+    canDelete: row.id !== context.actor.userId && !busy.has(row.id),
   }));
 }
 
@@ -109,7 +115,7 @@ export async function setStaffRole(context: AppContext, input: unknown): Promise
 
 const setStaffDisabledSchema = z.object({ userId: userIdSchema, disabled: z.boolean() });
 
-/** Disabling an account signs the person out everywhere, immediately. Accounts are never deleted. */
+/** Disabling an account signs the person out everywhere, immediately. An account that has done any work is never deleted. */
 export async function setStaffDisabled(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "staff.manage");
   const data = parseInput(setStaffDisabledSchema, input);
@@ -167,4 +173,43 @@ export async function resetStaffPassword(context: AppContext, input: unknown): P
       }),
     });
   });
+}
+
+const STAFF_WAS_USED = "This account cannot be deleted because it has been used: records carry this person's name. Disable it instead.";
+
+/**
+ * Deletes, for good, a staff account that has done no work (C67): nothing made, approved or
+ * received, and nothing in the activity log beyond signing in and looking after its own
+ * password or name. Anything more and the account can only be disabled. Nobody deletes
+ * their own account.
+ */
+export async function deleteStaff(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "staff.manage");
+  const data = parseInput(z.object({ userId: userIdSchema }), input);
+  if (data.userId === context.actor.userId) {
+    throw new ValidationError("You cannot delete your own account. Ask another admin or the owner.");
+  }
+
+  try {
+    await businessDb(context).$transaction(async (tx) => {
+      const staff = await tx.user.findFirst({ where: { id: data.userId } });
+      if (!staff) throw new NotFoundError(STAFF_NOT_FOUND);
+      if ((await usersWhoDidSomething(tx, [staff.id])).has(staff.id)) throw new ValidationError(STAFF_WAS_USED);
+
+      // Sessions and the sign-in record go with the account. Its sign-ins stay in the activity
+      // log under its name; the database only empties their link to the account.
+      await tx.user.delete({ where: { id: staff.id } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "staff.deleted",
+          summary: `${context.actor.name} deleted the account "${staff.username}" (${staff.name}, ${ROLE_LABELS[staff.role as BusinessRole]}), which had never been used.`,
+          targetType: "user",
+          targetId: staff.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isStillReferred(error)) throw new ValidationError(STAFF_WAS_USED);
+    throw error;
+  }
 }

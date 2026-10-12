@@ -112,7 +112,6 @@ describe("database update tool for the hosting server", () => {
         "document_counter_only_up",
         "payment_method_no_delete",
         "payment_method_kind_fixed",
-        "customer_no_delete",
       ].sort(),
     );
 

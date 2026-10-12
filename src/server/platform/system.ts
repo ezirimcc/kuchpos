@@ -80,7 +80,6 @@ const OTHER_TRIGGERS = [
   // A payment method is never deleted and never changes kind.
   "payment_method_no_delete",
   "payment_method_kind_fixed",
-  "customer_no_delete",
 ];
 
 /** Limits written into the database itself (CHECK constraints). */

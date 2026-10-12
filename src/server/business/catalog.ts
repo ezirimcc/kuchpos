@@ -9,7 +9,8 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { factorText, moneyText, optionalText, yesNo } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
-import { authorize } from "@/server/permissions";
+import { authorize, can } from "@/server/permissions";
+import { isStillReferred, productWasUsed, unitWasUsed, usedAmong } from "@/server/usage";
 import { formatNaira } from "@/lib/money";
 
 /**
@@ -201,7 +202,7 @@ const productIdSchema = z.object({ productId: z.string().uuid(PRODUCT_NOT_FOUND)
 export async function getProduct(
   context: AppContext,
   input: unknown,
-): Promise<{ product: ProductView; priceHistory: PriceChangeView[] }> {
+): Promise<{ product: ProductView; priceHistory: PriceChangeView[]; canDelete: boolean; deletableUnitIds: string[] }> {
   authorize(context, "price.view");
   const { productId } = parseInput(productIdSchema, input);
   const db = businessDb(context);
@@ -219,8 +220,15 @@ export async function getProduct(
     select: { id: true, createdAt: true, unitName: true, oldPrice: true, newPrice: true, changedByName: true },
   });
 
+  // A unit (never the base unit) that is on no delivery, transfer, adjustment or sale may be deleted (C67).
+  const spare = can(context, "product.manage") ? row.units.filter((unit) => !unit.isBase).map((unit) => unit.id) : [];
+  const usedUnits = await usedAmong(spare, (id) => unitWasUsed(db, id));
+
   return {
     product: productView(row),
+    deletableUnitIds: spare.filter((id) => !usedUnits.has(id)),
+    // A product that was never received, counted, sold or moved may be deleted (C67).
+    canDelete: can(context, "product.manage") && !(await productWasUsed(db, productId)),
     priceHistory: history.map((entry) => ({
       id: entry.id,
       createdAt: entry.createdAt,
@@ -570,7 +578,7 @@ export async function updateProduct(context: AppContext, input: unknown): Promis
 
 const setProductActiveSchema = z.object({ productId: z.string().uuid(PRODUCT_NOT_FOUND), active: z.boolean() });
 
-/** Takes a product out of use, or brings it back. Products are never deleted. */
+/** Takes a product out of use, or brings it back. A product that has been used is never deleted. */
 export async function setProductActive(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "product.manage");
   const data = parseInput(setProductActiveSchema, input);
@@ -593,6 +601,40 @@ export async function setProductActive(context: AppContext, input: unknown): Pro
       }),
     });
   });
+}
+
+const PRODUCT_WAS_USED = "This product cannot be deleted because it has been used: stock or sales records refer to it. Take it out of use instead.";
+
+/**
+ * Deletes, for good, a product that was never used (C67): never received, counted, adjusted,
+ * transferred, sold or returned. Its units and its price history go with it. A product that
+ * has any such record can only be taken out of use — the database refuses to delete it.
+ */
+export async function deleteProduct(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "product.manage");
+  const { productId } = parseInput(productIdSchema, input);
+
+  try {
+    await businessDb(context).$transaction(async (tx) => {
+      const product = await tx.product.findFirst({ where: { id: productId }, select: { id: true, name: true, code: true } });
+      if (!product) throw new NotFoundError(PRODUCT_NOT_FOUND);
+      if (await productWasUsed(tx, product.id)) throw new ValidationError(PRODUCT_WAS_USED);
+
+      await tx.productUnit.deleteMany({ where: { productId: product.id } });
+      await tx.product.delete({ where: { id: product.id } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "product.deleted",
+          summary: `${context.actor.name} deleted the product "${product.name}"${product.code ? ` (${product.code})` : ""}, which had never been used.`,
+          targetType: "product",
+          targetId: product.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isStillReferred(error)) throw new ValidationError(PRODUCT_WAS_USED);
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -819,6 +861,44 @@ export async function setUnitUsage(context: AppContext, input: unknown): Promise
 }
 
 const retireUnitSchema = z.object({ unitId: unitIdSchema });
+
+const UNIT_WAS_USED = "This unit cannot be deleted because it has been used: deliveries, transfers, adjustments or sales were recorded in it. Retire it instead.";
+
+/**
+ * Deletes, for good, a unit that was never used (C67): on no delivery, transfer, adjustment or
+ * sale. Its price history goes with it. A unit that has been used can only be retired (the
+ * database refuses to delete it), and the base unit is never deleted.
+ */
+export async function deleteUnit(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "product.manage");
+  const data = parseInput(retireUnitSchema, input);
+  const db = businessDb(context);
+
+  const unit = await findUnit(db, data.unitId);
+  if (unit.isBase) throw new ValidationError("The base unit cannot be deleted: everything about the product is counted in it.");
+
+  try {
+    await db.$transaction(async (tx) => {
+      if (await unitWasUsed(tx, unit.id)) throw new ValidationError(UNIT_WAS_USED);
+      await tx.productUnit.delete({ where: { id: unit.id } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "product.unit_deleted",
+          summary: `${context.actor.name} deleted the unit "${unit.name}" of "${unit.product.name}", which had never been used.`,
+          targetType: "product",
+          targetId: unit.productId,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isStillReferred(error)) throw new ValidationError(UNIT_WAS_USED);
+    // Deleted from another screen at the same moment.
+    if (typeof error === "object" && error !== null && (error as { code?: string }).code === "P2025") return;
+    throw error;
+  }
+}
+
+
 
 /** Stops a unit being used. Its past records keep their meaning; a new unit may reuse the name. */
 export async function retireUnit(context: AppContext, input: unknown): Promise<void> {

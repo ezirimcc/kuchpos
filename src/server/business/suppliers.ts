@@ -7,7 +7,8 @@ import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
-import { authorize } from "@/server/permissions";
+import { authorize, can } from "@/server/permissions";
+import { isStillReferred, supplierWasUsed, usedAmong } from "@/server/usage";
 
 /** The companies and people the business in use buys goods from. */
 
@@ -21,15 +22,20 @@ export type SupplierView = {
   note: string | null;
   active: boolean;
   deliveries: number;
+  /** True for a supplier named on no delivery, for someone who manages suppliers: it may be deleted (C67). */
+  canDelete: boolean;
 };
 
 /** Every supplier, in name order, with how many deliveries each has made. */
 export async function listSuppliers(context: AppContext): Promise<SupplierView[]> {
   authorize(context, "stock.receipts.view");
-  const rows = await businessDb(context).supplier.findMany({
+  const db = businessDb(context);
+  const rows = await db.supplier.findMany({
     orderBy: [{ deactivatedAt: "asc" }, { name: "asc" }],
     select: { id: true, name: true, phone: true, note: true, deactivatedAt: true, _count: { select: { goodsReceipts: true } } },
   });
+  // "Used" also counts an earlier version of a delivery that has since been corrected to another supplier.
+  const used = can(context, "supplier.manage") ? await usedAmong(rows.filter((row) => row._count.goodsReceipts === 0).map((row) => row.id), (id) => supplierWasUsed(db, id)) : null;
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -37,6 +43,7 @@ export async function listSuppliers(context: AppContext): Promise<SupplierView[]
     note: row.note,
     active: row.deactivatedAt === null,
     deliveries: row._count.goodsReceipts,
+    canDelete: used !== null && row._count.goodsReceipts === 0 && !used.has(row.id),
   }));
 }
 
@@ -113,7 +120,7 @@ export async function updateSupplier(context: AppContext, input: unknown): Promi
   }
 }
 
-/** Takes a supplier out of use, or brings it back. Suppliers are never deleted. */
+/** Takes a supplier out of use, or brings it back. A supplier named on a delivery is never deleted. */
 export async function setSupplierActive(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "supplier.manage");
   const data = parseInput(z.object({ supplierId: idSchema, active: z.boolean() }), input);
@@ -136,4 +143,33 @@ export async function setSupplierActive(context: AppContext, input: unknown): Pr
       }),
     });
   });
+}
+
+const SUPPLIER_WAS_USED = "This supplier cannot be deleted because deliveries are recorded from them. Take them out of use instead.";
+
+/** Deletes, for good, a supplier who is named on no delivery (C67). Any other can only be taken out of use. */
+export async function deleteSupplier(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "supplier.manage");
+  const data = parseInput(z.object({ supplierId: idSchema }), input);
+
+  try {
+    await businessDb(context).$transaction(async (tx) => {
+      const supplier = await tx.supplier.findFirst({ where: { id: data.supplierId }, select: { id: true, name: true } });
+      if (!supplier) throw new NotFoundError(NOT_FOUND);
+      if (await supplierWasUsed(tx, supplier.id)) throw new ValidationError(SUPPLIER_WAS_USED);
+
+      await tx.supplier.delete({ where: { id: supplier.id } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "supplier.deleted",
+          summary: `${context.actor.name} deleted the supplier "${supplier.name}", who had no deliveries.`,
+          targetType: "supplier",
+          targetId: supplier.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isStillReferred(error)) throw new ValidationError(SUPPLIER_WAS_USED);
+    throw error;
+  }
 }

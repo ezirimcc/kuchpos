@@ -1,5 +1,6 @@
 import { Truck } from "lucide-react";
 import type { Metadata } from "next";
+import { DeleteForm } from "@/components/delete-form";
 import { ActionForm, SubmitButton, TextField } from "@/components/action-form";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { requirePagePermission } from "@/server/auth/request";
 import { listSuppliers } from "@/server/business/suppliers";
 import { can } from "@/server/permissions";
-import { createSupplierAction, setSupplierActiveAction, updateSupplierAction } from "../actions";
+import { createSupplierAction, deleteSupplierAction, setSupplierActiveAction, updateSupplierAction } from "../actions";
 import { StockTabs } from "../stock-tabs";
 
 export const metadata: Metadata = { title: "Suppliers — KuchPos" };
@@ -88,6 +89,11 @@ export default async function SuppliersPage() {
                         {supplier.active ? "Take out of use" : "Bring back"}
                       </SubmitButton>
                     </ActionForm>
+                    {supplier.canDelete && (
+                      <div className="mt-2">
+                        <DeleteForm action={deleteSupplierAction} fields={{ supplierId: supplier.id }} what={`the supplier "${supplier.name}"`} />
+                      </div>
+                    )}
                   </TableCell>
                 )}
               </TableRow>

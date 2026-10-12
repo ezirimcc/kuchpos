@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect } from "@/components/ui/native-select";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DeleteForm } from "@/components/delete-form";
 import { PageHeader } from "@/components/page-header";
 import { requirePagePermission } from "@/server/auth/request";
 import { listStaff } from "@/server/business/staff";
@@ -13,6 +14,7 @@ import { BUSINESS_ROLES, ROLE_LABELS } from "@/server/permissions";
 import {
   createStaffAction,
   resetStaffPasswordAction,
+  deleteStaffAction,
   setStaffDisabledAction,
   setStaffRoleAction,
 } from "./actions";
@@ -137,6 +139,11 @@ export default async function StaffPage() {
                         {person.active ? "Disable" : "Re-enable"}
                       </SubmitButton>
                     </ActionForm>
+                  )}
+                  {person.canDelete && (
+                    <div className="mt-2">
+                      <DeleteForm action={deleteStaffAction} fields={{ userId: person.id }} what={`the account "${person.username}" (${person.name})`} />
+                    </div>
                   )}
                 </TableCell>
               </TableRow>

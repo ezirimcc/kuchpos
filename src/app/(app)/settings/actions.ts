@@ -2,9 +2,9 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
-import { createPaymentMethod, renamePaymentMethod, setPaymentMethodActive } from "@/server/business/payment-methods";
+import { createPaymentMethod, deletePaymentMethod, renamePaymentMethod, setPaymentMethodActive } from "@/server/business/payment-methods";
 import { setExpiringSoonMonths, setIdleSignOutMinutes, setReceiptPrinting, setReceiptText, setReturnDays, setTaxRate } from "@/server/business/settings";
-import { createTerminal, renameLocation, setTerminalActive, updateTerminal } from "@/server/business/setup";
+import { createTerminal, deleteTerminal, renameLocation, setTerminalActive, updateTerminal } from "@/server/business/setup";
 
 export async function setIdleSignOutAction(_previous: FormState, formData: FormData): Promise<FormState> {
   return runAction({ success: "Automatic sign-out time saved." }, (context) =>
@@ -92,4 +92,12 @@ export async function setPaymentMethodActiveAction(_previous: FormState, formDat
   return runAction({ success: active ? "Payment method switched on." : "Payment method switched off." }, (context) =>
     setPaymentMethodActive(context, { methodId: field(formData, "methodId"), active }),
   );
+}
+
+export async function deletePaymentMethodAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Payment method deleted." }, (context) => deletePaymentMethod(context, { methodId: field(formData, "methodId") }));
+}
+
+export async function deleteTerminalAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Terminal deleted." }, (context) => deleteTerminal(context, { terminalId: field(formData, "terminalId") }));
 }

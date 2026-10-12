@@ -7,6 +7,7 @@ import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { authorize } from "@/server/permissions";
+import { isStillReferred, terminalWasUsed, usedAmong } from "@/server/usage";
 
 /** Stock locations and checkout terminals of the business in use. */
 
@@ -19,6 +20,8 @@ export type TerminalView = {
   name: string;
   paperWidth: "MM58" | "MM80";
   active: boolean;
+  /** True for a terminal that never made a sale or had a till opened, while another terminal remains: it may be deleted (C67). */
+  canDelete: boolean;
 };
 
 export async function getSetup(
@@ -33,9 +36,11 @@ export async function getSetup(
       select: { id: true, code: true, name: true, paperWidth: true, deactivatedAt: true },
     }),
   ]);
+  const used = await usedAmong(terminals.map((terminal) => terminal.id), (id) => terminalWasUsed(db, id));
   return {
     locations,
     terminals: terminals.map((terminal) => ({
+      canDelete: terminals.length > 1 && !used.has(terminal.id),
       id: terminal.id,
       code: terminal.code,
       name: terminal.name,
@@ -156,7 +161,7 @@ const setTerminalActiveSchema = z.object({
   active: z.boolean(),
 });
 
-/** Takes a terminal out of use, or brings it back. Terminals are never deleted. */
+/** Takes a terminal out of use, or brings it back. A terminal that has been used is never deleted. */
 export async function setTerminalActive(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "setup.manage");
   const data = parseInput(setTerminalActiveSchema, input);
@@ -179,4 +184,37 @@ export async function setTerminalActive(context: AppContext, input: unknown): Pr
       }),
     });
   });
+}
+
+const TERMINAL_WAS_USED = "This terminal cannot be deleted because sales or till sessions were made on it. Take it out of use instead.";
+
+/**
+ * Deletes, for good, a checkout terminal that never made a sale or had a till opened (C67).
+ * A business always keeps at least one terminal; one that was used can only be taken out of use.
+ */
+export async function deleteTerminal(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "setup.manage");
+  const data = parseInput(z.object({ terminalId: z.string().uuid("That terminal could not be found.") }), input);
+
+  try {
+    await businessDb(context).$transaction(async (tx) => {
+      const terminal = await tx.terminal.findFirst({ where: { id: data.terminalId }, select: { id: true, code: true, name: true } });
+      if (!terminal) throw new NotFoundError("That terminal could not be found.");
+      if (await terminalWasUsed(tx, terminal.id)) throw new ValidationError(TERMINAL_WAS_USED);
+      if ((await tx.terminal.count()) <= 1) throw new ValidationError("This is the business's only checkout terminal, so it cannot be deleted.");
+
+      await tx.terminal.delete({ where: { id: terminal.id } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "terminal.deleted",
+          summary: `${context.actor.name} deleted the terminal "${terminal.code}" (${terminal.name}), which had never been used.`,
+          targetType: "terminal",
+          targetId: terminal.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isStillReferred(error)) throw new ValidationError(TERMINAL_WAS_USED);
+    throw error;
+  }
 }

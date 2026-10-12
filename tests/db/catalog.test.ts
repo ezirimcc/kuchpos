@@ -279,6 +279,7 @@ describe("units keep their meaning", () => {
     const catalog = await import("@/server/business/catalog");
     expect(Object.keys(catalog).filter((name) => /unit/i.test(name)).sort()).toEqual([
       "addUnit",
+      "deleteUnit",
       "retireUnit",
       "setUnitPrice",
       "setUnitUsage",

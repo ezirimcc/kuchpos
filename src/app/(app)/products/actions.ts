@@ -10,6 +10,8 @@ import {
   removeCategory,
   renameCategory,
   retireUnit,
+  deleteProduct,
+  deleteUnit,
   setProductActive,
   setUnitPrice,
   setUnitUsage,
@@ -112,4 +114,15 @@ export async function removeCategoryAction(_previous: FormState, formData: FormD
   return runAction({ success: "Category removed." }, (context) =>
     removeCategory(context, { categoryId: field(formData, "categoryId") }),
   );
+}
+
+export async function deleteProductAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const result = await runAction({ success: "Product deleted." }, (context) => deleteProduct(context, { productId: field(formData, "productId") }));
+  // The product's own page no longer exists.
+  if (result.status === "success") redirect("/products");
+  return result;
+}
+
+export async function deleteUnitAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Unit deleted." }, (context) => deleteUnit(context, { unitId: field(formData, "unitId") }));
 }

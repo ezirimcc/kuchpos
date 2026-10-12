@@ -120,7 +120,7 @@ describe("customer records", () => {
     expect((await listCustomers(world.a.as.CASHIER, { search: "chi" })).customers.map((customer) => customer.phone)).toEqual(["+2348090000000"]);
   });
 
-  it("can be edited and taken out of use, never deleted; the list is searched by name, phone or city", async () => {
+  it("can be edited and taken out of use; the list is searched by name, phone or city", async () => {
     await updateCustomer(world.a.as.MANAGER, { customerId: bola, name: "Bola Adeyemi", phone: "08055550000", address: "", city: "Lagos", state: "Lagos" });
     const find = async (input: Record<string, string>) => (await listCustomers(world.a.as.CASHIER, input)).customers.map((customer) => customer.name);
     expect(await find({})).toEqual(["Ada Okafor", "Bola Adeyemi"]);
@@ -133,7 +133,7 @@ describe("customer records", () => {
     expect((await getCustomer(world.a.as.CASHIER, { customerId: bola })).active).toBe(false);
     expect((await getCheckoutCatalogue(world.a.as.CASHIER)).customers.map((customer) => customer.name)).toEqual(["Ada Okafor"]);
     expect((await refusal(sell(1, { customerId: bola, cash: "100.00" }))).fieldErrors).toHaveProperty("customerId");
-    await expect(getDb().customer.delete({ where: { id: bola } })).rejects.toThrow();
+    // (Deleting — only for a customer with no record at all — is tested in deletions.test.ts.)
 
     const actions = (await getDb().activityLog.findMany({ where: { action: { startsWith: "customer." } }, orderBy: { createdAt: "asc" } })).map((entry) => entry.action);
     expect(actions).toEqual(["customer.created", "customer.created", "customer.credit_limit_changed", "customer.updated", "customer.deactivated"]);

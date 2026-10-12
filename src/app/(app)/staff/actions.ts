@@ -2,7 +2,7 @@
 
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
-import { createStaff, resetStaffPassword, setStaffDisabled, setStaffRole } from "@/server/business/staff";
+import { createStaff, deleteStaff, resetStaffPassword, setStaffDisabled, setStaffRole } from "@/server/business/staff";
 
 export async function createStaffAction(_previous: FormState, formData: FormData): Promise<FormState> {
   return runAction({ success: "Staff account created." }, (context) =>
@@ -33,4 +33,8 @@ export async function resetStaffPasswordAction(_previous: FormState, formData: F
   return runAction({ success: "Password changed. The person has been signed out." }, (context) =>
     resetStaffPassword(context, { userId: field(formData, "userId"), password: field(formData, "password") }),
   );
+}
+
+export async function deleteStaffAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Account deleted." }, (context) => deleteStaff(context, { userId: field(formData, "userId") }));
 }

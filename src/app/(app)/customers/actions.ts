@@ -1,8 +1,9 @@
 "use server";
 
+import { redirect } from "next/navigation";
 import type { FormState } from "@/lib/form-state";
 import { field, runAction } from "@/server/action";
-import { createCustomer, recordRepayment, setCreditLimit, setCustomerActive, updateCustomer } from "@/server/business/customers";
+import { createCustomer, deleteCustomer, recordRepayment, setCreditLimit, setCustomerActive, updateCustomer } from "@/server/business/customers";
 
 function details(formData: FormData) {
   return {
@@ -54,4 +55,11 @@ export async function setCreditLimitAction(_previous: FormState, formData: FormD
 /** Records money received against a customer's debt. */
 export async function recordRepaymentAction(input: unknown): Promise<FormState> {
   return runAction({ success: "Repayment saved." }, (context) => recordRepayment(context, input));
+}
+
+export async function deleteCustomerAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  const result = await runAction({ success: "Customer deleted." }, (context) => deleteCustomer(context, { customerId: field(formData, "customerId") }));
+  // The customer's own page no longer exists.
+  if (result.status === "success") redirect("/customers");
+  return result;
 }

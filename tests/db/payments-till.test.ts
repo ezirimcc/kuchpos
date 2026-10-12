@@ -110,7 +110,8 @@ describe("payment methods", () => {
     await expect(renamePaymentMethod(world.a.as.ADMIN, { methodId: world.b.transferMethodId, name: "Mine now" })).rejects.toBeInstanceOf(NotFoundError);
 
     const db = getDb();
-    await expect(db.paymentMethod.delete({ where: { id: world.a.transferMethodId } })).rejects.toThrow();
+    // The built-in Cash can never be deleted. (Deleting a method that was never used is tested in deletions.test.ts.)
+    await expect(db.paymentMethod.delete({ where: { id: world.a.cashMethodId } })).rejects.toThrow();
     await expect(db.paymentMethod.update({ where: { id: world.a.transferMethodId }, data: { kind: "CASH" } })).rejects.toThrow();
     await expect(db.paymentMethod.update({ where: { id: world.a.cashMethodId }, data: { deactivatedAt: new Date() } })).rejects.toThrow();
   });

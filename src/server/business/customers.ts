@@ -14,6 +14,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { authorize, can } from "@/server/permissions";
+import { customerWasUsed, isStillReferred } from "@/server/usage";
 
 /**
  * Customers of the business in use, what they owe, and their repayments.
@@ -284,7 +285,7 @@ const setActiveSchema = z.object({ customerId: z.string().uuid(NOT_FOUND), activ
 
 /**
  * Takes a customer out of use (no longer offered at checkout) or brings them back.
- * A customer is never deleted, and one who still owes money can still repay.
+ * A customer with any record is never deleted, and one who still owes money can still repay.
  */
 export async function setCustomerActive(context: AppContext, input: unknown): Promise<void> {
   authorize(context, "customer.manage");
@@ -305,6 +306,39 @@ export async function setCustomerActive(context: AppContext, input: unknown): Pr
       }),
     });
   });
+}
+
+const CUSTOMER_WAS_USED = "This customer cannot be deleted because they have records: a sale, a debt or a repayment. Take them out of use instead.";
+
+/**
+ * Deletes, for good, a customer who has no record (C67): no sale, no line on their account,
+ * no repayment, nothing owed. The history of their credit limit goes with them. A customer
+ * with any record can only be taken out of use — the database refuses to delete them.
+ */
+export async function deleteCustomer(context: AppContext, input: unknown): Promise<void> {
+  authorize(context, "customer.manage");
+  const { customerId } = parseInput(customerIdSchema, input);
+
+  try {
+    await businessDb(context).$transaction(async (tx) => {
+      const customer = await tx.customer.findFirst({ where: { id: customerId }, select: { id: true, name: true, phone: true, balance: true } });
+      if (!customer) throw new NotFoundError(NOT_FOUND);
+      if (!customer.balance.isZero() || (await customerWasUsed(tx, customer.id))) throw new ValidationError(CUSTOMER_WAS_USED);
+
+      await tx.customer.delete({ where: { id: customer.id } });
+      await tx.activityLog.create({
+        data: activityRow(context, {
+          action: "customer.deleted",
+          summary: `${context.actor.name} deleted the customer "${customer.name}" (${customer.phone}), who had no records.`,
+          targetType: "customer",
+          targetId: customer.id,
+        }),
+      });
+    });
+  } catch (error) {
+    if (isStillReferred(error)) throw new ValidationError(CUSTOMER_WAS_USED);
+    throw error;
+  }
 }
 
 const creditLimitSchema = z.object({
@@ -382,6 +416,8 @@ export type CustomerDetail = Omit<CustomerSummary, "purchases" | "visits"> & {
   /** How much more the customer may take on credit; null when they have no credit. */
   availableCredit: string | null;
   canManage: boolean;
+  /** True for a customer with no record at all, for someone who manages customers: they may be deleted (C67). */
+  canDelete: boolean;
   canSetCreditLimit: boolean;
   canRecordRepayment: boolean;
   /** True when this person may see the statement and the unpaid sales (a cashier sees the balance only). */
@@ -452,6 +488,8 @@ export async function getCustomer(context: AppContext, input: unknown): Promise<
     availableCredit: limit ? moneyToString(Decimal.max(limit.minus(balance), 0)) : null,
     active: row.deactivatedAt === null,
     canManage: can(context, "customer.manage"),
+    // A customer with no sale, account line or repayment may be deleted (C67).
+    canDelete: can(context, "customer.manage") && balance.isZero() && !(await customerWasUsed(db, row.id)),
     canSetCreditLimit: can(context, "customer.setCreditLimit"),
     canRecordRepayment: can(context, "repayment.record"),
     canSeeStatement: seesStatement,

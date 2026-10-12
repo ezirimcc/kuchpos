@@ -78,5 +78,6 @@ export async function emptyAllTables(db: PrismaClient): Promise<void> {
     } finally {
       await tx.$executeRawUnsafe("SET FOREIGN_KEY_CHECKS = 1");
     }
-  });
+    // Emptying some sixty tables can take longer than the usual five seconds on a busy computer.
+  }, { timeout: 60_000, maxWait: 20_000 });
 }

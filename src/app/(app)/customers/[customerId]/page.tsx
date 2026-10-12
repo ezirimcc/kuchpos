@@ -2,6 +2,7 @@ import { ArrowLeft, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { DeleteForm } from "@/components/delete-form";
 import { ActionForm, SubmitButton, TextField } from "@/components/action-form";
 import { PageHeader } from "@/components/page-header";
 import { Pagination } from "@/components/pagination";
@@ -12,7 +13,7 @@ import { formatDateTime, nairaFromText } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { getCustomer, getCustomerStatement, getRepaymentOptions } from "@/server/business/customers";
 import { NotFoundError, ValidationError } from "@/server/errors";
-import { setCreditLimitAction, setCustomerActiveAction, updateCustomerAction } from "../actions";
+import { deleteCustomerAction, setCreditLimitAction, setCustomerActiveAction, updateCustomerAction } from "../actions";
 import { CustomerFields } from "../customer-fields";
 import { RepaymentForm } from "./repayment-form";
 
@@ -220,8 +221,14 @@ export default async function CustomerPage({ params, searchParams }: PageProps<"
                 </SubmitButton>
               </ActionForm>
               <p className="mt-1.5 text-xs text-muted-foreground">
-                A customer out of use is no longer offered at checkout. They are never deleted, and can still repay what they owe.
+                A customer out of use is no longer offered at checkout. A customer with any sale or debt is never deleted, and can still repay what they owe.
               </p>
+              {customer.canDelete && (
+                <div className="mt-4">
+                  <DeleteForm action={deleteCustomerAction} fields={{ customerId: customer.id }} what={`the customer "${customer.name}"`} />
+                  <p className="mt-1.5 text-xs text-muted-foreground">This customer has no sale, debt or repayment on record, so they can be deleted for good.</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

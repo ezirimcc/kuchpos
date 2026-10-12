@@ -1,6 +1,7 @@
 import { Settings } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { DeleteForm } from "@/components/delete-form";
 import { ActionForm, CheckboxField, SelectField, SubmitButton, TextAreaField, TextField } from "@/components/action-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,8 @@ import {
   setExpiringSoonAction,
   setIdleSignOutAction,
   createPaymentMethodAction,
+  deletePaymentMethodAction,
+  deleteTerminalAction,
   renamePaymentMethodAction,
   setPaymentMethodActiveAction,
   setReceiptPrintingAction,
@@ -248,6 +251,11 @@ export default async function SettingsPage() {
                         </SubmitButton>
                       </ActionForm>
                     )}
+                    {method.canDelete && (
+                      <div className="mt-2">
+                        <DeleteForm action={deletePaymentMethodAction} fields={{ methodId: method.id }} what={`the payment method "${method.name}"`} />
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -319,6 +327,11 @@ export default async function SettingsPage() {
                         {terminal.active ? "Take out of use" : "Bring back"}
                       </SubmitButton>
                     </ActionForm>
+                    {terminal.canDelete && (
+                      <div className="mt-2">
+                        <DeleteForm action={deleteTerminalAction} fields={{ terminalId: terminal.id }} what={`the terminal "${terminal.code}"`} />
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

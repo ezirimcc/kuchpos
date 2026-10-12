@@ -6,7 +6,7 @@ import { adjustFromCount, decideAdjustment, recordAdjustment } from "@/server/bu
 import { submitCount } from "@/server/business/counts";
 import { correctReceipt } from "@/server/business/receipt-corrections";
 import { receiveGoods } from "@/server/business/stock";
-import { createSupplier, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
+import { createSupplier, deleteSupplier, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
 import { transferStock } from "@/server/business/transfers";
 
 /** Saves a delivery. On success the answer carries the new delivery's id so the screen can open it. */
@@ -103,4 +103,8 @@ export async function setSupplierActiveAction(_previous: FormState, formData: Fo
   return runAction({ success: active ? "Supplier brought back." : "Supplier taken out of use." }, (context) =>
     setSupplierActive(context, { supplierId: field(formData, "supplierId"), active }),
   );
+}
+
+export async function deleteSupplierAction(_previous: FormState, formData: FormData): Promise<FormState> {
+  return runAction({ success: "Supplier deleted." }, (context) => deleteSupplier(context, { supplierId: field(formData, "supplierId") }));
 }

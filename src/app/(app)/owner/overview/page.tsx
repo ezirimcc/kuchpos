@@ -2,6 +2,7 @@ import { ChartNoAxesCombined } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { PeriodLinks, periodText } from "@/app/(app)/reports/report-parts";
+import { BarList } from "@/components/charts";
 import { FilterDate } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
@@ -47,6 +48,10 @@ export default async function OwnerOverviewPage({ searchParams }: PageProps<"/ow
           <FilterDate name="to" label="To" />
         </Suspense>
       </div>
+
+      {rows.length > 1 && (
+        <BarList testId="overview-chart" title="Net sales, business by business" points={rows.map((row) => ({ label: row.name, value: row.netSales, shown: nairaFromText(row.netSales) }))} />
+      )}
 
       <Table>
         <TableHeader>

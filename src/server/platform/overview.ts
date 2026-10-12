@@ -20,7 +20,7 @@ import { authorize } from "@/server/permissions";
  * was made, net sales = sales − refunds for returns.
  */
 
-const MAX_DAYS = 366;
+const MAX_DAYS = 5 * 366;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const schema = z.object({
@@ -54,7 +54,7 @@ export async function getOwnerOverview(
   const from = dayToDate(data.from) ? data.from : `${to.slice(0, 8)}01`;
   if (from > to) throw new ValidationError("The first day of the period is after the last day.");
   const days = Math.round((dayToDate(to)!.getTime() - dayToDate(from)!.getTime()) / DAY_MS) + 1;
-  if (days > MAX_DAYS) throw new ValidationError("The overview can cover at most a year. Choose a shorter period.");
+  if (days > MAX_DAYS) throw new ValidationError("The overview can cover at most five years. Choose a shorter period.");
   const inRange = { gte: shopDayStart(from)!, lt: shopDayEnd(to)! };
 
   const db = getDb();

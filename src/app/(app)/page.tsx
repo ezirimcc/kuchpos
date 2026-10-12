@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { formatDateTime, nairaFromText, plainNumber, shopGreeting } from "@/lib/format";
+import { ColumnChart } from "@/components/charts";
+import { formatDateTime, formatShortDay, nairaFromText, plainNumber, shopGreeting } from "@/lib/format";
 import { requirePageContext } from "@/server/auth/request";
 import { getDashboard } from "@/server/business/dashboard";
 import { can, type Permission, ROLE_LABELS } from "@/server/permissions";
@@ -167,6 +168,14 @@ export default async function HomePage() {
           </div>
         ))}
       </div>
+
+      {snapshot.salesTrend !== null && snapshot.salesTrend.some((point) => point.total !== "0.00") && (
+        <ColumnChart
+          testId="home-sales-chart"
+          title="Sales, last 14 days"
+          points={snapshot.salesTrend.map((point) => ({ label: formatShortDay(point.day), value: point.total, shown: nairaFromText(point.total) }))}
+        />
+      )}
 
       <div className="grid gap-3 xl:grid-cols-5">
         <section className="rounded-3xl bg-card p-6 xl:col-span-2 dark:border dark:border-border">

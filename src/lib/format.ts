@@ -85,6 +85,21 @@ export function dateToDay(date: Date): string {
 
 const dayFormat = new Intl.DateTimeFormat("en-NG", { timeZone: "UTC", day: "numeric", month: "short", year: "numeric" });
 
+const monthFormat = new Intl.DateTimeFormat("en-NG", { timeZone: "UTC", month: "short", year: "numeric" });
+const shortDayFormat = new Intl.DateTimeFormat("en-NG", { timeZone: "UTC", day: "numeric", month: "short" });
+
+/** A month "YYYY-MM" for reading, e.g. "Oct 2026". */
+export function formatMonth(month: string): string {
+  const date = dayToDate(`${month}-01`);
+  return date ? monthFormat.format(date) : month;
+}
+
+/** A calendar day without its year, for the narrow space under a chart: "3 Oct". */
+export function formatShortDay(day: string): string {
+  const date = dayToDate(day);
+  return date ? shortDayFormat.format(date) : day;
+}
+
 /** A calendar day "YYYY-MM-DD" for reading, e.g. "3 Oct 2026". */
 export function formatDay(day: string): string {
   const date = dayToDate(day);

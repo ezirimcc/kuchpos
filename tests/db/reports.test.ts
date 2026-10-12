@@ -150,10 +150,17 @@ describe("the sales report", () => {
     expect((await getSalesReport(world.a.as.ADMIN, { ...day, by: "nonsense" })).by).toBe("day");
   });
 
-  it("covers this month so far when no dates are given, and at most a year", async () => {
+  it("covers this month so far when no dates are given, and at most five years", async () => {
     const report = await getSalesReport(world.a.as.ADMIN);
     expect(report.period).toMatchObject({ from: `${today.slice(0, 8)}01`, to: today });
     await expect(getSalesReport(world.a.as.ADMIN, { from: "2020-01-01", to: today })).rejects.toBeInstanceOf(ValidationError);
+    // Two years is fine (C69), and the same sales can be read month by month.
+    const twoYears = `${Number.parseInt(today.slice(0, 4), 10) - 2}${today.slice(4)}`;
+    const long = await getSalesReport(world.a.as.ADMIN, { from: twoYears, to: today, by: "month" });
+    const whole = await getSalesReport(world.a.as.ADMIN, { from: twoYears, to: today });
+    expect(long.by).toBe("month");
+    expect(long.rows.map((row) => row.key)).toEqual([...new Set(whole.rows.map((row) => row.key.slice(0, 7)))]);
+    expect(long.summary).toEqual(whole.summary);
     await expect(getSalesReport(world.a.as.ADMIN, { from: today, to: yesterday })).rejects.toBeInstanceOf(ValidationError);
   });
 });

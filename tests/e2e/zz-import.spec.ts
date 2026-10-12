@@ -104,6 +104,14 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
   await expect(page.getByTestId("imported-notice")).toContainText("brought in from the shop's Excel records");
   await expect(page.getByTestId("imported-notice")).toContainText('20 piece of "Excel Hoe" was sold, but the system held only 15 in');
 
+  // The reports draw what came in (C69): bars by product, and the last 14 days on the home page.
+  await gotoReady(page, "/reports/sales?by=product");
+  await expect(page.getByTestId("sales-chart")).toContainText("Net sales by product");
+  await expect(page.getByTestId("sales-chart").getByTestId("chart-bar")).toHaveCount(2);
+  await expect(page.getByTestId("period-links").getByRole("link", { name: "Last 12 months" })).toBeVisible();
+  await gotoReady(page, "/");
+  await expect(page.getByTestId("home-sales-chart").getByTestId("chart-column")).toHaveCount(14);
+
   // What came in is there.
   await gotoReady(page, "/customers?q=Excel+Farms");
   await expect(page.getByRole("row", { name: /Excel Farms Ltd/ })).toContainText("₦26,000.00");

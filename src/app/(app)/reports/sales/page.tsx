@@ -1,12 +1,13 @@
 import { ChartColumn } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
+import { BarList, ColumnChart } from "@/components/charts";
 import { FilterDate, FilterSelect } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Decimal } from "@/lib/decimal";
-import { formatDay, nairaFromText } from "@/lib/format";
+import { formatDay, formatMonth, formatShortDay, nairaFromText } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { getSalesReport, type SalesGrouping } from "@/server/business/reports";
 import { ValidationError } from "@/server/errors";
@@ -16,6 +17,7 @@ export const metadata: Metadata = { title: "Sales report — KuchPos" };
 
 const GROUPS: { value: SalesGrouping; label: string; column: string }[] = [
   { value: "day", label: "By day", column: "Day" },
+  { value: "month", label: "By month", column: "Month" },
   { value: "product", label: "By product", column: "Product" },
   { value: "category", label: "By category", column: "Category" },
   { value: "cashier", label: "By cashier", column: "Cashier" },
@@ -70,6 +72,11 @@ export default async function SalesReportPage({ searchParams }: PageProps<"/repo
   const group = GROUPS.find((entry) => entry.value === report.by)!;
   const largest = rows.reduce((most, row) => Decimal.max(most, new Decimal(row.net).abs()), new Decimal(0));
   const rate = (value: string | null) => (value === null ? "—" : `${value}%`);
+  const overTime = report.by === "day" || report.by === "month" || report.by === "hour";
+  const label = (row: (typeof rows)[number]) => (report.by === "day" ? formatDay(row.label) : report.by === "month" ? formatMonth(row.label) : row.label);
+  const chartLabel = (row: (typeof rows)[number]) => (report.by === "day" ? formatShortDay(row.label) : report.by === "month" ? formatMonth(row.label) : report.by === "hour" ? row.label.slice(0, 2) : row.label);
+  const points = rows.map((row) => ({ label: chartLabel(row), value: row.net, shown: nairaFromText(row.net) }));
+  const TOP = 10;
 
   return (
     <div className="flex flex-col gap-5">
@@ -150,6 +157,25 @@ export default async function SalesReportPage({ searchParams }: PageProps<"/repo
         </div>
       </Suspense>
 
+      {rows.length > 1 && overTime && (
+        <ColumnChart
+          testId="sales-chart"
+          title={report.by === "hour" ? "Net sales by hour of the day" : report.by === "month" ? "Net sales, month by month" : "Net sales, day by day"}
+          points={points}
+        />
+      )}
+      {rows.length > 1 && !overTime && (
+        <BarList
+          testId="sales-chart"
+          title={`Net sales ${group.label.toLowerCase()}`}
+          note={rows.length > TOP ? `The ${TOP} largest of ${rows.length}; all are in the table below.` : undefined}
+          points={points.slice(0, TOP)}
+        />
+      )}
+      {report.by === "day" && period.days > 92 && (
+        <p className="text-xs text-muted-foreground">This is a long period. “By month” under Break down gives a shorter table and a clearer chart.</p>
+      )}
+
       {rows.length === 0 ? (
         <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">Nothing was sold in this period.</p>
       ) : (
@@ -170,7 +196,7 @@ export default async function SalesReportPage({ searchParams }: PageProps<"/repo
           <TableBody>
             {rows.map((row) => (
               <TableRow key={row.key} data-testid="sales-report-row">
-                <TableCell className="font-medium">{report.by === "day" ? formatDay(row.label) : row.label}</TableCell>
+                <TableCell className="font-medium">{label(row)}</TableCell>
                 <TableCell className="text-right tabular-nums">{row.salesCount}</TableCell>
                 <TableCell className="text-right tabular-nums">{nairaFromText(row.sales)}</TableCell>
                 <TableCell className="text-right text-muted-foreground tabular-nums">{row.refunds === "0.00" ? "—" : `−${nairaFromText(row.refunds)}`}</TableCell>

@@ -1,3 +1,4 @@
+import { BarList } from "@/components/charts";
 import { HandCoins } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
@@ -68,6 +69,10 @@ export default async function CollectionsReportPage({ searchParams }: PageProps<
           <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{nairaFromText(totals.refunded)}</p>
         </div>
       </div>
+
+      {rows.length > 1 && (
+        <BarList testId="collections-chart" title="Net received, by how it was paid" points={rows.map((row) => ({ label: row.methodName, value: row.net, shown: nairaFromText(row.net) }))} />
+      )}
 
       {rows.length === 0 ? (
         <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">No money was received in this period.</p>

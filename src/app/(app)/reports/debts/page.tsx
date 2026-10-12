@@ -1,3 +1,4 @@
+import { ShareBar } from "@/components/charts";
 import { Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -43,6 +44,19 @@ export default async function DebtReportPage() {
           </div>
         ))}
       </div>
+
+      {rows.length > 0 && (
+        <ShareBar
+          testId="debts-chart"
+          title="What is owed, by how long it has been owed"
+          parts={[
+            { label: "Up to 30 days", value: totals.current, shown: nairaFromText(totals.current), tone: 1 },
+            { label: "31 to 60 days", value: totals.days31, shown: nairaFromText(totals.days31), tone: 2 },
+            { label: "61 to 90 days", value: totals.days61, shown: nairaFromText(totals.days61), tone: 3 },
+            { label: "Over 90 days", value: totals.older, shown: nairaFromText(totals.older), tone: 4 },
+          ]}
+        />
+      )}
 
       {rows.length === 0 ? (
         <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">Nobody owes anything.</p>

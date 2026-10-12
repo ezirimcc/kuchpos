@@ -45,7 +45,7 @@ export function ReportTabs({ context, current }: { context: AppContext; current:
 const DAY_MS = 24 * 60 * 60 * 1000;
 const dayBefore = (day: string, count: number) => new Date(new Date(`${day}T00:00:00.000Z`).getTime() - count * DAY_MS).toISOString().slice(0, 10);
 
-/** Ready-made periods, in shop days: today, yesterday, the last 7 days, this month, last month. */
+/** Ready-made periods, in shop days: from today back to the last twelve months. */
 export function quickPeriods(): { label: string; from: string; to: string }[] {
   const today = shopToday();
   const monthStart = `${today.slice(0, 8)}01`;
@@ -56,6 +56,9 @@ export function quickPeriods(): { label: string; from: string; to: string }[] {
     { label: "Last 7 days", from: dayBefore(today, 6), to: today },
     { label: "This month", from: monthStart, to: today },
     { label: "Last month", from: `${lastMonthEnd.slice(0, 8)}01`, to: lastMonthEnd },
+    { label: "Last 30 days", from: dayBefore(today, 29), to: today },
+    { label: "This year", from: `${today.slice(0, 4)}-01-01`, to: today },
+    { label: "Last 12 months", from: dayBefore(today, 364), to: today },
   ];
 }
 

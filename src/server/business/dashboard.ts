@@ -29,11 +29,16 @@ export type DashboardSnapshot = {
    * report, the person's own for a cashier, nothing for anyone else.
    */
   salesToday: { count: number; total: string; ownOnly: boolean } | null;
+  /** Sales of each of the last 14 shop days, oldest first, for the chart — those who may read the sales report. */
+  salesTrend: { day: string; total: string }[] | null;
   /** Money received since the start of the shop's day, and how much of it was cash — collections report readers. */
   collectedToday: { total: string; cash: string } | null;
   /** What all customers owe the business now — customer-debt report readers. */
   owedByCustomers: { total: string; customers: number } | null;
 };
+
+const TREND_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export async function getDashboard(context: AppContext): Promise<DashboardSnapshot> {
   authorize(context, "price.view");
@@ -105,7 +110,24 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     ? { total: moneyToString(net(() => true)), cash: moneyToString(net((kind) => kind === "CASH")) }
     : null;
 
+  // The last 14 shop days, for the chart on the home page. Cancelled sales are left out.
+  let salesTrend: DashboardSnapshot["salesTrend"] = null;
+  if (seesAllSales) {
+    const days = Array.from({ length: TREND_DAYS }, (_, index) => shopToday(new Date(startOfToday.getTime() - (TREND_DAYS - 1 - index) * DAY_MS)));
+    const recent = await db.sale.findMany({
+      where: { createdAt: { gte: new Date(startOfToday.getTime() - (TREND_DAYS - 1) * DAY_MS) }, cancellation: null },
+      select: { total: true, createdAt: true },
+    });
+    const perDay = new Map(days.map((day) => [day, new Decimal(0)]));
+    for (const sale of recent) {
+      const day = shopToday(sale.createdAt);
+      if (perDay.has(day)) perDay.set(day, perDay.get(day)!.plus(sale.total.toFixed(2)));
+    }
+    salesTrend = days.map((day) => ({ day, total: moneyToString(perDay.get(day)!) }));
+  }
+
   return {
+    salesTrend,
     products,
     categories,
     taxRatePercent: business?.taxRatePercent.toFixed(2) ?? "0.00",

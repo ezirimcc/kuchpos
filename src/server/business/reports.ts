@@ -28,7 +28,8 @@ import { authorize, can } from "@/server/permissions";
 type Db = ReturnType<typeof businessDb>;
 const ZERO = new Decimal(0);
 const SHOP_OFFSET_MS = 60 * 60 * 1000; // Africa/Lagos is one hour ahead of UTC all year.
-const MAX_DAYS = 366;
+/** Five years (C69). Figures are added up from the period's rows; see CLAUDE.md before raising it further. */
+const MAX_DAYS = 5 * 366;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const periodSchema = z.object({
@@ -39,14 +40,14 @@ const periodSchema = z.object({
 export type Period = { from: string; to: string; days: number };
 type Range = Period & { start: Date; end: Date };
 
-/** The period asked for (whole shop days); this month so far when nothing is asked. At most a year. */
+/** The period asked for (whole shop days); this month so far when nothing is asked. At most five years. */
 function rangeOf(input: { from: string; to: string }): Range {
   const today = shopToday();
   const to = dayToDate(input.to) ? input.to : today;
   const from = dayToDate(input.from) ? input.from : dayToDate(input.to) ? input.to.slice(0, 8) + "01" : today.slice(0, 8) + "01";
   if (from > to) throw new ValidationError("The first day of the period is after the last day.", { from: "Choose a first day on or before the last day." });
   const days = Math.round((dayToDate(to)!.getTime() - dayToDate(from)!.getTime()) / DAY_MS) + 1;
-  if (days > MAX_DAYS) throw new ValidationError("A report can cover at most a year. Choose a shorter period.", { from: "At most a year." });
+  if (days > MAX_DAYS) throw new ValidationError("A report can cover at most five years. Choose a shorter period.", { from: "At most five years." });
   return { from, to, days, start: shopDayStart(from)!, end: shopDayEnd(to)! };
 }
 
@@ -72,7 +73,7 @@ const percent = (part: Decimal, whole: Decimal) => (whole.greaterThan(0) ? part.
 // Sales
 // ---------------------------------------------------------------------------
 
-const SALES_GROUPS = ["day", "product", "category", "cashier", "hour", "method"] as const;
+const SALES_GROUPS = ["day", "month", "product", "category", "cashier", "hour", "method"] as const;
 export type SalesGrouping = (typeof SALES_GROUPS)[number];
 
 export type SalesSummary = {
@@ -254,6 +255,7 @@ export async function getSalesReport(
   for (const sale of facts.sales) {
     const whole = (key: string, label: string) => addSale(key, label, sale.id, money(sale.total), money(sale.costTotal));
     if (by === "day") whole(shopToday(madeAt(sale)), shopToday(madeAt(sale)));
+    else if (by === "month") whole(shopToday(madeAt(sale)).slice(0, 7), shopToday(madeAt(sale)).slice(0, 7));
     else if (by === "cashier") whole(sale.cashierUserId ?? sale.cashierName, sale.cashierName);
     else if (by === "hour") whole(String(hourOf(madeAt(sale))).padStart(2, "0"), hourLabel(hourOf(madeAt(sale))));
     else if (by === "method") {
@@ -270,6 +272,7 @@ export async function getSalesReport(
   for (const entry of facts.returns) {
     const whole = (key: string, label: string) => addRefund(key, label, money(entry.refundTotal), money(entry.restockedCost));
     if (by === "day") whole(shopToday(entry.createdAt), shopToday(entry.createdAt));
+    else if (by === "month") whole(shopToday(entry.createdAt).slice(0, 7), shopToday(entry.createdAt).slice(0, 7));
     else if (by === "cashier") whole(entry.sale.cashierUserId ?? entry.sale.cashierName, entry.sale.cashierName);
     else if (by === "hour") whole(String(hourOf(entry.createdAt)).padStart(2, "0"), hourLabel(hourOf(entry.createdAt)));
     else if (by === "method") {
@@ -285,7 +288,7 @@ export async function getSalesReport(
 
   // Days and hours in their own order; everything else, the biggest first.
   const ordered = [...buckets.entries()].sort(([keyA, a], [keyB, b]) =>
-    by === "day" || by === "hour" ? keyA.localeCompare(keyB) : b.sales.minus(b.refunds).comparedTo(a.sales.minus(a.refunds)) || a.label.localeCompare(b.label),
+    by === "day" || by === "month" || by === "hour" ? keyA.localeCompare(keyB) : b.sales.minus(b.refunds).comparedTo(a.sales.minus(a.refunds)) || a.label.localeCompare(b.label),
   );
   const withCost = seesCost && by !== "method";
   return {
@@ -952,7 +955,7 @@ export async function exportReport(context: AppContext, input: unknown): Promise
 
   if (report === "sales") {
     const data = await getSalesReport(context, filters);
-    const titles: Record<SalesGrouping, string> = { day: "Day", product: "Product", category: "Category", cashier: "Cashier", hour: "Hour", method: "Paid by" };
+    const titles: Record<SalesGrouping, string> = { day: "Day", month: "Month", product: "Product", category: "Category", cashier: "Cashier", hour: "Hour", method: "Paid by" };
     return {
       filename: `sales-by-${data.by}_${stamp(data.period)}.csv`,
       header: [titles[data.by], "Sales (count)", "Sales", "Refunds for returns", "Net sales", ...(data.showsCost ? ["Cost", "Profit", "Margin %"] : [])],

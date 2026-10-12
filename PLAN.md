@@ -321,7 +321,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 ## Phase D — Reports and go-live
 
-### M14 · Reports and exports (built 2026-10-10 in two parts; waiting for the owner's check)
+### M14 · Reports and exports ✅ (uploaded 2026-10-12, tag `m14`)
 **Goal:** Requirement C12.
 - Per business: sales, collections, stock on hand, stock movement, customer debt (with ageing), discounts & approvals, expiring soon, offline exceptions, activity log. Date and other filters. CSV export.
 - Owner overview: every business side by side (sales, collections, outstanding debt).
@@ -336,7 +336,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **You do:** Answer Q18 (accountant's export format) before this starts.
 
-### M15 · Import from Excel
+### M15 · Import from Excel ✅ (uploaded 2026-10-12, tag `m15`)
 **Goal:** Requirement C20 — an admin can load existing records instead of typing them.
 - Choose the spreadsheet-reading library after checking current documentation.
 - Downloadable templates for: products with units and prices; opening stock per location; customers; customers' opening debts.

@@ -106,6 +106,12 @@ test("a product that uses batch and expiry must give them, and then shows under 
   await expect(expiring).toContainText("Liquid Herbicide");
   await expect(expiring).toContainText("LH-2026-09");
   await expect(expiring).toContainText("20 litre");
+  // Inside the usual three months it is marked in red; it can be found by its batch; and the list can look further ahead (C71).
+  await expect(expiring.first()).toHaveAttribute("data-soon", "yes");
+  await page.getByLabel("How far ahead to look").selectOption({ label: "Within 12 months" });
+  await expect(page).toHaveURL(/months=12/);
+  await page.getByLabel("Search expiring stock").fill("no such batch");
+  await expect(page.getByText("Nothing expiring matches that search.")).toBeVisible();
 });
 
 test("the admin changes how far ahead 'expiring soon' looks", async ({ page }) => {

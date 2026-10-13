@@ -71,6 +71,23 @@ describe("a product sold in several units, each with its own price", () => {
     ]);
   });
 
+  it("makes a code from the name when none is typed: three letters and the next number (C71)", async () => {
+    const admin = world.a.as.ADMIN;
+    const make = async (name: string, code = "") => (await getProduct(admin, { productId: (await createProduct(admin, { ...sachet, name, code })).id })).product.code;
+    expect(await make("Tomato Paste Tin")).toBe("TOM-001");
+    expect(await make("Tomato Seed Hybrid")).toBe("TOM-002");
+    // A typed code is kept as typed, and counts if it is in the same style.
+    expect(await make("Tomato Stakes", "tom-010")).toBe("tom-010");
+    expect(await make("Tomato Net")).toBe("TOM-011");
+    expect(await make("2,4-D Amine")).toBe("DAM-001");
+    // Another business counts for itself.
+    const inB = await createProduct(world.b.as.ADMIN, { ...sachet, name: "Tomato Paste Tin", code: "" });
+    expect((await getProduct(world.b.as.ADMIN, { productId: inB.id })).product.code).toBe("TOM-001");
+    // Two at the same moment are both saved, with different numbers.
+    const [one, two] = await Promise.all([make("Hoe Long"), make("Hoe Short")]);
+    expect([one, two].sort()).toEqual(["HOE-001", "HOE-002"]);
+  });
+
   it("holds a weighed product: kilogram base, a 50 kg bag, a 0.25 kg sachet", async () => {
     const admin = world.a.as.ADMIN;
     const { id } = await createProduct(admin, fertilizer);

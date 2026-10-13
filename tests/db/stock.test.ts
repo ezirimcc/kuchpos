@@ -14,7 +14,7 @@ import {
 } from "@/server/business/stock";
 import { createSupplier, listSuppliers, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
 import { getDb } from "@/server/db/client";
-import { ValidationError } from "@/server/errors";
+import { ForbiddenError, ValidationError } from "@/server/errors";
 import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
 
 let world: World;
@@ -418,6 +418,38 @@ describe("expiring soon", () => {
       await expect(setExpiringSoonMonths(world.a.as.ADMIN, { months }), months).rejects.toBeInstanceOf(ValidationError);
     }
     await expect(getDb().business.update({ where: { id: world.a.id }, data: { expiringSoonMonths: 0 } })).rejects.toThrow();
+  });
+
+  it("can look further ahead, be searched by product or batch, and be sorted; what is inside the usual period is marked (C71)", async () => {
+    const today = shopToday();
+    await receiveWithExpiry(addMonths(today, 2), "SOON-22");
+    await receiveWithExpiry(addMonths(today, 5), "LATER-55");
+    await receiveWithExpiry(addMonths(today, -1), "GONE-00");
+    // A bigger, dearer delivery of the same product that expires later still.
+    const product = await getDb().product.findFirstOrThrow({ where: { name: "NPK Fertilizer", businessId: world.a.id } });
+    const bag = await getDb().productUnit.findFirstOrThrow({ where: { productId: product.id, name: "bag" } });
+    await receiveGoods(world.a.as.ADMIN, delivery([{ productId: product.id, unitId: bag.id, quantity: "4", unitCost: "41000", batchNumber: "BIG-99", expiryDate: addMonths(today, 9) }]));
+
+    // The usual three months: two rows, both marked.
+    const usual = await listExpiringSoon(world.a.as.ADMIN);
+    expect(usual).toMatchObject({ months: 3, usualMonths: 3, sort: "expiry", showsValue: true });
+    expect(usual.rows.map((row) => [row.batchNumber, row.soon, row.expired, row.monthsLeft])).toEqual([["GONE-00", true, true, 0], ["SOON-22", true, false, 2]]);
+
+    // A year ahead: all four, soonest first; only those inside three months are marked.
+    const year = await listExpiringSoon(world.a.as.ADMIN, { months: "12" });
+    expect(year.months).toBe(12);
+    expect(year.rows.map((row) => [row.batchNumber, row.soon, row.monthsLeft])).toEqual([["GONE-00", true, 0], ["SOON-22", true, 2], ["LATER-55", false, 5], ["BIG-99", false, 9]]);
+    // By quantity and by value, the big delivery leads. The figures are what was delivered.
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", sort: "quantity" })).rows[0]).toMatchObject({ batchNumber: "BIG-99", quantity: "4.000", unitName: "bag", value: "164000.00" });
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", sort: "value" })).rows.map((row) => row.value)).toEqual(["164000.00", "40000.00", "40000.00", "40000.00"]);
+    // Search by batch or by product; anything odd for months or sort falls back to the usual.
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", search: "later" })).rows.map((row) => row.batchNumber)).toEqual(["LATER-55"]);
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", search: "npk" })).total).toBe(4);
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", search: "no such thing" })).rows).toEqual([]);
+    expect(await listExpiringSoon(world.a.as.ADMIN, { months: "7", sort: "sideways" })).toMatchObject({ months: 3, sort: "expiry" });
+    // The storekeeper sees deliveries with their costs (C36); a cashier may not open the list at all.
+    expect((await listExpiringSoon(world.a.as.STOREKEEPER, { months: "12", sort: "value" })).rows[0].value).toBe("164000.00");
+    await expect(listExpiringSoon(world.a.as.CASHIER)).rejects.toBeInstanceOf(ForbiddenError);
   });
 
   it("shows business B nothing of business A's deliveries", async () => {

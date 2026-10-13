@@ -10,6 +10,7 @@ import { businessDb } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { EXPIRY_MONTH_CHOICES } from "@/lib/expiry";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 import { writeGoodsReceipt } from "@/server/receipt-write";
@@ -480,42 +481,73 @@ export type ExpiringRow = {
   expiryDate: string;
   /** True when the date has already passed. */
   expired: boolean;
+  /** True when it expires within the business's own "expiring soon" period (or has expired): shown in red. */
+  soon: boolean;
+  /** Whole months from today until it expires; 0 once it has under a month left or has expired. */
+  monthsLeft: number;
+  /** What was DELIVERED in this batch — not what is left of it (stock is not counted batch by batch). */
   quantity: string;
   unitName: string;
+  /** What that delivery line cost; null for those who do not see delivery costs. */
+  value: string | null;
   /** How much of the product the business holds now, in base units (not split by batch). */
   stockNow: string;
   baseUnitName: string;
 };
 
+const EXPIRY_SORTS = ["expiry", "quantity", "value"] as const;
+export type ExpirySort = (typeof EXPIRY_SORTS)[number];
+
+const expiringSchema = z.object({
+  /** Part of a product's name or of a batch number. */
+  search: z.string().trim().max(120).optional().default(""),
+  /** How many months ahead to look; empty for the business's own setting. */
+  months: z.string().trim().optional().default(""),
+  sort: z.string().trim().optional().default("expiry"),
+  page: pageNumber,
+});
+
 /**
- * Delivered goods whose expiry date falls within the business's "expiring soon" period
- * (or has already passed), for products that still have stock. Soonest first.
+ * Delivered goods whose expiry date falls within the months asked for (the business's own
+ * "expiring soon" period unless another is chosen) or has already passed, for products that
+ * still have stock. Soonest first, or the largest quantity or value first.
  *
- * Stock is not tracked per batch, so this lists the deliveries to check on the shelf;
- * it cannot say how much of a particular batch is left.
+ * Batch number and expiry date are recorded on each delivery line, but stock is not counted
+ * separately per batch. So the quantity and value here are what was delivered in the batch,
+ * and the list says which batches to look for on the shelf, not how much of each is left.
  */
 export async function listExpiringSoon(
   context: AppContext,
   input: unknown = {},
-): Promise<{ rows: ExpiringRow[]; months: number; until: string } & Paged> {
+): Promise<{ rows: ExpiringRow[]; months: number; usualMonths: number; until: string; sort: ExpirySort; showsValue: boolean } & Paged> {
   authorize(context, "report.stock.view");
-  const { page } = parseInput(z.object({ page: pageNumber }), input);
+  const data = parseInput(expiringSchema, input);
+  const page = data.page;
   const db = businessDb(context);
 
   const business = await db.business.findFirst({ select: { expiringSoonMonths: true } });
-  const months = business?.expiringSoonMonths ?? 3;
+  const usualMonths = business?.expiringSoonMonths ?? 3;
+  const asked = Number.parseInt(data.months, 10);
+  const months = (EXPIRY_MONTH_CHOICES as readonly number[]).includes(asked) ? asked : usualMonths;
+  const sort = (EXPIRY_SORTS as readonly string[]).includes(data.sort) ? (data.sort as ExpirySort) : "expiry";
   const today = shopToday();
   const until = addMonths(today, months);
+  const soonUntil = addMonths(today, usualMonths);
+  // The cost of a delivery is for those who may see deliveries with their costs (C36).
+  const showsValue = can(context, "stock.receipts.view");
 
   const where: Prisma.GoodsReceiptLineWhereInput = {
     expiryDate: { not: null, lte: dayToDate(until)! },
     product: { deactivatedAt: null, stockBalances: { some: { quantity: { gt: 0 } } } },
+    ...(data.search ? { OR: [{ productName: { contains: data.search } }, { product: { name: { contains: data.search } } }, { batchNumber: { contains: data.search } }] } : {}),
   };
+  const orderBy: Prisma.GoodsReceiptLineOrderByWithRelationInput[] =
+    sort === "quantity" ? [{ baseQuantity: "desc" }, { id: "asc" }] : sort === "value" && showsValue ? [{ lineCost: "desc" }, { id: "asc" }] : [{ expiryDate: "asc" }, { id: "asc" }];
   const [total, lines] = await Promise.all([
     db.goodsReceiptLine.count({ where }),
     db.goodsReceiptLine.findMany({
       where,
-      orderBy: [{ expiryDate: "asc" }, { id: "asc" }],
+      orderBy,
       skip: (page - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
       select: {
@@ -525,6 +557,7 @@ export async function listExpiringSoon(
         expiryDate: true,
         quantity: true,
         unitName: true,
+        lineCost: true,
         receipt: { select: { id: true, number: true, receivedOn: true } },
         product: {
           select: {
@@ -537,9 +570,20 @@ export async function listExpiringSoon(
     }),
   ]);
 
+  /** Whole months from today to a day: the largest count of months that still lands on or before it. */
+  const monthsUntil = (day: string) => {
+    if (day <= today) return 0;
+    let count = 0;
+    while (count < 600 && addMonths(today, count + 1) <= day) count += 1;
+    return count;
+  };
+
   return {
     months,
+    usualMonths,
     until,
+    sort: sort === "value" && !showsValue ? "expiry" : sort,
+    showsValue,
     rows: lines.map((line) => {
       const expiryDate = dateToDay(line.expiryDate!);
       const stockNow = line.product.stockBalances.reduce(
@@ -555,8 +599,11 @@ export async function listExpiringSoon(
         batchNumber: line.batchNumber,
         expiryDate,
         expired: expiryDate < today,
+        soon: expiryDate <= soonUntil,
+        monthsLeft: monthsUntil(expiryDate),
         quantity: line.quantity.toFixed(3),
         unitName: line.unitName,
+        value: showsValue ? line.lineCost.toFixed(2) : null,
         stockNow: quantityToString(stockNow),
         baseUnitName: line.product.units[0]?.name ?? "",
       };

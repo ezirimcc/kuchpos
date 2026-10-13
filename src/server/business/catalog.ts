@@ -9,6 +9,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { factorText, moneyText, optionalText, yesNo } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { nextProductCode, productCodeLetters } from "@/lib/product-code";
 import { authorize, can } from "@/server/permissions";
 import { isStillReferred, productWasUsed, unitWasUsed, usedAmong } from "@/server/usage";
 import { formatNaira } from "@/lib/money";
@@ -448,13 +449,19 @@ export async function createProduct(context: AppContext, input: unknown): Promis
   await assertProductDetailsFree(db, data);
   const category = await resolveCategory(db, data.categoryId);
 
-  try {
-    return await db.$transaction(async (tx) => {
+  // A code left empty is made from the name: three letters and the next number within them (C71).
+  const makeCode = async () => {
+    const letters = productCodeLetters(data.name);
+    const inUse = await db.product.findMany({ where: { code: { startsWith: `${letters}-` } }, select: { code: true } });
+    return nextProductCode(data.name, inUse.map((product) => product.code));
+  };
+  const create = async (code: string | null) =>
+    db.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
           businessId,
           name: data.name,
-          code: data.code,
+          code,
           barcode: data.barcode,
           categoryId: category?.id ?? null,
           allowsFraction: data.allowsFraction,
@@ -500,12 +507,21 @@ export async function createProduct(context: AppContext, input: unknown): Promis
       });
       return { id: product.id };
     });
-  } catch (error) {
-    // Reached only if two requests raced past the check above.
-    if (isUniqueViolation(error)) {
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await create(data.code ?? (await makeCode()));
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      // Two products with the same letters were created at the same moment and were given the
+      // same number: take the next one. (The name is checked again, so this cannot go round on that.)
+      if (data.code === null && attempt < 3) {
+        await assertProductDetailsFree(db, data);
+        continue;
+      }
+      // Reached only if two requests raced past the check above.
       throw new ValidationError("A product with this name, code or barcode was created a moment ago. Nothing was saved this time.");
     }
-    throw error;
   }
 }
 

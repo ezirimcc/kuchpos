@@ -40,7 +40,7 @@ export default async function NewProductPage() {
                 defaultValue=""
                 options={[{ value: "", label: "No category" }, ...categories.map((c) => ({ value: c.id, label: c.name }))]}
               />
-              <TextField name="code" label="Code (optional)" hint="Your own short code for this product" autoComplete="off" />
+              <TextField name="code" label="Code" hint="Leave empty and KuchPos makes one from the name, like TOM-001. Or type your own." autoComplete="off" />
               <TextField name="baseUnitName" label="Base unit" hint="For example: single, sachet, kg, litre" autoComplete="off" required />
               <SelectField
                 name="soldBy"

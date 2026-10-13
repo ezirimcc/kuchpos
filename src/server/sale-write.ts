@@ -9,6 +9,7 @@ import { type businessDb, businessIdOf } from "@/server/db/scoped";
 import { ValidationError } from "@/server/errors";
 import type { OfflineNote } from "@/server/offline-cashier";
 import type { CheckedSaleLine } from "@/server/sale-lines";
+import { addStockOwed } from "@/server/stock-owed";
 
 type Tx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
 
@@ -137,12 +138,14 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
           left = left.minus(moved);
           if (moved.lessThan(line.baseQuantity)) shortOf.set(line.index, line.baseQuantity.minus(moved));
         }
+        // The place now owes what could not be taken; it is covered as stock next arrives there (C72).
+        await addStockOwed(tx, context, { productId, locationId, quantity: quantity.minus(held) });
         const first = checked.find((line) => line.productId === productId && line.location.id === locationId)!;
         notes.push({
           kind: "STOCK_SHORT",
           summary:
             `${plainNumber(needed)} ${first.baseUnitName} of "${first.productName}" was sold, but the system held only ` +
-            `${plainNumber(quantityToString(held))} in ${sale.locationName.get(locationId)}. Count that product and adjust the stock.`,
+            `${plainNumber(quantityToString(held))} in ${sale.locationName.get(locationId)}. Settle it with a transfer, a delivery or an adjustment (Stock, then Sold beyond stock).`,
         });
         continue;
       }

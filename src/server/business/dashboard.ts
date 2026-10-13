@@ -5,6 +5,7 @@ import { moneyToString, sumMoney } from "@/lib/money";
 import type { AppContext } from "@/server/auth/context";
 import { businessDb } from "@/server/db/scoped";
 import { authorize, can } from "@/server/permissions";
+import { countUnreconciledSales, unreconciledSales } from "@/server/stock-owed";
 import type { ActivityItem } from "@/server/platform/owners";
 
 /**
@@ -24,6 +25,8 @@ export type DashboardSnapshot = {
   recentActivity: ActivityItem[] | null;
   /** Stock adjustments waiting for a decision — those who may approve them. */
   adjustmentsWaiting: number | null;
+  /** Sales that took more than a place held and are not yet covered by stock arriving there (C72) — those who approve adjustments. */
+  unreconciledSales: number | null;
   /**
    * Sales since the start of the shop's day: every sale for those who may see the sales
    * report, the person's own for a cashier, nothing for anyone else.
@@ -126,7 +129,10 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     salesTrend = days.map((day) => ({ day, total: moneyToString(perDay.get(day)!) }));
   }
 
+  const unreconciled = can(context, "stock.adjust.approve") ? countUnreconciledSales(await unreconciledSales(db)) : null;
+
   return {
+    unreconciledSales: unreconciled,
     salesTrend,
     products,
     categories,

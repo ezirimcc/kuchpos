@@ -104,6 +104,17 @@ test("the admin checks a workbook, is shown its problems, corrects it and brings
   await expect(page.getByTestId("imported-notice")).toContainText("brought in from the shop's Excel records");
   await expect(page.getByTestId("imported-notice")).toContainText('20 piece of "Excel Hoe" was sold, but the system held only 15 in');
 
+  // The sale that took 20 hoes when 15 were held leaves the Shelf owing 5 (C72): the admin is told on the home page.
+  await gotoReady(page, "/");
+  await expect(page.getByTestId("unreconciled-sales")).toContainText("Unreconciled offline sales: 1");
+  await page.getByTestId("unreconciled-sales").click();
+  await expect(page.getByRole("heading", { name: "Sold beyond stock" })).toBeVisible();
+  await expect(page.getByTestId("owed-row")).toContainText("Excel Hoe");
+  await expect(page.getByTestId("owed-quantity")).toHaveText("−5 piece");
+  await expect(page.getByTestId("owed-row")).toContainText("IMP-XL-900");
+  await gotoReady(page, "/stock?q=Excel+Hoe");
+  await expect(page.getByTestId("stock-row-Excel Hoe").getByTestId("stock-total")).toContainText("less 5 owed");
+
   // The reports draw what came in (C69): bars by product, and the last 14 days on the home page.
   await gotoReady(page, "/reports/sales?by=product");
   await expect(page.getByTestId("sales-chart")).toContainText("Net sales by product");

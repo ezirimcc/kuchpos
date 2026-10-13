@@ -12,6 +12,7 @@ import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { EXPIRY_MONTH_CHOICES } from "@/lib/expiry";
 import { authorize, can } from "@/server/permissions";
+import { countUnreconciledSales, unreconciledSales } from "@/server/stock-owed";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 import { writeGoodsReceipt } from "@/server/receipt-write";
 
@@ -399,6 +400,12 @@ export type StockOnHandRow = {
   /** Quantity in base units per location id (missing means none), and in total. */
   byLocation: Record<string, string>;
   total: string;
+  /**
+   * What each place owes because a sale took more than it held (C72), and in all. A place
+   * that owes holds nothing, and the screen shows what it owes as a minus figure.
+   */
+  owedByLocation: Record<string, string>;
+  owed: string;
 };
 
 const stockOnHandSchema = z.object({
@@ -438,6 +445,7 @@ export async function listStockOnHand(
         category: { select: { name: true } },
         units: { where: { retiredAt: null }, select: { name: true, factor: true, isBase: true } },
         stockBalances: { select: { locationId: true, quantity: true } },
+        stockOwed: { where: { quantity: { gt: 0 } }, select: { locationId: true, quantity: true } },
       },
     }),
     db.location.findMany({ orderBy: { kind: "asc" }, select: { id: true, name: true } }),
@@ -461,6 +469,8 @@ export async function listStockOnHand(
         units: product.units.map((unit) => ({ name: unit.name, factor: unit.factor.toFixed(3) })),
         byLocation,
         total: quantityToString(sum),
+        owedByLocation: Object.fromEntries(product.stockOwed.map((owed) => [owed.locationId, owed.quantity.toFixed(3)])),
+        owed: quantityToString(product.stockOwed.reduce((owing, owed) => owing.plus(owed.quantity.toFixed(3)), new Decimal(0))),
       };
     }),
     ...paged(total, page),
@@ -610,4 +620,21 @@ export async function listExpiringSoon(
     }),
     ...paged(total, page),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Sold beyond stock (C72)
+// ---------------------------------------------------------------------------
+
+export type StockOwedList = { rows: Awaited<ReturnType<typeof unreconciledSales>>; salesCount: number };
+
+/**
+ * The products a place still owes because a sale made without internet (or brought in from
+ * Excel) took more than the system held there, with the sales not yet covered. It empties
+ * by itself as stock arrives in those places: by a transfer, a delivery or an adjustment.
+ */
+export async function listStockOwed(context: AppContext): Promise<StockOwedList> {
+  authorize(context, "report.stock.view");
+  const rows = await unreconciledSales(businessDb(context));
+  return { rows, salesCount: countUnreconciledSales(rows) };
 }

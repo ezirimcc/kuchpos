@@ -11,6 +11,7 @@ const SCREENS = [
   "/activity",
   "/settings",
   "/settings/import",
+  "/stock/owed",
   "/account",
   "/products",
   "/products/new",

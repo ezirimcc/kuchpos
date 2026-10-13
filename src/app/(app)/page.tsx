@@ -105,6 +105,23 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
         </p>
       </div>
 
+      {snapshot.unreconciledSales !== null && snapshot.unreconciledSales > 0 && (
+        // Bright on purpose (C72): it stays until every such sale is covered by stock arriving.
+        <Link
+          href="/stock/owed"
+          data-testid="unreconciled-sales"
+          className="flex items-center justify-between gap-3 rounded-3xl bg-destructive px-5 py-4 text-sm font-semibold text-white shadow-sm"
+        >
+          <span>
+            Unreconciled offline sales: <span className="text-lg tabular-nums">{snapshot.unreconciledSales}</span>
+            <span className="ml-2 font-normal">— more was sold than the system held. Settle each with a transfer, a delivery or an adjustment.</span>
+          </span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            Settle <ArrowUpRight className="size-4" aria-hidden />
+          </span>
+        </Link>
+      )}
+
       {snapshot.adjustmentsWaiting !== null && snapshot.adjustmentsWaiting > 0 && (
         <Link
           href="/stock/adjustments?status=pending"

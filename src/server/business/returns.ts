@@ -14,6 +14,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { takeDocumentNumber } from "@/server/document-number";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 import { type Disposition, returnableLines, type ReturnableLine, returnSchema, workOutReturn } from "@/server/return-lines";
 import { APPROVAL_MINUTES } from "@/server/sale-lines";
@@ -246,6 +247,7 @@ export async function postReturn(context: AppContext, input: unknown): Promise<R
           for (const [locationId, quantity] of [...perPlace.entries()].sort(([a], [b]) => a.localeCompare(b))) {
             const raised = await tx.stockBalance.updateMany({ where: { productId, locationId }, data: { quantity: { increment: quantityToString(quantity) } } });
             if (raised.count === 0) await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(quantity) } });
+            await coverStockOwed(tx, context, { productId, locationId, arrivedWith: returnNumber(number) });
           }
         }
 

@@ -18,6 +18,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { takeDocumentNumber } from "@/server/document-number";
+import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -101,6 +102,7 @@ async function applyToStock(
           data: { businessId, productId, locationId: adjustment.locationId, quantity: quantityToString(net) },
         });
       }
+      await coverStockOwed(tx, context, { productId, locationId: adjustment.locationId, arrivedWith: adjustmentNumber(adjustment.number) });
       continue;
     }
 

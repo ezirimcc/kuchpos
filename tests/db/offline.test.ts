@@ -153,7 +153,7 @@ describe("what an offline sale is allowed that an online one is not", () => {
     const movement = await getDb().stockMovement.findFirstOrThrow({ where: { documentId: saved.id } });
     expect(movement.quantityDelta.toFixed(3)).toBe("-100.000");
     expect(await exceptions()).toEqual([
-      ["STOCK_SHORT", '130 single of "A Seed Sachet" was sold, but the system held only 100 in Shelf. Count that product and adjust the stock.'],
+      ["STOCK_SHORT", '130 single of "A Seed Sachet" was sold, but the system held only 100 in Shelf. Settle it with a transfer, a delivery or an adjustment (Stock, then Sold beyond stock).'],
     ]);
 
     // With nothing left at all, the next one is accepted too and moves no stock.
@@ -173,9 +173,11 @@ describe("what an offline sale is allowed that an online one is not", () => {
       }),
     ).rejects.toBeInstanceOf(ValidationError);
 
-    // Cancelling it the same day brings back everything the customer returns.
+    // The Shelf now owes 30 + 4 (C72). Cancelling the first sale the same day brings its 130 back,
+    // and what the Shelf owes is covered out of them: 100 − 130 − 4 + 130 = 96.
     await cancelSale(world.a.as.MANAGER, { saleId: saved.id, note: "Customer brought it all back" });
-    expect(await onShelf()).toBe("130.000");
+    expect(await onShelf()).toBe("96.000");
+    expect((await getDb().stockOwed.findFirstOrThrow({ where: { productId: world.a.product.id } })).quantity.toFixed(3)).toBe("0.000");
   });
 
   it("keeps the price the customer was charged when the price was changed during the outage, and says so", async () => {

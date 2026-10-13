@@ -1,10 +1,10 @@
-import { ArrowLeftRight, CalendarClock, ClipboardCheck, ClipboardList, PackagePlus, Scale, Truck, Warehouse } from "lucide-react";
+import { ArrowLeftRight, CalendarClock, ClipboardCheck, ClipboardList, PackagePlus, Scale, TriangleAlert, Truck, Warehouse } from "lucide-react";
 import Link from "next/link";
 import { cn } from "cn";
 import type { AppContext } from "@/server/auth/context";
 import { can } from "@/server/permissions";
 
-type Tab = "on-hand" | "receive" | "receipts" | "transfers" | "counts" | "adjustments" | "expiring" | "suppliers";
+type Tab = "on-hand" | "receive" | "receipts" | "transfers" | "counts" | "adjustments" | "expiring" | "owed" | "suppliers";
 
 /** The row of links shared by the stock screens. Only the ones the person may open are shown. */
 export function StockTabs({ context, current }: { context: AppContext; current: Tab }) {
@@ -16,6 +16,7 @@ export function StockTabs({ context, current }: { context: AppContext; current: 
     { key: "counts", href: "/stock/counts", label: "Counts", icon: ClipboardCheck, show: can(context, "report.stock.view") },
     { key: "adjustments", href: "/stock/adjustments", label: "Adjustments", icon: Scale, show: can(context, "report.stock.view") },
     { key: "expiring", href: "/stock/expiring", label: "Expiring soon", icon: CalendarClock, show: can(context, "report.stock.view") },
+    { key: "owed", href: "/stock/owed", label: "Sold beyond stock", icon: TriangleAlert, show: can(context, "report.stock.view") },
     { key: "suppliers", href: "/stock/suppliers", label: "Suppliers", icon: Truck, show: can(context, "stock.receipts.view") },
   ].filter((tab) => tab.show);
 

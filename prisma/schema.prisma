@@ -62,6 +62,7 @@ model Business {
   receiptVersionLines GoodsReceiptVersionLine[]
   receiptChanges GoodsReceiptChange[]
   stockBalances StockBalance[]
+  stockOwed     StockOwed[]
   stockMovements StockMovement[]
   goodsReceipts GoodsReceipt[]
   goodsReceiptLines GoodsReceiptLine[]
@@ -247,6 +248,7 @@ model Location {
   updatedAt  DateTime     @updatedAt @db.DateTime(3)
 
   stockBalances  StockBalance[]
+  stockOwed      StockOwed[]
   stockMovements StockMovement[]
   goodsReceipts  GoodsReceipt[]
   stockCounts    StockCount[]
@@ -319,6 +321,7 @@ model Product {
   units          ProductUnit[]
   priceChanges   PriceChange[]
   stockBalances  StockBalance[]
+  stockOwed      StockOwed[]
   stockMovements StockMovement[]
   stockTransferLines StockTransferLine[]
   stockCountLines StockCountLine[]
@@ -458,6 +461,28 @@ model StockBalance {
   @@map("stock_balance")
 }
 
+/// What a place "owes" because a sale made without internet (or brought in from Excel) sold
+/// more than the system held there (C72). The balance above never goes below zero; this is
+/// the part that could not be taken. It is cleared, oldest sales first, as stock next arrives
+/// in that place. Always: owed = the shortfalls of that product's sale lines there, less the
+/// SHORTFALL_COVERED movements.
+model StockOwed {
+  id         String   @id @default(uuid()) @db.Char(36)
+  businessId String   @db.Char(36)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  productId  String   @db.Char(36)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  locationId String   @db.Char(36)
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// In the product's base unit. Never below zero.
+  quantity   Decimal  @default(0) @db.Decimal(16, 3)
+  updatedAt  DateTime @updatedAt @db.DateTime(3)
+
+  @@unique([productId, locationId])
+  @@index([businessId])
+  @@map("stock_owed")
+}
+
 enum StockMovementType {
   RECEIPT
   /// The stock effect of correcting a saved delivery: positive or negative.
@@ -475,6 +500,8 @@ enum StockMovementType {
   SALE_RETURN
   /// Stock a business already held when it started using KuchPos, brought in by an import.
   OPENING_BALANCE
+  /// Stock taken out, as it arrived, to cover a sale that had sold more than the place held (C72). Negative.
+  SHORTFALL_COVERED
 }
 
 /// Every change to stock. Add-only: database triggers refuse changes and deletions.

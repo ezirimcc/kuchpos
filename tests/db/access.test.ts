@@ -913,6 +913,11 @@ const OPERATIONS: Operation[] = [
     run: (context) => stock.listStockOnHand(context),
   },
   {
+    name: "stock.listStockOwed",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => stock.listStockOwed(context),
+  },
+  {
     name: "stock.listExpiringSoon",
     allowed: DELIVERY_VIEWERS,
     run: (context) => stock.listExpiringSoon(context),

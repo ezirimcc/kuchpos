@@ -7,6 +7,7 @@ import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { type businessDb, businessIdOf } from "@/server/db/scoped";
 import { takeDocumentNumber } from "@/server/document-number";
+import { coverStockOwed } from "@/server/stock-owed";
 import type { CheckedLine } from "@/server/receipt-lines";
 
 type Tx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
@@ -144,6 +145,8 @@ export async function writeGoodsReceipt(
     if (increased.count === 0) {
       await tx.stockBalance.create({ data: { businessId, productId, locationId: location.id, quantity: quantityToString(added.quantity) } });
     }
+    // If this place owes any of the product to a sale beyond stock, the delivery covers it first (C72).
+    await coverStockOwed(tx, context, { productId, locationId: location.id, arrivedWith: receiptNumber(number), at: delivery.imported?.at });
   }
 
   await tx.stockMovement.createMany({

@@ -93,7 +93,7 @@ async function anyRow(db: Reader, tables: string[], where: Record<string, unknow
 export function productWasUsed(db: Reader, productId: string): Promise<boolean> {
   return anyRow(
     db,
-    ["stockMovement", "stockBalance", "goodsReceiptLine", "goodsReceiptVersionLine", "stockTransferLine", "stockCountLine", "stockAdjustmentLine", "saleLine", "saleReturnLine"],
+    ["stockMovement", "stockBalance", "stockOwed", "goodsReceiptLine", "goodsReceiptVersionLine", "stockTransferLine", "stockCountLine", "stockAdjustmentLine", "saleLine", "saleReturnLine"],
     { productId },
   );
 }

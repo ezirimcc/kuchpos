@@ -210,6 +210,32 @@ export async function expectBalancesMatchMovements(): Promise<void> {
   if (mismatches.length > 0) {
     throw new Error(`Stock balances do not match their movements: ${JSON.stringify(mismatches)}`);
   }
+
+  // Stock "owed" (C72): what a place owes is the shortfalls of the sale lines there, less what
+  // has been covered since; and a place never holds stock while it still owes some.
+  const owedWrong = await db.$queryRaw<{ productId: string; locationId: string; owed: string; expected: string; held: string }[]>`
+    SELECT k.productId, k.locationId,
+           CAST(COALESCE(o.quantity, 0) AS CHAR) AS owed,
+           CAST(COALESCE(s.short, 0) - COALESCE(c.covered, 0) AS CHAR) AS expected,
+           CAST(COALESCE(b.quantity, 0) AS CHAR) AS held
+    FROM (
+      SELECT productId, locationId FROM stock_owed
+      UNION
+      SELECT productId, locationId FROM sale_line WHERE stockShort > 0
+    ) k
+    LEFT JOIN stock_owed o ON o.productId = k.productId AND o.locationId = k.locationId
+    LEFT JOIN stock_balance b ON b.productId = k.productId AND b.locationId = k.locationId
+    LEFT JOIN (
+      SELECT productId, locationId, SUM(stockShort) AS short FROM sale_line GROUP BY productId, locationId
+    ) s ON s.productId = k.productId AND s.locationId = k.locationId
+    LEFT JOIN (
+      SELECT productId, locationId, -SUM(quantityDelta) AS covered FROM stock_movement WHERE type = 'SHORTFALL_COVERED' GROUP BY productId, locationId
+    ) c ON c.productId = k.productId AND c.locationId = k.locationId
+    WHERE COALESCE(o.quantity, 0) <> COALESCE(s.short, 0) - COALESCE(c.covered, 0)
+       OR (COALESCE(o.quantity, 0) > 0 AND COALESCE(b.quantity, 0) > 0)`;
+  if (owedWrong.length > 0) {
+    throw new Error(`Stock owed does not match the shortfalls less what was covered, or a place holds stock while owing some: ${JSON.stringify(owedWrong)}`);
+  }
 }
 
 /** The number the next document of a kind will get in a business (1 if none has been made yet). */

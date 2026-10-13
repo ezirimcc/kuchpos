@@ -506,7 +506,7 @@ export async function getDebtReport(context: AppContext): Promise<{ rows: DebtRo
 // Stock movements
 // ---------------------------------------------------------------------------
 
-const MOVEMENT_TYPES = ["OPENING_BALANCE", "RECEIPT", "RECEIPT_CORRECTION", "TRANSFER_OUT", "TRANSFER_IN", "ADJUSTMENT", "SALE", "SALE_CANCELLATION", "SALE_RETURN"] as const;
+const MOVEMENT_TYPES = ["OPENING_BALANCE", "RECEIPT", "RECEIPT_CORRECTION", "TRANSFER_OUT", "TRANSFER_IN", "ADJUSTMENT", "SALE", "SALE_CANCELLATION", "SALE_RETURN", "SHORTFALL_COVERED"] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
 const movementsSchema = periodSchema.extend({

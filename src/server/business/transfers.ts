@@ -12,6 +12,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { takeDocumentNumber } from "@/server/document-number";
+import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -289,6 +290,7 @@ export async function transferStock(context: AppContext, input: unknown): Promis
           if (raised.count === 0) {
             await tx.stockBalance.create({ data: { businessId, productId, locationId: to.id, quantity: moving } });
           }
+          await coverStockOwed(tx, context, { productId, locationId: to.id, arrivedWith: transferNumber(number) });
         }
         // Throwing here undoes everything above, including the lines that did have enough.
         if (Object.keys(short).length > 0) {

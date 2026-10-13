@@ -35,6 +35,7 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   TaxRateChange: { filter: (businessId) => ({ businessId }), stamp: true },
   Supplier: { filter: (businessId) => ({ businessId }), stamp: true },
   StockBalance: { filter: (businessId) => ({ businessId }), stamp: true },
+  StockOwed: { filter: (businessId) => ({ businessId }), stamp: true },
   StockMovement: { filter: (businessId) => ({ businessId }), stamp: true },
   GoodsReceipt: { filter: (businessId) => ({ businessId }), stamp: true },
   GoodsReceiptLine: { filter: (businessId) => ({ businessId }), stamp: true },

@@ -197,7 +197,7 @@ describe("bringing in deliveries and sales", () => {
     const exceptions = (await listOfflineExceptions(world.a.as.MANAGER)).rows;
     expect(exceptions).toHaveLength(1);
     expect(exceptions[0]).toMatchObject({ kind: "STOCK_SHORT", sale: { receiptNumber: "IMP-0459" } });
-    expect(exceptions[0].summary).toBe('40 single of "A Seed Sachet" was sold, but the system held only 25 in Shelf. Count that product and adjust the stock.');
+    expect(exceptions[0].summary).toBe('40 single of "A Seed Sachet" was sold, but the system held only 25 in Shelf. Settle it with a transfer, a delivery or an adjustment (Stock, then Sold beyond stock).');
     expect((await getSale(world.a.as.MANAGER, { saleId: third.id })).imported?.exceptions).toHaveLength(1);
 
     // The customer's account: what he owed before, then the credit sale on its own day.

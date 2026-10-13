@@ -1,5 +1,6 @@
 import { Warehouse } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Suspense } from "react";
 import { FilterSelect, FilterToggle, LiveSearch } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
@@ -80,11 +81,19 @@ export default async function StockPage({ searchParams }: PageProps<"/stock">) {
                   <TableCell>{row.category ? <Badge variant="secondary">{row.category}</Badge> : <span className="text-muted-foreground">—</span>}</TableCell>
                   {list.locations.map((location) => (
                     <TableCell key={location.id} className="text-right tabular-nums" data-testid={`stock-${location.name}`}>
-                      {plainNumber(row.byLocation[location.id] ?? "0")}
+                      {row.owedByLocation[location.id] ? (
+                        // This place owes stock to a sale that took more than it held (C72): shown as a minus.
+                        <Link href="/stock/owed" className="font-semibold text-destructive underline-offset-4 hover:underline" title="Sold beyond stock: see what is owed">
+                          −{plainNumber(row.owedByLocation[location.id])}
+                        </Link>
+                      ) : (
+                        plainNumber(row.byLocation[location.id] ?? "0")
+                      )}
                     </TableCell>
                   ))}
                   <TableCell className="text-right font-semibold tabular-nums" data-testid="stock-total">
                     {plainNumber(row.total)} <span className="font-normal text-muted-foreground">{row.baseUnitName}</span>
+                    {row.owed !== "0.000" && <span className="block text-xs font-normal text-destructive">less {plainNumber(row.owed)} owed</span>}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {empty ? <Badge variant="outline">None</Badge> : breakIntoUnits(row.total, row.baseUnitName, row.units)}

@@ -126,6 +126,7 @@ describe("database update tool for the hosting server", () => {
         "business_tax_rate_percent_check",
         "terminal_code_format_check",
         "product_unit_factor_check",
+        "stock_owed_quantity_check",
         "product_unit_price_check",
         "business_expiring_soon_months_check",
         "product_average_cost_check",

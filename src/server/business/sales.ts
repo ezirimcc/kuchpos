@@ -16,6 +16,7 @@ import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { claimApproval } from "@/server/approval-claim";
 import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
+import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedPayment, writeSale } from "@/server/sale-write";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
@@ -1128,6 +1129,8 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
             if (raised.count === 0) {
               await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(quantity) } });
             }
+            // If the sale had taken more than the place held, what it left owed is covered by its own goods coming back (C72).
+            await coverStockOwed(tx, context, { productId, locationId, arrivedWith: sale.receiptNumber });
           }
         }
 

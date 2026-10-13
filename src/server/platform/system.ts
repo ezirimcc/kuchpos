@@ -91,6 +91,7 @@ const REQUIRED_CHECKS = [
   "business_expiring_soon_months_check",
   "terminal_code_format_check",
   "product_unit_factor_check",
+  "stock_owed_quantity_check",
   "product_unit_price_check",
   "product_average_cost_check",
   "stock_balance_not_negative_check",

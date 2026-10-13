@@ -11,6 +11,7 @@ import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
+import { coverStockOwed } from "@/server/stock-owed";
 import { authorize } from "@/server/permissions";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES, type SavedLine } from "@/server/receipt-lines";
 import type { ReceivingOptions } from "./stock";
@@ -456,6 +457,7 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
               if (raised.count === 0) {
                 await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(delta) } });
               }
+              await coverStockOwed(tx, context, { productId, locationId, arrivedWith: correctionNumber });
             } else {
               // Taken away only if that much is still there — one statement, so two people
               // can never both take the last of it.

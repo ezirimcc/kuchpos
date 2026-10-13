@@ -16,6 +16,7 @@ export const metadata: Metadata = { title: "Stock movements — KuchPos" };
 
 const TYPES: Record<MovementType, string> = {
   OPENING_BALANCE: "Opening stock (brought in)",
+  SHORTFALL_COVERED: "Covered a sale beyond stock",
   RECEIPT: "Delivery received",
   RECEIPT_CORRECTION: "Delivery corrected",
   TRANSFER_OUT: "Moved out",

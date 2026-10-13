@@ -63,6 +63,8 @@ model Business {
   receiptChanges GoodsReceiptChange[]
   stockBalances StockBalance[]
   stockOwed     StockOwed[]
+  stockBatches  StockBatch[]
+  stockBatchBalances StockBatchBalance[]
   stockMovements StockMovement[]
   goodsReceipts GoodsReceipt[]
   goodsReceiptLines GoodsReceiptLine[]
@@ -249,6 +251,7 @@ model Location {
 
   stockBalances  StockBalance[]
   stockOwed      StockOwed[]
+  stockBatchBalances StockBatchBalance[]
   stockMovements StockMovement[]
   goodsReceipts  GoodsReceipt[]
   stockCounts    StockCount[]
@@ -322,6 +325,8 @@ model Product {
   priceChanges   PriceChange[]
   stockBalances  StockBalance[]
   stockOwed      StockOwed[]
+  stockBatches   StockBatch[]
+  stockBatchBalances StockBatchBalance[]
   stockMovements StockMovement[]
   stockTransferLines StockTransferLine[]
   stockCountLines StockCountLine[]
@@ -481,6 +486,53 @@ model StockOwed {
   @@unique([productId, locationId])
   @@index([businessId])
   @@map("stock_owed")
+}
+
+/// A batch of a product that has batch numbers or expiry dates (C73): everything that came
+/// in with the same batch number and expiry date. Products without either have no batches.
+model StockBatch {
+  id          String    @id @default(uuid()) @db.Char(36)
+  businessId  String    @db.Char(36)
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  productId   String    @db.Char(36)
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Batch number and expiry date as written on the deliveries; either may be empty.
+  batchNumber String?   @db.VarChar(60)
+  expiryDate  DateTime? @db.Date
+  /// What makes a batch one batch within its product: "<batch number>|<expiry day>" in small
+  /// letters ("|" alone for stock with neither on record). Kept apart because the two columns
+  /// above may be empty, and empty values cannot carry a unique index.
+  batchKey    String    @db.VarChar(80)
+  /// The day the first of it came in: without an expiry date, what came in first goes first.
+  receivedOn  DateTime  @db.Date
+  createdAt   DateTime  @default(now()) @db.DateTime(3)
+
+  balances StockBatchBalance[]
+
+  @@unique([productId, batchKey])
+  @@index([businessId])
+  @@map("stock_batch")
+}
+
+/// How much of a batch is in a place. For a product with batches, these always add up to the
+/// product's stock in that place (`stock_balance`), which stays the figure everything else uses.
+model StockBatchBalance {
+  id         String     @id @default(uuid()) @db.Char(36)
+  businessId String     @db.Char(36)
+  business   Business   @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  batchId    String     @db.Char(36)
+  batch      StockBatch @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  productId  String     @db.Char(36)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  locationId String     @db.Char(36)
+  location   Location   @relation(fields: [locationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  quantity   Decimal    @default(0) @db.Decimal(16, 3)
+  updatedAt  DateTime   @updatedAt @db.DateTime(3)
+
+  @@unique([batchId, locationId])
+  @@index([productId, locationId])
+  @@index([businessId])
+  @@map("stock_batch_balance")
 }
 
 enum StockMovementType {

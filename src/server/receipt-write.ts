@@ -7,6 +7,7 @@ import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { type businessDb, businessIdOf } from "@/server/db/scoped";
 import { takeDocumentNumber } from "@/server/document-number";
+import { refreshBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import type { CheckedLine } from "@/server/receipt-lines";
 
@@ -41,6 +42,8 @@ export async function writeGoodsReceipt(
      * was counted or the goods arrived, so that reports of that time are right.
      */
     imported?: { movementType: "RECEIPT" | "OPENING_BALANCE"; at: Date; label: string };
+    /** For an import that replays many documents: the caller works the batches out once, at the end. */
+    deferBatches?: boolean;
   },
 ): Promise<{ id: string; number: number }> {
   const businessId = businessIdOf(context);
@@ -148,6 +151,9 @@ export async function writeGoodsReceipt(
     // If this place owes any of the product to a sale beyond stock, the delivery covers it first (C72).
     await coverStockOwed(tx, context, { productId, locationId: location.id, arrivedWith: receiptNumber(number), at: delivery.imported?.at });
   }
+
+  // What is left of each batch of these products is worked out again (C73).
+  if (!delivery.deferBatches) await refreshBatches(tx, context, productOrder);
 
   await tx.stockMovement.createMany({
     data: checked.map((line) => ({

@@ -9,6 +9,7 @@ import { type businessDb, businessIdOf } from "@/server/db/scoped";
 import { ValidationError } from "@/server/errors";
 import type { OfflineNote } from "@/server/offline-cashier";
 import type { CheckedSaleLine } from "@/server/sale-lines";
+import { refreshBatches } from "@/server/stock-batches";
 import { addStockOwed } from "@/server/stock-owed";
 
 type Tx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
@@ -59,6 +60,8 @@ export type SaleToWrite = {
   notes: OfflineNote[];
   /** For a sale brought in from Excel: the import, and the moment it was really made. */
   imported?: { runId: string; at: Date };
+  /** For an import that replays many sales: the caller works the batches out once, at the end. */
+  deferBatches?: boolean;
   /** The tax rate, when the caller has read it already. Otherwise it is read here. */
   taxRate?: Decimal;
 };
@@ -161,6 +164,9 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
   if (Object.keys(short).length > 0) {
     throw new ValidationError("Nothing was sold: there is not enough stock.", short);
   }
+
+  // What is left of each batch of these products is worked out again (C73).
+  if (!sale.deferBatches) await refreshBatches(tx, context, productOrder);
 
   // The discount is shared out over the lines, so each line knows what was really charged for it.
   const shares = shareDiscount(

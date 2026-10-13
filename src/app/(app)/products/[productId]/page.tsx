@@ -22,7 +22,9 @@ import {
   setUnitUsageAction,
   updateProductAction,
 } from "../actions";
+import { ProductBatches } from "./product-batches";
 import { ProductSales } from "./product-sales";
+import { StockHistory } from "./stock-history";
 
 export const metadata: Metadata = { title: "Product — KuchPos" };
 
@@ -269,9 +271,13 @@ export default async function ProductPage({ params, searchParams }: PageProps<"/
         </Card>
       )}
 
+      {can(context, "stock.view") && <ProductBatches context={context} productId={product.id} />}
+
       {can(context, "report.sales.view") && can(context, "report.pages.view") && (
         <ProductSales context={context} productId={product.id} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />
       )}
+
+      {can(context, "report.stock.view") && <StockHistory context={context} productId={product.id} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />}
 
       <Card>
         <CardHeader>

@@ -14,6 +14,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { takeDocumentNumber } from "@/server/document-number";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { refreshBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 import { type Disposition, returnableLines, type ReturnableLine, returnSchema, workOutReturn } from "@/server/return-lines";
@@ -250,6 +251,7 @@ export async function postReturn(context: AppContext, input: unknown): Promise<R
             await coverStockOwed(tx, context, { productId, locationId, arrivedWith: returnNumber(number) });
           }
         }
+        await refreshBatches(tx, context, productOrder);
 
         const saved = await tx.saleReturn.create({
           data: {

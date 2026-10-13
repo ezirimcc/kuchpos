@@ -12,6 +12,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { takeDocumentNumber } from "@/server/document-number";
+import { refreshBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 
@@ -296,6 +297,7 @@ export async function transferStock(context: AppContext, input: unknown): Promis
         if (Object.keys(short).length > 0) {
           throw new ValidationError(`Nothing was moved: there is not enough in ${from.name}.`, short);
         }
+        await refreshBatches(tx, context, productOrder);
 
         const movement = (line: CheckedLine, type: "TRANSFER_OUT" | "TRANSFER_IN") => {
           const sign = type === "TRANSFER_OUT" ? "-" : "";

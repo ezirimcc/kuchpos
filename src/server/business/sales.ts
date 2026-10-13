@@ -16,6 +16,7 @@ import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { claimApproval } from "@/server/approval-claim";
 import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
+import { refreshBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedPayment, writeSale } from "@/server/sale-write";
@@ -1133,6 +1134,8 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
             await coverStockOwed(tx, context, { productId, locationId, arrivedWith: sale.receiptNumber });
           }
         }
+
+        await refreshBatches(tx, context, [...perProduct.keys()]);
 
         // Checked with every product's turn taken, so a return of these goods cannot slip in between.
         if ((await tx.saleReturn.count({ where: { saleId: sale.id } })) > 0) {

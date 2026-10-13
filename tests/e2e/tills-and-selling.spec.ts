@@ -1222,6 +1222,12 @@ test("the accountant reads and exports the reports; today's sales report equals 
   await expect(page.getByTestId("product-sales-card")).toContainText("How it has sold");
   await expect(page.getByTestId("product-sales-chart").getByTestId("chart-line")).toHaveCount(1);
   await expect(page.getByTestId("product-purchase-row").first().getByRole("link").first()).toHaveAttribute("href", /\/sales\//);
+  // Its stock history: what was held at the start, each movement with what was left, and a link to the document (C74).
+  await expect(page.getByTestId("stock-history-card")).toContainText("Stock history");
+  await expect(page.getByTestId("history-opening")).toContainText("Held at the start");
+  await expect(page.getByTestId("history-row").first()).toBeVisible();
+  await expect(page.getByTestId("history-row").filter({ hasText: "Sold" }).first().getByRole("link")).toHaveAttribute("href", /\/sales\//);
+  await expect(page.getByTestId("history-closing")).toContainText("Held at the end");
   await signOut(page);
 
   // The owner sees every business side by side, with the same figure as the business's own report.

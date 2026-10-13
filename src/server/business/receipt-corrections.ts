@@ -11,6 +11,7 @@ import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
+import { refreshBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize } from "@/server/permissions";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES, type SavedLine } from "@/server/receipt-lines";
@@ -495,6 +496,8 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
           }
         }
         if (movements.length > 0) await tx.stockMovement.createMany({ data: movements });
+        // The delivery's lines are as corrected by now: what is left of each batch follows from them (C73).
+        await refreshBatches(tx, context, productOrder);
 
         await tx.activityLog.create({
           data: activityRow(context, {

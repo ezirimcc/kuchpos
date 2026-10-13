@@ -106,6 +106,14 @@ test("a product that uses batch and expiry must give them, and then shows under 
   await expect(expiring).toContainText("Liquid Herbicide");
   await expect(expiring).toContainText("LH-2026-09");
   await expect(expiring).toContainText("20 litre");
+  // The product's own page lists its batches, with what is left of each (C73).
+  await expiring.getByRole("link", { name: "Liquid Herbicide" }).click();
+  await expect(page.getByTestId("product-batches-card")).toContainText("Batches in stock");
+  await expect(page.getByTestId("batch-row")).toHaveCount(1);
+  await expect(page.getByTestId("batch-row")).toContainText("LH-2026-09");
+  await expect(page.getByTestId("batch-row")).toContainText("20 litre");
+  await page.goBack();
+
   // Inside the usual three months it is marked in red; it can be found by its batch; and the list can look further ahead (C71).
   await expect(expiring.first()).toHaveAttribute("data-soon", "yes");
   await page.getByLabel("How far ahead to look").selectOption({ label: "Within 12 months" });

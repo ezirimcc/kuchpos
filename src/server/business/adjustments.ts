@@ -18,6 +18,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { takeDocumentNumber } from "@/server/document-number";
+import { refreshBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 
@@ -129,6 +130,7 @@ async function applyToStock(
   if (problems.length > 0) {
     throw new ValidationError(`Stock was not changed. ${problems.join(" ")}`, short);
   }
+  await refreshBatches(tx, context, [...perProduct.keys()]);
 
   await tx.stockMovement.createMany({
     data: lines.map((line) => ({

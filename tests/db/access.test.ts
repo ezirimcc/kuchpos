@@ -913,6 +913,18 @@ const OPERATIONS: Operation[] = [
     run: (context) => stock.listStockOnHand(context),
   },
   {
+    name: "stock.getProductBatches",
+    allowed: EVERYONE_IN_A,
+    run: (context) => stock.getProductBatches(context, { productId: world.a.product.id }),
+    runAgainstB: (context) => stock.getProductBatches(context, { productId: world.b.product.id }),
+  },
+  {
+    name: "stock.getProductStockHistory",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => stock.getProductStockHistory(context, { productId: world.a.product.id }),
+    runAgainstB: (context) => stock.getProductStockHistory(context, { productId: world.b.product.id }),
+  },
+  {
     name: "stock.listStockOwed",
     allowed: DELIVERY_VIEWERS,
     run: (context) => stock.listStockOwed(context),

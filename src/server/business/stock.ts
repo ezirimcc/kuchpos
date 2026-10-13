@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { addMonths, dateToDay, dayToDate, shopToday } from "@/lib/format";
+import { addMonths, dateToDay, dayToDate, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
 import { quantityToString } from "@/lib/quantity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
@@ -12,6 +12,7 @@ import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { EXPIRY_MONTH_CHOICES } from "@/lib/expiry";
 import { authorize, can } from "@/server/permissions";
+import { batchesAreBehind, goesFirst, refreshBatches } from "@/server/stock-batches";
 import { countUnreconciledSales, unreconciledSales } from "@/server/stock-owed";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 import { writeGoodsReceipt } from "@/server/receipt-write";
@@ -637,4 +638,235 @@ export async function listStockOwed(context: AppContext): Promise<StockOwedList>
   authorize(context, "report.stock.view");
   const rows = await unreconciledSales(businessDb(context));
   return { rows, salesCount: countUnreconciledSales(rows) };
+}
+
+// ---------------------------------------------------------------------------
+// A product's batches (C73, step 1)
+// ---------------------------------------------------------------------------
+
+export type ProductBatches = {
+  /** False for a product without batch numbers or expiry dates: it has no batches. */
+  tracked: boolean;
+  baseUnitName: string;
+  locations: { id: string; name: string }[];
+  /** The batches that still have stock, the one that should go first on top. */
+  batches: {
+    id: string;
+    batchNumber: string | null;
+    expiryDate: string | null;
+    /** True when the expiry date has passed; `soon` when it falls within the business's "expiring soon" period. */
+    expired: boolean;
+    soon: boolean;
+    /** The day the first of it came in. */
+    receivedOn: string;
+    byLocation: Record<string, string>;
+    total: string;
+  }[];
+};
+
+/**
+ * What is left of each batch of a product, and where — the one that should go first on top
+ * (earliest expiry, then first in). If the product had stock before batches were counted, they
+ * are worked out here first.
+ */
+export async function getProductBatches(context: AppContext, input: unknown): Promise<ProductBatches> {
+  authorize(context, "stock.view");
+  const { productId } = parseInput(z.object({ productId: z.string().uuid("That product could not be found.") }), input);
+  const db = businessDb(context);
+  const product = await db.product.findFirst({
+    where: { id: productId },
+    select: { id: true, tracksBatch: true, tracksExpiry: true, units: { where: { isBase: true }, select: { name: true } } },
+  });
+  if (!product) throw new NotFoundError("That product could not be found.");
+  const [locations, business] = await Promise.all([
+    db.location.findMany({ orderBy: { kind: "asc" }, select: { id: true, name: true } }),
+    db.business.findFirst({ select: { expiringSoonMonths: true } }),
+  ]);
+  const baseUnitName = product.units[0]?.name ?? "";
+  if (!product.tracksBatch && !product.tracksExpiry) return { tracked: false, baseUnitName, locations, batches: [] };
+
+  // Stock from before batches were counted: work them out once, under the product's turn like any stock change.
+  if (await batchesAreBehind(db, product.id)) {
+    await db.$transaction(
+      async (tx) => {
+        await tx.product.update({ where: { id: product.id }, data: { updatedAt: new Date() }, select: { id: true } });
+        await refreshBatches(tx, context, [product.id]);
+      },
+      { isolationLevel: "ReadCommitted" },
+    );
+  }
+
+  const today = shopToday();
+  const soonUntil = addMonths(today, business?.expiringSoonMonths ?? 3);
+  const rows = await db.stockBatch.findMany({
+    where: { productId: product.id, balances: { some: { quantity: { gt: 0 } } } },
+    select: { id: true, batchNumber: true, expiryDate: true, batchKey: true, receivedOn: true, balances: { where: { quantity: { gt: 0 } }, select: { locationId: true, quantity: true } } },
+  });
+  return {
+    tracked: true,
+    baseUnitName,
+    locations,
+    batches: rows
+      .map((row) => ({ row, expiryDay: row.expiryDate ? dateToDay(row.expiryDate) : null, receivedOn: dateToDay(row.receivedOn), key: row.batchKey }))
+      .sort(goesFirst)
+      .map(({ row, expiryDay, receivedOn }) => ({
+        id: row.id,
+        batchNumber: row.batchNumber,
+        expiryDate: expiryDay,
+        expired: expiryDay !== null && expiryDay < today,
+        soon: expiryDay !== null && expiryDay <= soonUntil,
+        receivedOn,
+        byLocation: Object.fromEntries(row.balances.map((balance) => [balance.locationId, balance.quantity.toFixed(3)])),
+        total: quantityToString(row.balances.reduce((sum, balance) => sum.plus(balance.quantity.toFixed(3)), new Decimal(0))),
+      })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A product's stock history (C74)
+// ---------------------------------------------------------------------------
+
+export type StockHistoryRow = {
+  id: string;
+  at: Date;
+  type: string;
+  locationId: string;
+  locationName: string;
+  /** In the product's smallest unit: above zero came in, below zero went out. */
+  quantity: string;
+  /** As it was entered: "2 carton", "−3 sachet". */
+  entered: string;
+  /** What that place held straight after this movement, and what the business held in all. */
+  leftThere: string;
+  leftInAll: string;
+  userName: string;
+  documentNumber: string;
+  /** Where the document can be opened; null when it has no page of its own. */
+  documentHref: string | null;
+};
+
+export type StockHistory = {
+  product: { id: string; name: string; baseUnitName: string };
+  period: { from: string; to: string };
+  locations: { id: string; name: string }[];
+  /** What each place held when the period began and when it ended, and in all. */
+  opening: { byLocation: Record<string, string>; total: string };
+  closing: { byLocation: Record<string, string>; total: string };
+  /** Totals of the period. */
+  cameIn: string;
+  wentOut: string;
+  /** Oldest first, each with what was left afterwards. At most `STOCK_HISTORY_ROWS`; `more` says how many are not shown. */
+  rows: StockHistoryRow[];
+  more: number;
+};
+
+const STOCK_HISTORY_ROWS = 1000;
+const historySchema = z.object({
+  productId: z.string().uuid("That product could not be found."),
+  from: z.string().trim().optional().default(""),
+  to: z.string().trim().optional().default(""),
+});
+
+/** Where the document behind a movement can be opened. */
+function documentHref(documentType: string, documentId: string): string | null {
+  if (documentType === "sale") return `/sales/${documentId}`;
+  if (documentType === "goods_receipt") return `/stock/receipts/${documentId}`;
+  if (documentType === "stock_transfer") return `/stock/transfers/${documentId}`;
+  if (documentType === "stock_adjustment") return `/stock/adjustments/${documentId}`;
+  if (documentType === "sale_return") return `/returns/${documentId}`;
+  if (documentType === "stock_owed") return "/stock/owed";
+  return null;
+}
+
+/**
+ * Every movement of one product's stock in a period, oldest first, with what was left in
+ * that place and in all after each (C74) — for tracking and audits. The period is whole shop
+ * days; this month so far when none is given, at most five years.
+ *
+ * "What was left" is exact, not an estimate: it starts from what is held now, takes off
+ * everything that has moved since the period began, and then follows the movements one by one.
+ */
+export async function getProductStockHistory(context: AppContext, input: unknown): Promise<StockHistory> {
+  authorize(context, "report.stock.view");
+  const data = parseInput(historySchema, input);
+  const db = businessDb(context);
+  const product = await db.product.findFirst({ where: { id: data.productId }, select: { id: true, name: true, units: { where: { isBase: true }, select: { name: true } } } });
+  if (!product) throw new NotFoundError("That product could not be found.");
+
+  const today = shopToday();
+  const to = dayToDate(data.to) ? data.to : today;
+  const from = dayToDate(data.from) ? data.from : `${to.slice(0, 8)}01`;
+  if (from > to) throw new ValidationError("The first day of the period is after the last day.", { from: "Choose a first day on or before the last day." });
+  if (dayToDate(to)!.getTime() - dayToDate(from)!.getTime() > 5 * 366 * 24 * 60 * 60 * 1000) throw new ValidationError("A period can cover at most five years. Choose a shorter one.", { from: "At most five years." });
+  const start = shopDayStart(from)!;
+  const end = shopDayEnd(to)!;
+
+  const [locations, balances, since, total, movements] = await Promise.all([
+    db.location.findMany({ orderBy: { kind: "asc" }, select: { id: true, name: true } }),
+    db.stockBalance.findMany({ where: { productId: product.id }, select: { locationId: true, quantity: true } }),
+    // Everything that has moved from the start of the period until now, per place: taken off what is held now, it gives what was held when the period began.
+    db.stockMovement.groupBy({ by: ["locationId"], where: { productId: product.id, createdAt: { gte: start } }, _sum: { quantityDelta: true } }),
+    db.stockMovement.count({ where: { productId: product.id, createdAt: { gte: start, lt: end } } }),
+    db.stockMovement.findMany({
+      where: { productId: product.id, createdAt: { gte: start, lt: end } },
+      // The two halves of a transfer are written at the same instant: the half that leaves is
+      // listed first, so "left in all" never shows goods counted twice.
+      orderBy: [{ createdAt: "asc" }, { quantityDelta: "asc" }, { id: "asc" }],
+      take: STOCK_HISTORY_ROWS,
+      select: { id: true, createdAt: true, type: true, locationId: true, quantityDelta: true, unitName: true, unitQuantity: true, documentType: true, documentId: true, documentNumber: true, userName: true },
+    }),
+  ]);
+  const inPeriod = await db.stockMovement.groupBy({ by: ["locationId"], where: { productId: product.id, createdAt: { gte: start, lt: end } }, _sum: { quantityDelta: true } });
+  const signed = await Promise.all([
+    db.stockMovement.aggregate({ where: { productId: product.id, createdAt: { gte: start, lt: end }, quantityDelta: { gt: 0 } }, _sum: { quantityDelta: true } }),
+    db.stockMovement.aggregate({ where: { productId: product.id, createdAt: { gte: start, lt: end }, quantityDelta: { lt: 0 } }, _sum: { quantityDelta: true } }),
+  ]);
+
+  const amount = (value: { toFixed(places: number): string } | null | undefined) => new Decimal(value?.toFixed(3) ?? "0");
+  const held = new Map(locations.map((location) => [location.id, new Decimal(0)]));
+  for (const balance of balances) held.set(balance.locationId, amount(balance.quantity));
+  for (const group of since) held.set(group.locationId, (held.get(group.locationId) ?? new Decimal(0)).minus(amount(group._sum.quantityDelta)));
+  const asText = (map: Map<string, Decimal>) => ({
+    byLocation: Object.fromEntries([...map.entries()].map(([id, quantity]) => [id, quantityToString(quantity)])),
+    total: quantityToString([...map.values()].reduce((sum, quantity) => sum.plus(quantity), new Decimal(0))),
+  });
+  const opening = asText(held);
+  const closingMap = new Map(held);
+  for (const group of inPeriod) closingMap.set(group.locationId, (closingMap.get(group.locationId) ?? new Decimal(0)).plus(amount(group._sum.quantityDelta)));
+
+  const nameOf = new Map(locations.map((location) => [location.id, location.name]));
+  const running = new Map(held);
+  let all = [...held.values()].reduce((sum, quantity) => sum.plus(quantity), new Decimal(0));
+  const rows = movements.map((movement) => {
+    const delta = amount(movement.quantityDelta);
+    const there = (running.get(movement.locationId) ?? new Decimal(0)).plus(delta);
+    running.set(movement.locationId, there);
+    all = all.plus(delta);
+    return {
+      id: movement.id,
+      at: movement.createdAt,
+      type: movement.type,
+      locationId: movement.locationId,
+      locationName: nameOf.get(movement.locationId) ?? "",
+      quantity: quantityToString(delta),
+      entered: `${movement.unitQuantity.toFixed(3)} ${movement.unitName}`,
+      leftThere: quantityToString(there),
+      leftInAll: quantityToString(all),
+      userName: movement.userName,
+      documentNumber: movement.documentNumber,
+      documentHref: documentHref(movement.documentType, movement.documentId),
+    };
+  });
+
+  return {
+    product: { id: product.id, name: product.name, baseUnitName: product.units[0]?.name ?? "" },
+    period: { from, to },
+    locations,
+    opening,
+    closing: asText(closingMap),
+    cameIn: quantityToString(amount(signed[0]._sum.quantityDelta)),
+    wentOut: quantityToString(amount(signed[1]._sum.quantityDelta).negated()),
+    rows,
+    more: Math.max(0, total - rows.length),
+  };
 }

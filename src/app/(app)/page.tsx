@@ -14,6 +14,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ColumnChart } from "@/components/charts";
@@ -172,7 +173,12 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
         ))}
       </div>
 
-      {can(context, "dashboard.analysis.view") && <HomeAnalysis context={context} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />}
+      {can(context, "dashboard.analysis.view") && (
+        // Drawn when its figures are ready, without holding back the rest of the page.
+        <Suspense fallback={<p className="rounded-3xl border border-dashed p-8 text-center text-sm text-muted-foreground">Working out the best sellers…</p>}>
+          <HomeAnalysis context={context} from={chosen("from")} to={chosen("to")} picked={chosen("p")} />
+        </Suspense>
+      )}
 
       {snapshot.salesTrend !== null && snapshot.salesTrend.some((point) => point.total !== "0.00") && (
         <ColumnChart

@@ -6,8 +6,7 @@ import { moneyToString, sumMoney } from "@/lib/money";
 import { quantityToString } from "@/lib/quantity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
-import { listCustomers } from "@/server/business/customers";
-import { getSalesReport, madeIn, type Period, periodSchema, rangeOf } from "@/server/business/reports";
+import { madeIn, type Period, periodSchema, rangeOf } from "@/server/business/reports";
 import { businessDb } from "@/server/db/scoped";
 import { NotFoundError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
@@ -52,31 +51,68 @@ export type HomeAnalysis = { period: Period; products: TopRow[]; categories: Top
 
 /**
  * The five products, five categories and five customers with the highest net sales in a
- * period — for admins and owners. The figures are those of the sales report (by product, by
- * category) and of the customers list (purchases in the period), so they always agree with them.
+ * period — for admins and owners.
+ *
+ * The rules are the sales report's (by product, by category) and the customers list's
+ * (purchases in the period): sales made in the period less refunds for goods that came back
+ * in it. A test holds the two to the same figures. But the adding up is done by the DATABASE
+ * here, in six small questions, instead of calling those reports: they read every sale and
+ * line of the period and work out much more than a top five, and on the hosting server —
+ * which allows the app five database connections — that made the home page slow, and stall
+ * when someone clicked from one period to the next.
  */
 export async function getHomeAnalysis(context: AppContext, input: unknown = {}): Promise<HomeAnalysis> {
   authorize(context, "dashboard.analysis.view");
   const range = rangeOf(parseInput(periodSchema, input));
-  const period = { from: range.from, to: range.to };
-  const [byProduct, byCategory, buyers] = await Promise.all([
-    getSalesReport(context, { ...period, by: "product" }),
-    getSalesReport(context, { ...period, by: "category" }),
-    listCustomers(context, { ...period, sort: "purchases" }),
-  ]);
-  const top = (rows: { key: string; label: string; net: string }[]) =>
+  const db = businessDb(context);
+  const made = madeIn(range);
+  const cameBack = { gte: range.start, lt: range.end };
+
+  // One after another on purpose: the page around this is asking its own questions at the
+  // same moment, and there are only a few connections to go round.
+  const sold = await db.saleLine.groupBy({ by: ["productId"], where: { sale: made }, _sum: { lineTotal: true, discountAmount: true } });
+  const returned = await db.saleReturnLine.groupBy({ by: ["productId"], where: { return: { createdAt: cameBack } }, _sum: { refundAmount: true } });
+  const bought = await db.sale.groupBy({ by: ["customerId"], where: { ...made, customerId: { not: null } }, _sum: { total: true } });
+  const refunded = await db.saleReturn.groupBy({ by: ["customerId"], where: { createdAt: cameBack, customerId: { not: null } }, _sum: { refundTotal: true } });
+
+  const perProduct = new Map<string, Decimal>();
+  for (const group of sold) perProduct.set(group.productId, money(group._sum.lineTotal).minus(money(group._sum.discountAmount)));
+  for (const group of returned) perProduct.set(group.productId, (perProduct.get(group.productId) ?? new Decimal(0)).minus(money(group._sum.refundAmount)));
+  const perCustomer = new Map<string, Decimal>();
+  for (const group of bought) if (group.customerId) perCustomer.set(group.customerId, money(group._sum.total));
+  for (const group of refunded) {
+    // As on the customers list: what came back is taken off, but never below nothing.
+    if (group.customerId && perCustomer.has(group.customerId)) {
+      perCustomer.set(group.customerId, Decimal.max(perCustomer.get(group.customerId)!.minus(money(group._sum.refundTotal)), 0));
+    }
+  }
+
+  const products = perProduct.size > 0 ? await db.product.findMany({ where: { id: { in: [...perProduct.keys()] } }, select: { id: true, name: true, category: { select: { id: true, name: true } } } }) : [];
+  const topCustomers = [...perCustomer.entries()].filter(([, amount]) => amount.greaterThan(0));
+  const customers = topCustomers.length > 0 ? await db.customer.findMany({ where: { id: { in: topCustomers.map(([id]) => id) } }, select: { id: true, name: true } }) : [];
+
+  const perCategory = new Map<string, { label: string; amount: Decimal }>();
+  for (const product of products) {
+    // Under the category the product is in today, as in the sales report.
+    const category = product.category ?? { id: "none", name: "No category" };
+    const entry = perCategory.get(category.id) ?? { label: category.name, amount: new Decimal(0) };
+    entry.amount = entry.amount.plus(perProduct.get(product.id) ?? 0);
+    perCategory.set(category.id, entry);
+  }
+  // The largest first; of equals, by name — the same order the report and the list use.
+  const top = (rows: { key: string; label: string; amount: Decimal }[]): TopRow[] =>
     rows
-      .filter((row) => new Decimal(row.net).greaterThan(0))
+      .filter((row) => row.amount.greaterThan(0))
+      .sort((a, b) => b.amount.comparedTo(a.amount) || a.label.localeCompare(b.label))
       .slice(0, TOP)
-      .map((row) => ({ key: row.key, label: row.label, amount: row.net }));
+      .map((row) => ({ key: row.key, label: row.label, amount: moneyToString(row.amount) }));
+  const customerName = new Map(customers.map((customer) => [customer.id, customer.name]));
+
   return {
     period: { from: range.from, to: range.to, days: range.days },
-    products: top(byProduct.rows),
-    categories: top(byCategory.rows),
-    customers: buyers.customers
-      .filter((customer) => customer.purchases !== null && new Decimal(customer.purchases).greaterThan(0))
-      .slice(0, TOP)
-      .map((customer) => ({ key: customer.id, label: customer.name, amount: customer.purchases ?? "0.00" })),
+    products: top(products.map((product) => ({ key: product.id, label: product.name, amount: perProduct.get(product.id) ?? new Decimal(0) }))),
+    categories: top([...perCategory.entries()].map(([key, entry]) => ({ key, ...entry }))),
+    customers: top(topCustomers.map(([key, amount]) => ({ key, label: customerName.get(key) ?? "", amount }))),
   };
 }
 

@@ -118,6 +118,8 @@ export function PeriodLinks({
         return (
           <Link
             key={quick.label}
+            // Not fetched ahead of a click: each of these is a full set of figures for the server to work out.
+            prefetch={false}
             href={`${path}?from=${quick.from}&to=${quick.to}${periods ? `&p=${encodeURIComponent(quick.label)}` : ""}${extra}${anchor ? `#${anchor}` : ""}`}
             aria-current={chosen ? "true" : undefined}
             className={cn(

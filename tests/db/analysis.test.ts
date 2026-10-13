@@ -88,8 +88,13 @@ describe("the home page's best sellers", () => {
     expect(analysis.categories.map((row) => [row.label, row.amount])).toEqual([["No category", "6000.00"], ["Seeds", "1200.00"]]);
     expect(analysis.customers.map((row) => [row.label, row.amount])).toEqual([["Ada Okafor", "2900.00"], ["Bola Ade", "300.00"]]);
 
+    // The same figures, names and order as the sales report and the customers list give.
     const report = await getSalesReport(world.a.as.ADMIN, { ...day, by: "product" });
-    expect(analysis.products.map((row) => row.amount)).toEqual(report.rows.map((row) => row.net));
+    expect(analysis.products.map((row) => [row.label, row.amount])).toEqual(report.rows.map((row) => [row.label, row.net]));
+    const byCategory = await getSalesReport(world.a.as.ADMIN, { ...day, by: "category" });
+    expect(analysis.categories.map((row) => [row.label, row.amount])).toEqual(byCategory.rows.map((row) => [row.label, row.net]));
+    const listed = await listCustomers(world.a.as.ADMIN, { ...day, sort: "purchases" });
+    expect(analysis.customers.map((row) => [row.label, row.amount])).toEqual(listed.customers.map((customer) => [customer.name, customer.purchases]));
     expect(report.summary.netSales).toBe("7200.00");
     // The owner sees it too; nothing before today.
     expect((await getHomeAnalysis(world.ownerInA, day)).products).toHaveLength(2);

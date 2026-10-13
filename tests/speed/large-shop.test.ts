@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shopToday } from "@/lib/format";
+import { getHomeAnalysis } from "@/server/business/analysis";
 import { listProducts } from "@/server/business/catalog";
 import { getCustomer, listCustomers } from "@/server/business/customers";
 import { getDashboard } from "@/server/business/dashboard";
@@ -141,6 +142,8 @@ describe("a shop larger than the biggest one", () => {
     const halfYear = shopToday(new Date(Date.now() - (DAYS - 1) * DAY));
 
     await timed("Home page figures", 5, () => getDashboard(admin));
+    await timed("Home page best sellers, this month", 5, () => getHomeAnalysis(admin, { from: monthAgo, to: today }));
+    await timed("Home page best sellers, six months", 10, () => getHomeAnalysis(admin, { from: halfYear, to: today }));
     const catalogue = await timed("Opening the checkout (products and customers it keeps)", 5, () => getCheckoutCatalogue(cashier), kilobytes);
     await timed("The kit kept for selling without internet", 5, () => getOfflineKit(cashier), kilobytes);
 

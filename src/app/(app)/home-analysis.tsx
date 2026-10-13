@@ -12,14 +12,15 @@ import { ValidationError } from "@/server/errors";
  */
 export async function HomeAnalysis({ context, from, to, picked }: { context: AppContext; from: string; to: string; picked: string }) {
   const periods = analysisPeriods();
-  // Today, unless a period was chosen.
-  const asked = from || to ? { from, to } : { from: periods[0].from, to: periods[0].to };
+  // This month so far, unless a period was chosen.
+  const usual = periods[2];
+  const asked = from || to ? { from, to } : { from: usual.from, to: usual.to };
   let analysis: Awaited<ReturnType<typeof getHomeAnalysis>>;
   try {
     analysis = await getHomeAnalysis(context, asked);
   } catch (error) {
     if (!(error instanceof ValidationError)) throw error;
-    analysis = await getHomeAnalysis(context, { from: periods[0].from, to: periods[0].to });
+    analysis = await getHomeAnalysis(context, { from: usual.from, to: usual.to });
   }
   const { period } = analysis;
   const charts = [

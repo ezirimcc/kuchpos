@@ -175,7 +175,9 @@ export function TransferForm({ options }: { options: TransferOptions }) {
         <CardContent className="flex flex-col gap-4">
           {lines.map((line, index) => {
             const product = find(line.productName);
-            const available = product ? (product.stock[fromLocationId] ?? "0") : null;
+            // With a Storeroom batch chosen, what that batch holds (C76); otherwise the product's stock there.
+            const chosenBatch = product && batched(product) && outOfStoreroom ? product.storeroomBatches.find((batch) => batch.id === line.batchId) : undefined;
+            const available = product ? (chosenBatch?.quantity ?? product.stock[fromLocationId] ?? "0") : null;
             return (
               <div key={line.key} data-testid={`transfer-line-${index + 1}`} className="grid gap-3 border-b pb-4 last:border-0 last:pb-0 md:grid-cols-12">
                 <div className="flex flex-col gap-1.5 md:col-span-5">
@@ -194,8 +196,10 @@ export function TransferForm({ options }: { options: TransferOptions }) {
                   {line.productName && !product && <p className="text-xs text-muted-foreground">Choose a product from the list (only products with stock are shown).</p>}
                   {product && available !== null && (
                     <p className="text-xs text-muted-foreground" data-testid={`available-${index + 1}`}>
-                      In {locationName(fromLocationId)} now: {plainNumber(available)} {product.baseUnitName}
-                      {product.units.length > 1 && available !== "0" && ` (${breakIntoUnits(available, product.baseUnitName, product.units)})`}
+                      {chosenBatch ? `Batch ${chosenBatch.batchNumber ?? "with no number"} in ${locationName(fromLocationId)} now` : `In ${locationName(fromLocationId)} now`}:{" "}
+                      {plainNumber(available)} {product.baseUnitName}
+                      {product.units.length > 1 && plainNumber(available) !== "0" && ` (${breakIntoUnits(available, product.baseUnitName, product.units)})`}
+                      {chosenBatch && ` — ${plainNumber(product.stock[fromLocationId] ?? "0")} ${product.baseUnitName} of all batches`}
                     </p>
                   )}
                 </div>

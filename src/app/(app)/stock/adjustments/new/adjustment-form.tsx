@@ -142,7 +142,9 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
         <CardContent className="flex flex-col gap-4">
           {lines.map((line, index) => {
             const product = find(line.productName);
-            const available = product && locationId ? (product.stock[locationId] ?? "0") : null;
+            // Taking out of a chosen Storeroom batch: what that batch holds (C76).
+            const chosenBatch = product && batched(product) && line.direction === "remove" ? product.storeroomBatches.find((batch) => batch.id === line.batchId) : undefined;
+            const available = product && locationId ? (chosenBatch?.quantity ?? product.stock[locationId] ?? "0") : null;
             return (
               <div key={line.key} data-testid={`adjustment-line-${index + 1}`} className="grid gap-3 border-b pb-4 last:border-0 last:pb-0 md:grid-cols-12">
                 <div className="flex flex-col gap-1.5 md:col-span-4">
@@ -161,7 +163,7 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
                   {line.productName && !product && <p className="text-xs text-muted-foreground">Choose a product from the list.</p>}
                   {product && available !== null && (
                     <p className="text-xs text-muted-foreground" data-testid={`available-${index + 1}`}>
-                      In {locationName} now: {plainNumber(available)} {product.baseUnitName}
+                      {chosenBatch ? `Batch ${chosenBatch.batchNumber ?? "with no number"} in ${locationName} now` : `In ${locationName} now`}: {plainNumber(available)} {product.baseUnitName}
                       {product.units.length > 1 && plainNumber(available) !== "0" && ` (${breakIntoUnits(available, product.baseUnitName, product.units)})`}
                     </p>
                   )}

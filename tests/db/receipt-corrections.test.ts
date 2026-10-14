@@ -325,8 +325,15 @@ describe("correcting other fields", () => {
     await correctReceipt(world.a.as.ADMIN, input);
 
     const [row] = (await listExpiringSoon(world.a.as.ADMIN)).rows;
-    expect(row).toMatchObject({ batchNumber: "B-7", expiryDate: soon });
-    expect(await getDb().stockMovement.count()).toBe(1);
+    expect(row).toMatchObject({ batchNumber: "B-7", expiryDate: soon, quantity: "12.500" });
+    // The Storeroom's total is unchanged, but its batches are not: 12.5 kg out of B-1 and into B-7,
+    // recorded as two movements adding up to nothing, so each batch's history is whole (C78).
+    const movements = await getDb().stockMovement.findMany({ orderBy: [{ createdAt: "asc" }, { quantityDelta: "asc" }], include: { batch: true } });
+    expect(movements.map((movement) => [movement.type, movement.quantityDelta.toFixed(3), movement.batch?.batchNumber])).toEqual([
+      ["RECEIPT", "12.500", "B-1"],
+      ["RECEIPT_CORRECTION", "-12.500", "B-1"],
+      ["RECEIPT_CORRECTION", "12.500", "B-7"],
+    ]);
 
     // Taking the batch number off a product that needs one is still refused.
     const bad = await draft(id);

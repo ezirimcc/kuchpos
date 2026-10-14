@@ -371,6 +371,8 @@ test("moving a batch out of the Storeroom names it, and moving a later one warns
   // Choosing the later batch warns; it can still be moved.
   await batch.selectOption({ label: (await batch.locator("option").allInnerTexts()).find((label) => label.startsWith("LH-2026-09"))! });
   await expect(page.getByTestId("earlier-batch-1")).toContainText("LH-EARLY");
+  // The figure under the product is now that batch's own (C78).
+  await expect(page.getByTestId("available-1")).toContainText("Batch LH-2026-09 in Storeroom now: 20 litre");
   await line.getByLabel("Unit").selectOption({ label: await unitLabel(line, /^litre/) });
   await line.getByLabel("How many to move").fill("2");
   await page.getByRole("button", { name: "Move to Shelf" }).click();
@@ -388,6 +390,12 @@ test("moving a batch out of the Storeroom names it, and moving a later one warns
   await expect(page.getByTestId("batch-row")).toHaveCount(2);
   await expect(page.getByTestId("batch-row").first()).toContainText("LH-EARLY");
   await expect(page.getByTestId("batch-row").nth(1)).toContainText("18 litre");
+  // A batch opens to its own history (C78).
+  await page.getByTestId("batch-row").nth(1).getByRole("link", { name: "LH-2026-09" }).click();
+  await expect(page.getByRole("heading", { name: "Batch LH-2026-09" })).toBeVisible();
+  await expect(page.getByTestId("batch-status")).toContainText("In the Storeroom");
+  await expect(page.getByTestId("batch-history-row")).toHaveCount(2);
+  await expect(page.getByTestId("batch-history-row").last()).toContainText("18");
   // Expiring soon shows what is left of each Storeroom batch, not what was delivered.
   await page.goto("/stock/expiring?months=12");
   const later = page.getByTestId("expiring-row").filter({ hasText: "LH-2026-09" });

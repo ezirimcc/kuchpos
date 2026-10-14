@@ -48,10 +48,8 @@ export type TransferProduct = {
   /** For a product with batch numbers or expiry dates (C76): */
   tracksBatch: boolean;
   tracksExpiry: boolean;
-  /** what each batch holds in the Storeroom, the one that should go first on top; */
+  /** what each batch holds in the Storeroom, the one that should go first on top (finished batches are not offered). */
   storeroomBatches: BatchSummary[];
-  /** and every batch it has had, for goods going back into the Storeroom. */
-  knownBatches: { id: string; batchNumber: string | null; expiryDate: string | null }[];
 };
 
 export type TransferOptions = {
@@ -85,14 +83,13 @@ export async function getTransferOptions(context: AppContext): Promise<TransferO
       },
     }),
   ]);
-  const { batchesOf, knownBatches } = await storeroomBatchChoices(context, products, locations.find((location) => location.kind === "STOREROOM")?.id ?? null);
+  const batchesOf = await storeroomBatchChoices(context, products, locations.find((location) => location.kind === "STOREROOM")?.id ?? null);
   return {
     locations,
     products: products.map((product) => ({
       tracksBatch: product.tracksBatch,
       tracksExpiry: product.tracksExpiry,
       storeroomBatches: batchesOf.get(product.id) ?? [],
-      knownBatches: knownBatches.get(product.id) ?? [],
       id: product.id,
       name: product.name,
       code: product.code,
@@ -375,7 +372,17 @@ export async function transferStock(context: AppContext, input: unknown): Promis
             const message =
               `Only ${plainNumber(there?.quantity.toFixed(3) ?? "0")} ${unit} of "${productById.get(productId)!.name}" ` +
               `is in ${from.name}. You asked to move ${plainNumber(moving)} ${unit}.`;
-            for (const line of checked) if (line.productId === productId) short[`lines.${line.index}.quantity`] = message;
+            for (const line of checked) {
+              if (line.productId !== productId) continue;
+              // A line that names a Storeroom batch is told what that batch holds (C76).
+              const batch = outOfStoreroom ? batchOf.get(line.index) : undefined;
+              const inBatch = batch ? ((before.get(productId) ?? []).find((candidate) => candidate.id === batch.id)?.quantity ?? "0") : null;
+              short[`lines.${line.index}.quantity`] =
+                batch && inBatch !== null
+                  ? `Only ${plainNumber(inBatch)} ${unit} of batch ${batchLabel(batch)} is in ${from.name}. ` +
+                    `You asked to move ${plainNumber(quantityToString(line.baseQuantity))} ${unit}.`
+                  : message;
+            }
             continue;
           }
           const raised = await tx.stockBalance.updateMany({

@@ -204,19 +204,20 @@ export async function batchesAreBehind(db: Reader, productId: string): Promise<b
 
 /**
  * What the transfer and adjustment screens offer for products with batches: the batches each
- * holds in the Storeroom (the one that should go first on top), and every batch it has had (for
- * goods going back in). Stock from before batches were recorded is split into batches once
- * first, under each product's turn. Called by operations that have already checked permission.
+ * holds in the Storeroom, the one that should go first on top. A finished batch (nothing left
+ * in the Storeroom) is not offered; goods of it coming back are entered with its number and
+ * expiry date, which joins the same batch again. Stock from before batches were recorded is
+ * split into batches once first, under each product's turn. Called by operations that have
+ * already checked permission.
  */
 export async function storeroomBatchChoices(
   context: AppContext,
   products: { id: string; tracksBatch: boolean; tracksExpiry: boolean }[],
   storeroomId: string | null,
-): Promise<{ batchesOf: Map<string, BatchSummary[]>; knownBatches: Map<string, { id: string; batchNumber: string | null; expiryDate: string | null }[]> }> {
+): Promise<Map<string, BatchSummary[]>> {
   const db = businessDb(context);
   const batched = products.filter((product) => hasBatches(product));
-  const knownBatches = new Map<string, { id: string; batchNumber: string | null; expiryDate: string | null }[]>();
-  if (!storeroomId || batched.length === 0) return { batchesOf: new Map(), knownBatches };
+  if (!storeroomId || batched.length === 0) return new Map();
   const behind = (await Promise.all(batched.map(async (product) => ((await batchesAreBehind(db, product.id)) ? product.id : null)))).filter((id): id is string => id !== null);
   if (behind.length > 0) {
     await db.$transaction(
@@ -229,18 +230,7 @@ export async function storeroomBatchChoices(
       { isolationLevel: "ReadCommitted" },
     );
   }
-  const batchesOf = new Map(await Promise.all(batched.map(async (product) => [product.id, await batchesIn(db, product.id, storeroomId)] as const)));
-  const rows = await db.stockBatch.findMany({
-    where: { productId: { in: batched.map((product) => product.id) } },
-    orderBy: [{ expiryDate: "asc" }, { receivedOn: "asc" }],
-    select: { id: true, productId: true, batchNumber: true, expiryDate: true },
-  });
-  for (const row of rows) {
-    const list = knownBatches.get(row.productId) ?? [];
-    list.push({ id: row.id, batchNumber: row.batchNumber, expiryDate: row.expiryDate ? dateToDay(row.expiryDate) : null });
-    knownBatches.set(row.productId, list);
-  }
-  return { batchesOf, knownBatches };
+  return new Map(await Promise.all(batched.map(async (product) => [product.id, await batchesIn(db, product.id, storeroomId)] as const)));
 }
 
 /**

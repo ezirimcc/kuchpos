@@ -14,7 +14,6 @@ export type BatchProduct = {
   tracksBatch: boolean;
   tracksExpiry: boolean;
   storeroomBatches: BatchSummary[];
-  knownBatches: { id: string; batchNumber: string | null; expiryDate: string | null }[];
 };
 
 /** A batch as people read it: "LH-7 · expires 31 Mar 2027". */
@@ -26,7 +25,8 @@ export function batchText(batch: { batchNumber: string | null; expiryDate: strin
  * Which Storeroom batch a line moves (C76), on the transfer and adjustment screens.
  * Taking out: one of the batches the Storeroom holds, the one that should go first offered
  * first — with `warnEarlier`, a warning when a later one is chosen. Putting in: a batch the
- * product has had before, or a new batch number / expiry date.
+ * Storeroom still holds, or a batch number / expiry date typed in (a finished batch typed again
+ * joins that same batch).
  */
 export function BatchChoice({
   lineKey,
@@ -85,9 +85,9 @@ export function BatchChoice({
         <Label htmlFor={id}>{label}</Label>
         <NativeSelect id={id} value={value.batchId} onChange={(event) => onChange({ batchId: event.target.value })} aria-invalid={!!errors[`lines.${index}.batchId`]} required>
           <option value="">Choose the batch…</option>
-          {product.knownBatches.map((batch) => (
+          {product.storeroomBatches.map((batch) => (
             <option key={batch.id} value={batch.id}>
-              {batchText(batch)}
+              {batchText(batch)} · {plainNumber(batch.quantity)} {product.baseUnitName} already there
             </option>
           ))}
           <option value={NEW_BATCH}>A batch not listed here</option>

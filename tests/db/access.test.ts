@@ -77,6 +77,9 @@ function adjusting(business: World["a"]) {
 /** A sale by each business's cashier, of stock put on the Shelf for the purpose. */
 let saleInA = "";
 let saleInB = "";
+/** A batch on record in each business (C78). */
+let batchInA = "";
+let batchInB = "";
 
 function selling(business: World["a"]) {
   return {
@@ -207,6 +210,9 @@ beforeEach(async () => {
   tillInB = (await getDb().tillSession.findFirstOrThrow({ where: { businessId: world.b.id } })).id;
   saleInA = (await sales.postSale(world.a.as.CASHIER, selling(world.a))).id;
   saleInB = (await sales.postSale(world.b.as.CASHIER, selling(world.b))).id;
+  [batchInA, batchInB] = await Promise.all(
+    [world.a, world.b].map(async (business) => (await getDb().stockBatch.create({ data: { businessId: business.id, productId: business.product.id, batchNumber: "ACCESS-1", batchKey: "access-1|", receivedOn: new Date() } })).id),
+  );
   for (const business of [world.a, world.b]) {
     const { id } = await customers.createCustomer(business.as.ADMIN, { name: "Ada Okafor", phone: "08031234567" });
     await customers.setCreditLimit(business.as.ADMIN, { customerId: id, creditLimit: "100000" });
@@ -923,6 +929,12 @@ const OPERATIONS: Operation[] = [
     allowed: DELIVERY_VIEWERS,
     run: (context) => stock.getProductStockHistory(context, { productId: world.a.product.id }),
     runAgainstB: (context) => stock.getProductStockHistory(context, { productId: world.b.product.id }),
+  },
+  {
+    name: "stock.getBatchHistory",
+    allowed: DELIVERY_VIEWERS,
+    run: (context) => stock.getBatchHistory(context, { batchId: batchInA }),
+    runAgainstB: (context) => stock.getBatchHistory(context, { batchId: batchInB }),
   },
   {
     name: "stock.listStockOwed",

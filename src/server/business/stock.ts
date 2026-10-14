@@ -663,6 +663,10 @@ export type ProductBatches = {
     receivedOn: string;
     quantity: string;
   }[];
+  /** Batches that were in the Storeroom and are now used up there, latest expiry first (C78). Kept for the record; offered nowhere. */
+  finished: { id: string; batchNumber: string | null; expiryDate: string | null; receivedOn: string }[];
+  /** Whether this person may open a batch's history (`report.stock.view`). */
+  canOpenHistory: boolean;
 };
 
 /**
@@ -685,7 +689,8 @@ export async function getProductBatches(context: AppContext, input: unknown): Pr
   ]);
   const baseUnitName = product.units[0]?.name ?? "";
   const onShelf = quantityToString(product.stockBalances.filter((balance) => balance.location.kind === "SHELF").reduce((sum, balance) => sum.plus(balance.quantity.toFixed(3)), new Decimal(0)));
-  if (!product.tracksBatch && !product.tracksExpiry) return { tracked: false, baseUnitName, storeroom, onShelf, batches: [] };
+  const canOpenHistory = can(context, "report.stock.view");
+  if (!product.tracksBatch && !product.tracksExpiry) return { tracked: false, baseUnitName, storeroom, onShelf, batches: [], finished: [], canOpenHistory };
 
   if (await batchesAreBehind(db, product.id)) {
     await db.$transaction(
@@ -700,11 +705,22 @@ export async function getProductBatches(context: AppContext, input: unknown): Pr
   const today = shopToday();
   const soonUntil = addMonths(today, business?.expiringSoonMonths ?? 3);
   const rows = storeroom ? await batchesIn(db, product.id, storeroom.id) : [];
+  // Finished: was in the Storeroom (a movement there names it) and nothing of it is left there.
+  const finished = storeroom
+    ? await db.stockBatch.findMany({
+        where: { productId: product.id, movements: { some: { locationId: storeroom.id } }, balances: { none: { locationId: storeroom.id, quantity: { gt: 0 } } } },
+        orderBy: [{ expiryDate: "desc" }, { receivedOn: "desc" }],
+        take: 200,
+        select: { id: true, batchNumber: true, expiryDate: true, receivedOn: true },
+      })
+    : [];
   return {
     tracked: true,
     baseUnitName,
     storeroom,
     onShelf,
+    canOpenHistory,
+    finished: finished.map((batch) => ({ id: batch.id, batchNumber: batch.batchNumber, expiryDate: batch.expiryDate ? dateToDay(batch.expiryDate) : null, receivedOn: dateToDay(batch.receivedOn) })),
     batches: rows.map((row) => ({
       id: row.id,
       batchNumber: row.batchNumber,
@@ -737,6 +753,8 @@ export type StockHistoryRow = {
   userName: string;
   /** The Storeroom batch it went into or came out of (C76): "B12 (expires 1 Mar 2027)"; null when none was recorded. */
   batch: string | null;
+  /** That batch, for a link to its own history (C78). */
+  batchId: string | null;
   documentNumber: string;
   /** Where the document can be opened; null when it has no page of its own. */
   documentHref: string | null;
@@ -765,6 +783,102 @@ const historySchema = z.object({
 });
 
 /** Where the document behind a movement can be opened. */
+// ---------------------------------------------------------------------------
+// One batch's history (C78)
+// ---------------------------------------------------------------------------
+
+export type BatchHistory = {
+  batch: {
+    id: string;
+    batchNumber: string | null;
+    expiryDate: string | null;
+    expired: boolean;
+    receivedOn: string;
+  };
+  product: { id: string; name: string; baseUnitName: string };
+  storeroomName: string;
+  /** What is left of it in the Storeroom now; "0.000" once it is finished. */
+  left: string;
+  /** When the last of it left the Storeroom; null while some is left. */
+  finishedAt: Date | null;
+  /** Stock that was already in the Storeroom when batches began to be recorded, given to this batch then (no movement of its own). */
+  heldBeforeRecording: string;
+  cameIn: string;
+  wentOut: string;
+  /** Oldest first, each with what was left of the batch afterwards. At most `STOCK_HISTORY_ROWS`; `more` says how many are not shown. */
+  rows: (Omit<StockHistoryRow, "locationId" | "locationName" | "leftThere" | "leftInAll" | "batch" | "batchId"> & { leftInBatch: string })[];
+  more: number;
+};
+
+/**
+ * Everything that has happened to one Storeroom batch (C78): every movement that names it, with
+ * what was left of the batch after each, and whether it is finished. A finished batch is no
+ * longer offered anywhere, but this history stays.
+ */
+export async function getBatchHistory(context: AppContext, input: unknown): Promise<BatchHistory> {
+  authorize(context, "report.stock.view");
+  const { batchId } = parseInput(z.object({ batchId: z.string().uuid("That batch could not be found.") }), input);
+  const db = businessDb(context);
+  const batch = await db.stockBatch.findFirst({
+    where: { id: batchId },
+    select: { id: true, batchNumber: true, expiryDate: true, receivedOn: true, product: { select: { id: true, name: true, units: { where: { isBase: true }, select: { name: true } } } } },
+  });
+  if (!batch) throw new NotFoundError("That batch could not be found.");
+  const storeroom = await db.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true, name: true } });
+  if (!storeroom) throw new NotFoundError("That batch could not be found.");
+  // Old stock is split into batches once, the first time it is looked at.
+  if (await batchesAreBehind(db, batch.product.id)) await settleAllStoreroomBatches(context, storeroom.id);
+
+  const where = { batchId: batch.id, locationId: storeroom.id };
+  const [balance, all, total, movements, signed] = await Promise.all([
+    db.stockBatchBalance.findFirst({ where, select: { quantity: true } }),
+    db.stockMovement.aggregate({ where, _sum: { quantityDelta: true } }),
+    db.stockMovement.count({ where }),
+    db.stockMovement.findMany({
+      where,
+      orderBy: [{ createdAt: "asc" }, { quantityDelta: "asc" }, { id: "asc" }],
+      take: STOCK_HISTORY_ROWS,
+      select: { id: true, createdAt: true, type: true, quantityDelta: true, unitName: true, unitQuantity: true, documentType: true, documentId: true, documentNumber: true, userName: true },
+    }),
+    Promise.all([
+      db.stockMovement.aggregate({ where: { ...where, quantityDelta: { gt: 0 } }, _sum: { quantityDelta: true } }),
+      db.stockMovement.aggregate({ where: { ...where, quantityDelta: { lt: 0 } }, _sum: { quantityDelta: true } }),
+    ]),
+  ]);
+  const amount = (value: { toFixed(places: number): string } | null | undefined) => new Decimal(value?.toFixed(3) ?? "0");
+  const left = amount(balance?.quantity);
+  // What the movements do not account for was given to the batch when batches began to be recorded.
+  const before = left.minus(amount(all._sum.quantityDelta));
+  let running = before;
+  const rows = movements.map((movement) => {
+    running = running.plus(amount(movement.quantityDelta));
+    return {
+      id: movement.id,
+      at: movement.createdAt,
+      type: movement.type,
+      quantity: quantityToString(amount(movement.quantityDelta)),
+      entered: `${movement.unitQuantity.toFixed(3)} ${movement.unitName}`,
+      leftInBatch: quantityToString(running),
+      userName: movement.userName,
+      documentNumber: movement.documentNumber,
+      documentHref: documentHref(movement.documentType, movement.documentId),
+    };
+  });
+  const expiryDate = batch.expiryDate ? dateToDay(batch.expiryDate) : null;
+  return {
+    batch: { id: batch.id, batchNumber: batch.batchNumber, expiryDate, expired: expiryDate !== null && expiryDate < shopToday(), receivedOn: dateToDay(batch.receivedOn) },
+    product: { id: batch.product.id, name: batch.product.name, baseUnitName: batch.product.units[0]?.name ?? "" },
+    storeroomName: storeroom.name,
+    left: quantityToString(left),
+    finishedAt: left.greaterThan(0) ? null : (movements.at(-1)?.createdAt ?? null),
+    heldBeforeRecording: quantityToString(before),
+    cameIn: quantityToString(amount(signed[0]._sum.quantityDelta)),
+    wentOut: quantityToString(amount(signed[1]._sum.quantityDelta).negated()),
+    rows,
+    more: Math.max(0, total - rows.length),
+  };
+}
+
 function documentHref(documentType: string, documentId: string): string | null {
   if (documentType === "sale") return `/sales/${documentId}`;
   if (documentType === "goods_receipt") return `/stock/receipts/${documentId}`;
@@ -810,7 +924,7 @@ export async function getProductStockHistory(context: AppContext, input: unknown
       // listed first, so "left in all" never shows goods counted twice.
       orderBy: [{ createdAt: "asc" }, { quantityDelta: "asc" }, { id: "asc" }],
       take: STOCK_HISTORY_ROWS,
-      select: { id: true, createdAt: true, type: true, locationId: true, quantityDelta: true, unitName: true, unitQuantity: true, documentType: true, documentId: true, documentNumber: true, userName: true, batch: { select: { batchNumber: true, expiryDate: true } } },
+      select: { id: true, createdAt: true, type: true, locationId: true, quantityDelta: true, unitName: true, unitQuantity: true, documentType: true, documentId: true, documentNumber: true, userName: true, batchId: true, batch: { select: { batchNumber: true, expiryDate: true } } },
     }),
   ]);
   const inPeriod = await db.stockMovement.groupBy({ by: ["locationId"], where: { productId: product.id, createdAt: { gte: start, lt: end } }, _sum: { quantityDelta: true } });
@@ -853,6 +967,7 @@ export async function getProductStockHistory(context: AppContext, input: unknown
       batch: movement.batch
         ? [movement.batch.batchNumber ?? "No batch number", movement.batch.expiryDate ? `(expires ${formatDay(dateToDay(movement.batch.expiryDate))})` : ""].filter(Boolean).join(" ")
         : null,
+      batchId: movement.batchId,
       documentNumber: movement.documentNumber,
       documentHref: documentHref(movement.documentType, movement.documentId),
     };

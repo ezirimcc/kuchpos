@@ -522,19 +522,60 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
             // Batches put in: added. Batches taken back: from that batch, as far as it still holds
             // them; the rest from the batches that go first (the Storeroom's total was checked above).
             const changes = [...(perBatch.get(productId)?.values() ?? [])].sort((a, b) => a.delta.comparedTo(b.delta));
+            // What each batch gained or lost, so the Storeroom's movements can name their batch.
+            const parts: { batchId: string; quantity: Decimal }[] = [];
             for (const change of changes) {
               if (change.delta.isZero()) continue;
               const batch = await batchFor(tx, context, { productId, batchNumber: change.batchNumber, expiryDay: change.expiryDay, receivedOn: dateToDay(receivedDate) });
               if (change.delta.greaterThan(0)) {
                 await addToBatch(tx, context, { batchId: batch.id, productId, locationId: storeroomId, quantity: change.delta });
+                parts.push({ batchId: batch.id, quantity: change.delta });
                 continue;
               }
               const needed = change.delta.negated();
               const held = new Decimal((await batchesIn(tx, productId, storeroomId)).find((entry) => entry.id === batch.id)?.quantity ?? "0");
               const fromBatch = Decimal.min(held, needed);
-              if (fromBatch.greaterThan(0)) await takeFromBatch(tx, { batchId: batch.id, locationId: storeroomId, quantity: fromBatch });
-              if (needed.greaterThan(fromBatch)) await takeFirstBatches(tx, { productId, locationId: storeroomId, quantity: needed.minus(fromBatch) });
+              if (fromBatch.greaterThan(0)) {
+                await takeFromBatch(tx, { batchId: batch.id, locationId: storeroomId, quantity: fromBatch });
+                parts.push({ batchId: batch.id, quantity: fromBatch.negated() });
+              }
+              if (needed.greaterThan(fromBatch)) {
+                for (const taken of await takeFirstBatches(tx, { productId, locationId: storeroomId, quantity: needed.minus(fromBatch) })) {
+                  parts.push({ batchId: taken.batchId, quantity: taken.quantity.negated() });
+                }
+              }
             }
+            // The Storeroom's movement for this product becomes one movement per batch (a batch number
+            // corrected alone gives one out and one in, adding up to nothing). Anything the batches
+            // do not account for stays a movement with no batch.
+            const at = movements.findIndex((row) => row.productId === productId && row.locationId === storeroomId);
+            const whole = at >= 0 ? new Decimal(String(movements[at].quantityDelta)) : new Decimal(0);
+            const template = at >= 0 ? movements.splice(at, 1)[0] : null;
+            const base = template ?? {
+              businessId,
+              productId,
+              locationId: storeroomId,
+              type: "RECEIPT_CORRECTION" as const,
+              quantityDelta: "0",
+              unitName: baseUnits.get(productId) ?? "",
+              unitFactor: "1",
+              unitQuantity: "0",
+              documentType: "goods_receipt_correction",
+              documentId: snapshot.id,
+              documentNumber: correctionNumber,
+              userId: context.actor.userId,
+              userName: context.actor.name,
+            };
+            const byBatch = new Map<string, Decimal>();
+            for (const part of parts) byBatch.set(part.batchId, (byBatch.get(part.batchId) ?? new Decimal(0)).plus(part.quantity));
+            let accounted = new Decimal(0);
+            for (const [batchId, quantity] of byBatch) {
+              if (quantity.isZero()) continue;
+              accounted = accounted.plus(quantity);
+              movements.push({ ...base, batchId, quantityDelta: quantityToString(quantity), unitQuantity: quantityToString(quantity) });
+            }
+            const rest = whole.minus(accounted);
+            if (!rest.isZero()) movements.push({ ...base, batchId: null, quantityDelta: quantityToString(rest), unitQuantity: quantityToString(rest) });
             // A delivery that no longer came into the Storeroom, or a product without batch figures
             // on its lines, leaves the Storeroom's total and its batches apart: put them right.
             await settleStoreroomBatches(tx, context, productId);

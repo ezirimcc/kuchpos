@@ -7,10 +7,10 @@ import { runSetupImport } from "@/server/business/imports";
 import { postReturn } from "@/server/business/returns";
 import { cancelSale, postSale } from "@/server/business/sales";
 import { correctReceipt, getCorrectionOptions } from "@/server/business/receipt-corrections";
-import { getProductBatches, getProductStockHistory, receiveGoods } from "@/server/business/stock";
+import { getBatchHistory, getProductBatches, getProductStockHistory, receiveGoods } from "@/server/business/stock";
 import { openTill } from "@/server/business/till";
 import { exportList } from "@/server/business/exports";
-import { getTransfer, listTransfers, transferStock } from "@/server/business/transfers";
+import { getTransfer, getTransferOptions, listTransfers, transferStock } from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { makeWorkbook } from "../support/workbook";
@@ -122,6 +122,9 @@ describe("batches in the Storeroom", () => {
     expect((await fieldErrorsOf(move(world.a.storeroomId, world.a.shelfId, "16", { batchId: await batchId("B-SOON") })))["lines.0.quantity"]).toMatch(/Only 15 litre of batch B-SOON/);
     expect(await batches()).toEqual([["B-SOON", soon, "15.000"], ["B-LATE", late, "26.000"]]);
 
+    // More than the whole Storeroom holds: still told what the BATCH holds.
+    expect((await fieldErrorsOf(move(world.a.storeroomId, world.a.shelfId, "50", { batchId: await batchId("B-SOON") })))["lines.0.quantity"]).toMatch(/^Only 15 litre of batch B-SOON .* You asked to move 50 litre\.$/);
+
   });
 
   it("move back in with a transfer naming a batch on record, or a new batch number and expiry date", async () => {
@@ -212,6 +215,12 @@ describe("batches in the Storeroom", () => {
     first.lines[0].batchNumber = "B-1";
     await correctReceipt(world.a.as.ADMIN, first);
     expect(await batches()).toEqual([["B-1", soon, "10.000"], ["B-OTHER", late, "5.000"]]);
+    // …recorded as 10 out of the mistyped batch and 10 into the right one, so each batch's history is whole (C78).
+    const typo = await getBatchHistory(world.a.as.ADMIN, { batchId: await batchId("B-TYPO") });
+    expect(typo.rows.map((row) => [row.type, row.quantity, row.leftInBatch])).toEqual([["RECEIPT", "10.000", "10.000"], ["RECEIPT_CORRECTION", "-10.000", "0.000"]]);
+    expect(typo).toMatchObject({ left: "0.000", heldBeforeRecording: "0.000" });
+    expect(typo.finishedAt).not.toBeNull();
+    expect((await getBatchHistory(world.a.as.ADMIN, { batchId: await batchId("B-1") })).rows.map((row) => [row.type, row.quantity])).toEqual([["RECEIPT_CORRECTION", "10.000"]]);
     // Fewer arrived.
     const second = await draft();
     second.lines[0].quantity = "7";
@@ -222,6 +231,47 @@ describe("batches in the Storeroom", () => {
     third.locationId = world.a.shelfId;
     await correctReceipt(world.a.as.ADMIN, third);
     expect(await batches()).toEqual([["B-OTHER", late, "5.000"]]);
+  });
+
+  it("are finished when the Storeroom has none left: offered nowhere, but their history stays and continues if the same batch comes back (C78)", async () => {
+    await receive("10", "B-1", soon);
+    await receive("5", "B-2", late);
+    await move(world.a.storeroomId, world.a.shelfId, "4", { batchId: await batchId("B-1") });
+    await move(world.a.storeroomId, world.a.shelfId, "6", { batchId: await batchId("B-1") });
+
+    const history = await getBatchHistory(world.a.as.STOREKEEPER, { batchId: await batchId("B-1") });
+    expect(history).toMatchObject({ product: { name: "Liquid Herbicide", baseUnitName: "litre" }, batch: { batchNumber: "B-1", expiryDate: soon }, left: "0.000", cameIn: "10.000", wentOut: "10.000", more: 0 });
+    expect(history.rows.map((row) => [row.type, row.quantity, row.leftInBatch, row.documentNumber])).toEqual([
+      ["RECEIPT", "10.000", "10.000", "GR-000001"],
+      ["TRANSFER_OUT", "-4.000", "6.000", "TR-000001"],
+      ["TRANSFER_OUT", "-6.000", "0.000", "TR-000002"],
+    ]);
+    expect(history.finishedAt).toEqual(history.rows[2].at);
+
+    // Not offered any more — not to move out, not to move in, not on the product's list — but listed as finished.
+    const options = await getTransferOptions(world.a.as.STOREKEEPER);
+    expect(options.products.find((product) => product.id === herbicide.id)!.storeroomBatches.map((batch) => batch.batchNumber)).toEqual(["B-2"]);
+    const card = await getProductBatches(world.a.as.CASHIER, { productId: herbicide.id });
+    expect(card.batches.map((batch) => batch.batchNumber)).toEqual(["B-2"]);
+    expect(card.finished.map((batch) => batch.batchNumber)).toEqual(["B-1"]);
+    expect(card.canOpenHistory).toBe(false);
+    expect((await getProductBatches(world.a.as.STOREKEEPER, { productId: herbicide.id })).canOpenHistory).toBe(true);
+    // A batch delivered straight to the Shelf was never in the Storeroom: it is not "finished".
+    await receive("3", "SHELF-ONLY", late, world.a.shelfId);
+    expect((await getProductBatches(world.a.as.ADMIN, { productId: herbicide.id })).finished.map((batch) => batch.batchNumber)).toEqual(["B-1"]);
+
+    // Two litres of it come back, typed by number and expiry date: the same batch, its history goes on.
+    await move(world.a.shelfId, world.a.storeroomId, "2", { batchNumber: "b-1", expiryDate: soon });
+    const again = await getBatchHistory(world.a.as.ADMIN, { batchId: await batchId("B-1") });
+    expect(again).toMatchObject({ left: "2.000", finishedAt: null });
+    expect(again.rows.at(-1)).toMatchObject({ type: "TRANSFER_IN", quantity: "2.000", leftInBatch: "2.000" });
+    // The product's stock history links each Storeroom row to its batch.
+    const rows = (await getProductStockHistory(world.a.as.ADMIN, { productId: herbicide.id, from: today, to: today })).rows;
+    expect(rows.filter((row) => row.locationName === "Storeroom").every((row) => row.batchId !== null)).toBe(true);
+
+    // Another business's batch, or no such batch: not found; a cashier may not look.
+    await expect(getBatchHistory(world.b.as.ADMIN, { batchId: await batchId("B-1") })).rejects.toBeInstanceOf(NotFoundError);
+    await expect(getBatchHistory(world.a.as.CASHIER, { batchId: await batchId("B-1") })).rejects.toBeInstanceOf(ForbiddenError);
   });
 
   it("are split once for Storeroom stock from before batches were recorded: what came in first went first; and only a business's own product is shown", async () => {

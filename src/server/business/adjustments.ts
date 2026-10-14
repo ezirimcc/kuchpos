@@ -386,11 +386,10 @@ export type AdjustmentProduct = {
   units: { id: string; name: string; factor: string; isBase: boolean }[];
   /** How much is in each location now, in base units (a missing location means none). */
   stock: Record<string, string>;
-  /** For a product with batch numbers or expiry dates (C76): its batches in the Storeroom, the one that should go first on top, and every batch it has had. */
+  /** For a product with batch numbers or expiry dates (C76): its batches in the Storeroom, the one that should go first on top (finished batches are not offered). */
   tracksBatch: boolean;
   tracksExpiry: boolean;
   storeroomBatches: BatchSummary[];
-  knownBatches: { id: string; batchNumber: string | null; expiryDate: string | null }[];
 };
 
 export type AdjustmentOptions = {
@@ -424,7 +423,7 @@ export async function getAdjustmentOptions(context: AppContext): Promise<Adjustm
       },
     }),
   ]);
-  const { batchesOf, knownBatches } = await storeroomBatchChoices(context, products, locations.find((location) => location.kind === "STOREROOM")?.id ?? null);
+  const batchesOf = await storeroomBatchChoices(context, products, locations.find((location) => location.kind === "STOREROOM")?.id ?? null);
   return {
     appliesAtOnce: can(context, "stock.adjust.approve"),
     locations,
@@ -432,7 +431,6 @@ export async function getAdjustmentOptions(context: AppContext): Promise<Adjustm
       tracksBatch: product.tracksBatch,
       tracksExpiry: product.tracksExpiry,
       storeroomBatches: batchesOf.get(product.id) ?? [],
-      knownBatches: knownBatches.get(product.id) ?? [],
       id: product.id,
       name: product.name,
       code: product.code,

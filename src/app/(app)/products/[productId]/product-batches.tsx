@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -41,7 +42,13 @@ export async function ProductBatches({ context, productId }: { context: AppConte
               {data.batches.map((batch, index) => (
                 <TableRow key={batch.id} data-testid="batch-row" className={batch.soon ? "bg-destructive/10 hover:bg-destructive/15" : undefined}>
                   <TableCell className="font-medium">
-                    {batch.batchNumber ?? <span className="font-normal text-muted-foreground">No batch number</span>}
+                    {data.canOpenHistory ? (
+                      <Link href={`/stock/batches/${batch.id}`} className="text-link underline-offset-4 hover:underline" title="See everything that happened to this batch">
+                        {batch.batchNumber ?? "No batch number"}
+                      </Link>
+                    ) : (
+                      (batch.batchNumber ?? <span className="font-normal text-muted-foreground">No batch number</span>)
+                    )}
                     {index === 0 && data.batches.length > 1 && (
                       <Badge variant="success" className="ml-2" data-testid="batch-first">
                         Goes first
@@ -65,7 +72,31 @@ export async function ProductBatches({ context, productId }: { context: AppConte
             </TableBody>
           </Table>
         )}
-        <p className="text-xs text-muted-foreground">Rows in red expire soon or have expired.</p>
+        <p className="text-xs text-muted-foreground">
+          Rows in red expire soon or have expired.{data.canOpenHistory && " Open a batch to see everything that happened to it."}
+        </p>
+        {data.finished.length > 0 && (
+          // Used up in the Storeroom: offered nowhere any more, but kept for the record (C78).
+          <details className="rounded-2xl border px-4 py-3 text-sm" data-testid="finished-batches">
+            <summary className="cursor-pointer font-medium">Finished batches ({data.finished.length})</summary>
+            <ul className="mt-3 flex flex-col gap-1.5">
+              {data.finished.map((batch) => (
+                <li key={batch.id} data-testid="finished-batch">
+                  {data.canOpenHistory ? (
+                    <Link href={`/stock/batches/${batch.id}`} className="text-link underline-offset-4 hover:underline">
+                      {batch.batchNumber ?? "No batch number"}
+                    </Link>
+                  ) : (
+                    (batch.batchNumber ?? "No batch number")
+                  )}
+                  <span className="text-muted-foreground">
+                    {batch.expiryDate ? ` · expires ${formatDay(batch.expiryDate)}` : ""} · first came in {formatDay(batch.receivedOn)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </CardContent>
     </Card>
   );

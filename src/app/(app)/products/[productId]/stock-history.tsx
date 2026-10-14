@@ -94,7 +94,18 @@ export async function StockHistory({ context, productId, from, to, picked }: { c
                   <TableCell>{MOVEMENT_LABELS[row.type] ?? row.type}</TableCell>
                   <TableCell>
                     {row.locationName}
-                    {row.batch && <span className="block text-xs text-muted-foreground" data-testid="history-batch">Batch {row.batch}</span>}
+                    {row.batch && (
+                      <span className="block text-xs text-muted-foreground" data-testid="history-batch">
+                        Batch{" "}
+                        {row.batchId ? (
+                          <Link href={`/stock/batches/${row.batchId}`} className="text-link underline-offset-4 hover:underline">
+                            {row.batch}
+                          </Link>
+                        ) : (
+                          row.batch
+                        )}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className={out ? "text-right text-destructive tabular-nums" : "text-right text-emerald-700 tabular-nums dark:text-emerald-400"}>
                     {signedNumber(row.quantity)}

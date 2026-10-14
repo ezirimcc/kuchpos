@@ -9,7 +9,8 @@ import { cancelSale, postSale } from "@/server/business/sales";
 import { correctReceipt, getCorrectionOptions } from "@/server/business/receipt-corrections";
 import { getProductBatches, getProductStockHistory, receiveGoods } from "@/server/business/stock";
 import { openTill } from "@/server/business/till";
-import { getTransfer, transferStock } from "@/server/business/transfers";
+import { exportList } from "@/server/business/exports";
+import { getTransfer, listTransfers, transferStock } from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { makeWorkbook } from "../support/workbook";
@@ -112,6 +113,10 @@ describe("batches in the Storeroom", () => {
     const second = await getTransfer(world.a.as.STOREKEEPER, { transferId: passedOver.id });
     expect(first.lines[0]).toMatchObject({ batchNumber: "B-SOON", expiryDate: soon, hasBatch: true, earlierBatchWaiting: false });
     expect(second.lines[0]).toMatchObject({ batchNumber: "B-LATE", expiryDate: late, earlierBatchWaiting: true });
+    // The transfers list flags the second one for an auditor, and the export says so too.
+    const listed = await listTransfers(world.a.as.ACCOUNTANT);
+    expect(listed.transfers.map((row) => [row.number, row.batchesPassedOver])).toEqual([[2, 1], [1, 0]]);
+    expect((await exportList(world.a.as.ADMIN, { list: "transfers" })).rows.map((row) => row.at(-1))).toEqual(["Yes", "No"]);
 
     // More than the batch holds is refused, even though the Storeroom holds enough in all.
     expect((await fieldErrorsOf(move(world.a.storeroomId, world.a.shelfId, "16", { batchId: await batchId("B-SOON") })))["lines.0.quantity"]).toMatch(/Only 15 litre of batch B-SOON/);

@@ -242,3 +242,36 @@ export async function storeroomBatchChoices(
   }
   return { batchesOf, knownBatches };
 }
+
+/**
+ * Splits the Storeroom stock of every product whose batches do not add up (stock from before
+ * batches were recorded, or a product that has started tracking batches) — each in its own
+ * short transaction under that product's turn. Found with a few grouped reads, so a list of all
+ * batches can call it every time. Called by operations that have already checked permission.
+ */
+export async function settleAllStoreroomBatches(context: AppContext, storeroomId: string): Promise<void> {
+  const db = businessDb(context);
+  const tracked = await db.product.findMany({ where: { OR: [{ tracksBatch: true }, { tracksExpiry: true }] }, select: { id: true } });
+  if (tracked.length === 0) return;
+  const ids = tracked.map((product) => product.id);
+  const [balances, inBatches, elsewhere] = await Promise.all([
+    db.stockBalance.findMany({ where: { locationId: storeroomId, productId: { in: ids } }, select: { productId: true, quantity: true } }),
+    db.stockBatchBalance.groupBy({ by: ["productId"], where: { locationId: storeroomId, productId: { in: ids } }, _sum: { quantity: true } }),
+    db.stockBatchBalance.groupBy({ by: ["productId"], where: { locationId: { not: storeroomId }, productId: { in: ids } }, _count: { _all: true } }),
+  ]);
+  const held = new Map(balances.map((balance) => [balance.productId, balance.quantity.toFixed(3)]));
+  const recorded = new Map(inBatches.map((group) => [group.productId, group._sum.quantity?.toFixed(3) ?? "0.000"]));
+  const behind = new Set(elsewhere.map((group) => group.productId));
+  for (const id of ids) {
+    if (!new Decimal(held.get(id) ?? "0").equals(recorded.get(id) ?? "0")) behind.add(id);
+  }
+  for (const productId of [...behind].sort()) {
+    await db.$transaction(
+      async (tx) => {
+        await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
+        await settleStoreroomBatches(tx, context, productId);
+      },
+      { isolationLevel: "ReadCommitted" },
+    );
+  }
+}

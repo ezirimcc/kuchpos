@@ -486,6 +486,8 @@ export type TransferSummary = {
   products: string[];
   createdByName: string;
   createdAt: Date;
+  /** How many lines moved a later Storeroom batch while one that should go first was still there (C76) — flagged in the list for audits. */
+  batchesPassedOver: number;
 };
 
 const dayFilter = z
@@ -547,9 +549,19 @@ export async function listTransfers(
       },
     }),
   ]);
+  const passedOver = new Map(
+    (
+      await db.stockTransferLine.groupBy({
+        by: ["transferId"],
+        where: { transferId: { in: rows.map((row) => row.id) }, earlierBatchWaiting: true },
+        _count: { _all: true },
+      })
+    ).map((group) => [group.transferId, group._count._all]),
+  );
   return {
     canTransfer: can(context, "stock.transfer"),
     transfers: rows.map((row) => ({
+      batchesPassedOver: passedOver.get(row.id) ?? 0,
       id: row.id,
       number: row.number,
       fromLocationName: row.fromLocationName,
@@ -596,6 +608,7 @@ export async function getTransfer(context: AppContext, input: unknown): Promise<
     fromLocationName: row.fromLocationName,
     toLocationName: row.toLocationName,
     lineCount: row.lines.length,
+    batchesPassedOver: row.lines.filter((line) => line.earlierBatchWaiting).length,
     note: row.note,
     createdByName: row.createdByName,
     createdAt: row.createdAt,

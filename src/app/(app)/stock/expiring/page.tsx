@@ -8,7 +8,7 @@ import { Pagination } from "@/components/pagination";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EXPIRY_MONTH_CHOICES } from "@/lib/expiry";
-import { formatDay, nairaFromText, plainNumber, receiptNumber } from "@/lib/format";
+import { breakIntoUnits, formatDay, nairaFromText, plainNumber } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { listExpiringSoon } from "@/server/business/stock";
 import { StockTabs } from "../stock-tabs";
@@ -29,7 +29,7 @@ export default async function ExpiringPage({ searchParams }: PageProps<"/stock/e
       <PageHeader
         icon={CalendarClock}
         title="Expiring soon"
-        description={`Deliveries that expire within ${months(list.months)} (by ${formatDay(list.until)}) or have already expired, for products still in stock.`}
+        description={`Batches in the ${list.storeroomName} that expire within ${months(list.months)} (by ${formatDay(list.until)}) or have already expired, with what is left of each.`}
       />
       <StockTabs context={context} current="expiring" />
 
@@ -66,16 +66,15 @@ export default async function ExpiringPage({ searchParams }: PageProps<"/stock/e
               <TableHead>Time left</TableHead>
               <TableHead>Product</TableHead>
               <TableHead>Batch</TableHead>
-              <TableHead className="text-right">Delivered</TableHead>
+              <TableHead className="text-right">In the {list.storeroomName} now</TableHead>
               {list.showsValue && <TableHead className="text-right">Value at cost</TableHead>}
-              <TableHead className="text-right">In stock now</TableHead>
-              <TableHead>Delivery</TableHead>
+              <TableHead>First came in</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {list.rows.map((row, index) => (
+            {list.rows.map((row) => (
               // Red for anything inside the business's own "expiring soon" period, or past its date.
-              <TableRow key={`${row.receiptId}-${index}`} data-testid="expiring-row" data-soon={row.soon ? "yes" : "no"} className={row.soon ? "bg-destructive/10 hover:bg-destructive/15" : undefined}>
+              <TableRow key={row.batchId} data-testid="expiring-row" data-soon={row.soon ? "yes" : "no"} className={row.soon ? "bg-destructive/10 hover:bg-destructive/15" : undefined}>
                 <TableCell className={row.soon ? "font-medium whitespace-nowrap text-destructive" : "font-medium whitespace-nowrap"}>
                   {formatDay(row.expiryDate)}
                   {row.expired && (
@@ -93,31 +92,24 @@ export default async function ExpiringPage({ searchParams }: PageProps<"/stock/e
                   </Link>
                 </TableCell>
                 <TableCell>{row.batchNumber ?? "—"}</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {plainNumber(row.quantity)} {row.unitName}
+                <TableCell className="text-right tabular-nums" data-testid="expiring-quantity">
+                  {plainNumber(row.quantity)} {row.baseUnitName}
+                  {row.units.length > 1 && <span className="block text-xs text-muted-foreground">{breakIntoUnits(row.quantity, row.baseUnitName, row.units)}</span>}
                 </TableCell>
-                {list.showsValue && <TableCell className="text-right tabular-nums">{row.value === null ? "—" : nairaFromText(row.value)}</TableCell>}
-                <TableCell className="text-right tabular-nums">
-                  {plainNumber(row.stockNow)} {row.baseUnitName}
-                </TableCell>
-                <TableCell>
-                  <Link href={`/stock/receipts/${row.receiptId}`} className="text-link underline-offset-4 hover:underline">
-                    {receiptNumber(row.receiptNumber)}
-                  </Link>
-                  <span className="ml-2 text-xs text-muted-foreground">{formatDay(row.receivedOn)}</span>
-                </TableCell>
+                {list.showsValue && <TableCell className="text-right tabular-nums" data-testid="expiring-value">{row.value === null ? "—" : nairaFromText(row.value)}</TableCell>}
+                <TableCell className="whitespace-nowrap text-muted-foreground">{formatDay(row.receivedOn)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       )}
       <p className="px-1 text-xs text-muted-foreground">
-        Rows in red expire within {months(list.usualMonths)} — the period an admin sets under Settings — or have already expired. Stock is not counted
-        separately for each batch, so “Delivered” and “Value at cost” are what came in with that batch, and “In stock now” is the product’s whole stock.
-        Use this list to know which batches to look for on the shelf.
+        Rows in red expire within {months(list.usualMonths)} — the period an admin sets under Settings — or have already expired. Each row is what is
+        left of one batch in the {list.storeroomName}, as recorded by deliveries, transfers, adjustments and sales. Goods already on the Shelf are not
+        counted by batch, so they are not in this list.{list.showsValue && " “Value at cost” is that quantity at the product’s average cost today."}
       </p>
 
-      <Pagination path="/stock/expiring" params={filters} noun="deliveries" {...list} />
+      <Pagination path="/stock/expiring" params={filters} noun="batches" {...list} />
     </div>
   );
 }

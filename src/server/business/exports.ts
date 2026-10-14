@@ -199,8 +199,8 @@ export async function exportList(context: AppContext, input: unknown): Promise<R
       });
       return {
         filename,
-        header: ["Transfer", "When", "From", "To", "Lines", "Products", "By"],
-        rows: transfers.map((row) => [transferNumber(row.number), when(row.createdAt), row.fromLocationName, row.toLocationName, row.lineCount, row.products.join("; "), row.createdByName]),
+        header: ["Transfer", "When", "From", "To", "Lines", "Products", "By", "Earlier batch passed over"],
+        rows: transfers.map((row) => [transferNumber(row.number), when(row.createdAt), row.fromLocationName, row.toLocationName, row.lineCount, row.products.join("; "), row.createdByName, row.batchesPassedOver > 0 ? "Yes" : "No"]),
       };
     }
     case "adjustments": {

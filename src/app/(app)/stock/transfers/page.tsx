@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { FilterDate, LiveSearch } from "@/components/filters";
 import { PageHeader } from "@/components/page-header";
 import { Pagination } from "@/components/pagination";
+import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, transferNumber } from "@/lib/format";
@@ -77,6 +78,17 @@ export default async function TransfersPage({ searchParams }: PageProps<"/stock/
                   <Link href={`/stock/transfers/${transfer.id}`} className="text-link underline-offset-4 hover:underline">
                     {transferNumber(transfer.number)}
                   </Link>
+                  {/* For audits (C76): a later batch was moved while one that should go first was still in the Storeroom. */}
+                  {transfer.batchesPassedOver > 0 && (
+                    <Badge
+                      variant="warning"
+                      className="ml-2"
+                      data-testid={`batch-passed-over-${transfer.number}`}
+                      title="A batch that should have gone first was still in the Storeroom when this transfer was made."
+                    >
+                      Earlier batch passed over
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell className="whitespace-nowrap">{formatDateTime(transfer.createdAt)}</TableCell>
                 <TableCell className="whitespace-nowrap">

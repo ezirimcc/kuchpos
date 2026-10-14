@@ -13,6 +13,7 @@ import {
   receiveGoods,
 } from "@/server/business/stock";
 import { createSupplier, listSuppliers, setSupplierActive, updateSupplier } from "@/server/business/suppliers";
+import { transferStock } from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, ValidationError } from "@/server/errors";
 import { createWorld, expectBalancesMatchMovements, type World } from "../support/world";
@@ -401,7 +402,8 @@ describe("expiring soon", () => {
       ["GONE", true],
       ["SOON", false],
     ]);
-    expect(list.rows[0]).toMatchObject({ productName: "NPK Fertilizer", stockNow: "150.000", baseUnitName: "kg", unitName: "bag" });
+    // What is left of that batch in the Storeroom (C76), not the product's whole stock.
+    expect(list.rows[0]).toMatchObject({ productName: "NPK Fertilizer", quantity: "50.000", baseUnitName: "kg" });
   });
 
   it("follows the admin's setting, which is separate per business and limited to 1–36 months", async () => {
@@ -439,16 +441,21 @@ describe("expiring soon", () => {
     const year = await listExpiringSoon(world.a.as.ADMIN, { months: "12" });
     expect(year.months).toBe(12);
     expect(year.rows.map((row) => [row.batchNumber, row.soon, row.monthsLeft])).toEqual([["GONE-00", true, 0], ["SOON-22", true, 2], ["LATER-55", false, 5], ["BIG-99", false, 9]]);
-    // By quantity and by value, the big delivery leads. The figures are what was delivered.
-    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", sort: "quantity" })).rows[0]).toMatchObject({ batchNumber: "BIG-99", quantity: "4.000", unitName: "bag", value: "164000.00" });
-    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", sort: "value" })).rows.map((row) => row.value)).toEqual(["164000.00", "40000.00", "40000.00", "40000.00"]);
+    // By quantity and by value, the big batch leads. The figures are what is left in the Storeroom,
+    // at the average cost: 284,000 for 350 kg = 811.4286 a kg.
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", sort: "quantity" })).rows[0]).toMatchObject({ batchNumber: "BIG-99", quantity: "200.000", baseUnitName: "kg", value: "162285.72" });
+    expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", sort: "value" })).rows.map((row) => row.value)).toEqual(["162285.72", "40571.43", "40571.43", "40571.43"]);
+    // What has left the Storeroom is no longer counted: 30 kg of SOON-22 moved to the Shelf.
+    const soonBatch = await getDb().stockBatch.findFirstOrThrow({ where: { productId: product.id, batchNumber: "SOON-22" } });
+    await transferStock(world.a.as.STOREKEEPER, { requestId: randomUUID(), fromLocationId: world.a.storeroomId, toLocationId: world.a.shelfId, lines: [{ productId: product.id, unitId: (await getDb().productUnit.findFirstOrThrow({ where: { productId: product.id, isBase: true } })).id, quantity: "30", batchId: soonBatch.id }] });
+    expect((await listExpiringSoon(world.a.as.ADMIN)).rows.map((row) => [row.batchNumber, row.quantity, row.value])).toEqual([["GONE-00", "50.000", "40571.43"], ["SOON-22", "20.000", "16228.57"]]);
     // Search by batch or by product; anything odd for months or sort falls back to the usual.
     expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", search: "later" })).rows.map((row) => row.batchNumber)).toEqual(["LATER-55"]);
     expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", search: "npk" })).total).toBe(4);
     expect((await listExpiringSoon(world.a.as.ADMIN, { months: "12", search: "no such thing" })).rows).toEqual([]);
     expect(await listExpiringSoon(world.a.as.ADMIN, { months: "7", sort: "sideways" })).toMatchObject({ months: 3, sort: "expiry" });
     // The storekeeper sees deliveries with their costs (C36); a cashier may not open the list at all.
-    expect((await listExpiringSoon(world.a.as.STOREKEEPER, { months: "12", sort: "value" })).rows[0].value).toBe("164000.00");
+    expect((await listExpiringSoon(world.a.as.STOREKEEPER, { months: "12", sort: "value" })).rows[0].value).toBe("162285.72");
     await expect(listExpiringSoon(world.a.as.CASHIER)).rejects.toBeInstanceOf(ForbiddenError);
   });
 

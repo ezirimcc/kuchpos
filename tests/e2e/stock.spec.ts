@@ -377,6 +377,10 @@ test("moving a batch out of the Storeroom names it, and moving a later one warns
   await expect(page.getByRole("heading", { name: /Transfer TR-/ })).toBeVisible();
   await expect(page.getByTestId("transfer-line-1")).toContainText("Batch LH-2026-09");
   await expect(page.getByTestId("earlier-batch-note-1")).toBeVisible();
+  // The transfers list flags it for an auditor.
+  await page.goto("/stock/transfers");
+  await expect(page.getByTestId(/^batch-passed-over-/)).toHaveCount(1);
+  await expect(page.getByTestId(/^batch-passed-over-/)).toContainText("Earlier batch passed over");
 
   // The product's page shows what is left of each batch in the Storeroom.
   await page.goto("/stock/expiring");
@@ -384,6 +388,10 @@ test("moving a batch out of the Storeroom names it, and moving a later one warns
   await expect(page.getByTestId("batch-row")).toHaveCount(2);
   await expect(page.getByTestId("batch-row").first()).toContainText("LH-EARLY");
   await expect(page.getByTestId("batch-row").nth(1)).toContainText("18 litre");
+  // Expiring soon shows what is left of each Storeroom batch, not what was delivered.
+  await page.goto("/stock/expiring?months=12");
+  const later = page.getByTestId("expiring-row").filter({ hasText: "LH-2026-09" });
+  await expect(later.getByTestId("expiring-quantity")).toContainText("18 litre");
 });
 
 async function stockOf(page: Page, product: string, location: "Storeroom" | "Shelf"): Promise<number> {

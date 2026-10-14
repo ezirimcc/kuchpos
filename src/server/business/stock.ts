@@ -4,6 +4,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
 import { addMonths, dateToDay, dayToDate, formatDay, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
 import { quantityToString } from "@/lib/quantity";
+import { lineTotal, moneyToString } from "@/lib/money";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
 import { businessDb } from "@/server/db/scoped";
@@ -12,7 +13,7 @@ import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { EXPIRY_MONTH_CHOICES } from "@/lib/expiry";
 import { authorize, can } from "@/server/permissions";
-import { batchesAreBehind, batchesIn, settleStoreroomBatches } from "@/server/stock-batches";
+import { batchesAreBehind, batchesIn, settleAllStoreroomBatches, settleStoreroomBatches } from "@/server/stock-batches";
 import { countUnreconciledSales, unreconciledSales } from "@/server/stock-owed";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 import { writeGoodsReceipt } from "@/server/receipt-write";
@@ -483,27 +484,27 @@ export async function listStockOnHand(
 // ---------------------------------------------------------------------------
 
 export type ExpiringRow = {
-  receiptId: string;
-  receiptNumber: number;
-  receivedOn: string;
+  /** One row per batch the STOREROOM still holds (C76): what is left of it, not what was delivered. */
+  batchId: string;
   productId: string;
   productName: string;
   batchNumber: string | null;
   expiryDate: string;
+  /** The day the batch first came in. */
+  receivedOn: string;
   /** True when the date has already passed. */
   expired: boolean;
   /** True when it expires within the business's own "expiring soon" period (or has expired): shown in red. */
   soon: boolean;
   /** Whole months from today until it expires; 0 once it has under a month left or has expired. */
   monthsLeft: number;
-  /** What was DELIVERED in this batch — not what is left of it (stock is not counted batch by batch). */
+  /** What is left of this batch in the Storeroom, in base units. */
   quantity: string;
-  unitName: string;
-  /** What that delivery line cost; null for those who do not see delivery costs. */
-  value: string | null;
-  /** How much of the product the business holds now, in base units (not split by batch). */
-  stockNow: string;
   baseUnitName: string;
+  /** Units in use, for showing the quantity as "2 carton + 7 sachet". */
+  units: { name: string; factor: string }[];
+  /** That quantity at the product's average cost; null for those who do not see costs. */
+  value: string | null;
 };
 
 const EXPIRY_SORTS = ["expiry", "quantity", "value"] as const;
@@ -530,13 +531,16 @@ const expiringSchema = z.object({
 export async function listExpiringSoon(
   context: AppContext,
   input: unknown = {},
-): Promise<{ rows: ExpiringRow[]; months: number; usualMonths: number; until: string; sort: ExpirySort; showsValue: boolean } & Paged> {
+): Promise<{ rows: ExpiringRow[]; months: number; usualMonths: number; until: string; sort: ExpirySort; showsValue: boolean; storeroomName: string } & Paged> {
   authorize(context, "report.stock.view");
   const data = parseInput(expiringSchema, input);
   const page = data.page;
   const db = businessDb(context);
 
-  const business = await db.business.findFirst({ select: { expiringSoonMonths: true } });
+  const [business, storeroom] = await Promise.all([
+    db.business.findFirst({ select: { expiringSoonMonths: true } }),
+    db.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true, name: true } }),
+  ]);
   const usualMonths = business?.expiringSoonMonths ?? 3;
   const asked = Number.parseInt(data.months, 10);
   const months = (EXPIRY_MONTH_CHOICES as readonly number[]).includes(asked) ? asked : usualMonths;
@@ -544,42 +548,35 @@ export async function listExpiringSoon(
   const today = shopToday();
   const until = addMonths(today, months);
   const soonUntil = addMonths(today, usualMonths);
-  // The cost of a delivery is for those who may see deliveries with their costs (C36).
+  // Costs are for those who may see deliveries with their costs (C36).
   const showsValue = can(context, "stock.receipts.view");
+  const result = { months, usualMonths, until, sort: sort === "value" && !showsValue ? ("expiry" as const) : sort, showsValue, storeroomName: storeroom?.name ?? "Storeroom" };
+  if (!storeroom) return { ...result, rows: [], ...paged(0, page) };
 
-  const where: Prisma.GoodsReceiptLineWhereInput = {
-    expiryDate: { not: null, lte: dayToDate(until)! },
-    product: { deactivatedAt: null, stockBalances: { some: { quantity: { gt: 0 } } } },
-    ...(data.search ? { OR: [{ productName: { contains: data.search } }, { product: { name: { contains: data.search } } }, { batchNumber: { contains: data.search } }] } : {}),
-  };
-  const orderBy: Prisma.GoodsReceiptLineOrderByWithRelationInput[] =
-    sort === "quantity" ? [{ baseQuantity: "desc" }, { id: "asc" }] : sort === "value" && showsValue ? [{ lineCost: "desc" }, { id: "asc" }] : [{ expiryDate: "asc" }, { id: "asc" }];
-  const [total, lines] = await Promise.all([
-    db.goodsReceiptLine.count({ where }),
-    db.goodsReceiptLine.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-      select: {
-        productId: true,
-        productName: true,
-        batchNumber: true,
-        expiryDate: true,
-        quantity: true,
-        unitName: true,
-        lineCost: true,
-        receipt: { select: { id: true, number: true, receivedOn: true } },
-        product: {
-          select: {
-            name: true,
-            units: { where: { isBase: true }, select: { name: true } },
-            stockBalances: { select: { quantity: true } },
-          },
+  // Batches are what the Storeroom holds (C76); stock from before they were recorded is split once first.
+  await settleAllStoreroomBatches(context, storeroom.id);
+
+  const batches = await db.stockBatchBalance.findMany({
+    where: {
+      locationId: storeroom.id,
+      quantity: { gt: 0 },
+      batch: { expiryDate: { not: null, lte: dayToDate(until)! } },
+      product: { deactivatedAt: null },
+      ...(data.search ? { OR: [{ product: { name: { contains: data.search } } }, { batch: { batchNumber: { contains: data.search } } }] } : {}),
+    },
+    select: {
+      quantity: true,
+      batch: { select: { id: true, batchNumber: true, expiryDate: true, receivedOn: true } },
+      product: {
+        select: {
+          id: true,
+          name: true,
+          averageCost: true,
+          units: { where: { retiredAt: null }, orderBy: { factor: "asc" }, select: { name: true, factor: true, isBase: true } },
         },
       },
-    }),
-  ]);
+    },
+  });
 
   /** Whole months from today to a day: the largest count of months that still lands on or before it. */
   const monthsUntil = (day: string) => {
@@ -589,37 +586,40 @@ export async function listExpiringSoon(
     return count;
   };
 
-  return {
-    months,
-    usualMonths,
-    until,
-    sort: sort === "value" && !showsValue ? "expiry" : sort,
-    showsValue,
-    rows: lines.map((line) => {
-      const expiryDate = dateToDay(line.expiryDate!);
-      const stockNow = line.product.stockBalances.reduce(
-        (sum, balance) => sum.plus(balance.quantity.toFixed(3)),
-        new Decimal(0),
-      );
-      return {
-        receiptId: line.receipt.id,
-        receiptNumber: line.receipt.number,
-        receivedOn: dateToDay(line.receipt.receivedOn),
-        productId: line.productId,
-        productName: line.product.name,
-        batchNumber: line.batchNumber,
+  // A Storeroom holds a few hundred batches at most: sorted and paged here.
+  const all = batches.map((row) => {
+    const expiryDate = dateToDay(row.batch.expiryDate!);
+    const quantity = new Decimal(row.quantity.toFixed(3));
+    const value = lineTotal(quantity, new Decimal(row.product.averageCost.toFixed(4)));
+    return {
+      row: {
+        batchId: row.batch.id,
+        productId: row.product.id,
+        productName: row.product.name,
+        batchNumber: row.batch.batchNumber,
         expiryDate,
+        receivedOn: dateToDay(row.batch.receivedOn),
         expired: expiryDate < today,
         soon: expiryDate <= soonUntil,
         monthsLeft: monthsUntil(expiryDate),
-        quantity: line.quantity.toFixed(3),
-        unitName: line.unitName,
-        value: showsValue ? line.lineCost.toFixed(2) : null,
-        stockNow: quantityToString(stockNow),
-        baseUnitName: line.product.units[0]?.name ?? "",
-      };
-    }),
-    ...paged(total, page),
+        quantity: quantityToString(quantity),
+        baseUnitName: row.product.units.find((unit) => unit.isBase)?.name ?? "",
+        units: row.product.units.map((unit) => ({ name: unit.name, factor: unit.factor.toFixed(3) })),
+        value: showsValue ? moneyToString(value) : null,
+      } satisfies ExpiringRow,
+      quantity,
+      value,
+    };
+  });
+  all.sort((a, b) => {
+    const order =
+      result.sort === "quantity" ? b.quantity.comparedTo(a.quantity) : result.sort === "value" ? b.value.comparedTo(a.value) : a.row.expiryDate.localeCompare(b.row.expiryDate);
+    return order || a.row.expiryDate.localeCompare(b.row.expiryDate) || a.row.productName.localeCompare(b.row.productName) || a.row.batchId.localeCompare(b.row.batchId);
+  });
+  return {
+    ...result,
+    rows: all.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((entry) => entry.row),
+    ...paged(all.length, page),
   };
 }
 

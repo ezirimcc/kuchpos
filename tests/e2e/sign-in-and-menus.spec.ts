@@ -62,7 +62,7 @@ test.describe("each role sees its own menu", () => {
     await expectSignedInAs(page, "Owner");
     await expect(page).toHaveURL(/\/owner\/businesses$/);
     await expect(page.getByTestId("business-banner")).toContainText("No business open");
-    expect(await menuLabels(page)).toEqual(["Overview", "Businesses", "Owners", "System check", "Error log"]);
+    expect(await menuLabels(page)).toEqual(["Overview", "Businesses", "Owners", "System check", "Error log", "Backups"]);
 
     await openFromMenu(page, "System check");
     const rules = page.getByTestId("system-rule");
@@ -74,6 +74,11 @@ test.describe("each role sees its own menu", () => {
     await openFromMenu(page, "Error log");
     await expect(page.getByRole("heading", { name: "Error log" })).toBeVisible();
     await expect(page.getByTestId("errors-summary")).toBeVisible();
+
+    // KuchPos's own backups (C79): none made on this computer, so the page says so in red.
+    await openFromMenu(page, "Backups");
+    await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
+    await expect(page.getByTestId("backup-warning")).toBeVisible();
   });
 });
 

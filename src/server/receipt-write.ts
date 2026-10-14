@@ -1,13 +1,13 @@
 import "server-only";
 import { Decimal } from "@/lib/decimal";
-import { dayToDate, formatDay, receiptNumber } from "@/lib/format";
+import { dateToDay, dayToDate, formatDay, receiptNumber } from "@/lib/format";
 import { formatNaira, moneyToString, movingAverageCost, sumMoney } from "@/lib/money";
 import { quantityToString } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
 import { type businessDb, businessIdOf } from "@/server/db/scoped";
 import { takeDocumentNumber } from "@/server/document-number";
-import { refreshBatches } from "@/server/stock-batches";
+import { addToBatch, batchFor, settleStoreroomBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import type { CheckedLine } from "@/server/receipt-lines";
 
@@ -42,8 +42,6 @@ export async function writeGoodsReceipt(
      * was counted or the goods arrived, so that reports of that time are right.
      */
     imported?: { movementType: "RECEIPT" | "OPENING_BALANCE"; at: Date; label: string };
-    /** For an import that replays many documents: the caller works the batches out once, at the end. */
-    deferBatches?: boolean;
   },
 ): Promise<{ id: string; number: number }> {
   const businessId = businessIdOf(context);
@@ -127,8 +125,15 @@ export async function writeGoodsReceipt(
   });
   await tx.goodsReceiptVersionLine.createMany({ data: lineRows.map((line) => ({ ...line, versionId: original.id })) });
 
+  // Into the Storeroom, a product with batch numbers or expiry dates is recorded batch by batch (C76).
+  const place = await tx.location.findFirst({ where: { id: location.id }, select: { kind: true } });
+  const intoStoreroom = place?.kind === "STOREROOM";
+  const batchOfLine = new Map<number, string>();
+
   for (const productId of productOrder) {
     const added = perProduct.get(productId)!;
+    // Before anything changes: the Storeroom's batches must add up to its stock (C76).
+    const batched = intoStoreroom && (await settleStoreroomBatches(tx, context, productId));
     // Touching the product row makes any other delivery of the same product wait its turn,
     // so the stock total read on the next line is the true total.
     const product = await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { averageCost: true } });
@@ -148,18 +153,31 @@ export async function writeGoodsReceipt(
     if (increased.count === 0) {
       await tx.stockBalance.create({ data: { businessId, productId, locationId: location.id, quantity: quantityToString(added.quantity) } });
     }
+    if (batched) {
+      for (const [index, line] of checked.entries()) {
+        if (line.productId !== productId) continue;
+        const batch = await batchFor(tx, context, { productId, batchNumber: line.batchNumber, expiryDay: line.expiryDate ? dateToDay(line.expiryDate) : null, receivedOn: delivery.receivedOn });
+        await addToBatch(tx, context, { batchId: batch.id, productId, locationId: location.id, quantity: line.baseQuantity });
+        batchOfLine.set(index, batch.id);
+      }
+    } else if (!intoStoreroom) {
+      // Onto the Shelf no batch figures are kept, but the batch is put on record so that it can be
+      // named when the goods are later moved into the Storeroom.
+      for (const line of checked) {
+        if (line.productId !== productId || (!line.batchNumber && !line.expiryDate)) continue;
+        await batchFor(tx, context, { productId, batchNumber: line.batchNumber, expiryDay: line.expiryDate ? dateToDay(line.expiryDate) : null, receivedOn: delivery.receivedOn });
+      }
+    }
     // If this place owes any of the product to a sale beyond stock, the delivery covers it first (C72).
     await coverStockOwed(tx, context, { productId, locationId: location.id, arrivedWith: receiptNumber(number), at: delivery.imported?.at });
   }
 
-  // What is left of each batch of these products is worked out again (C73).
-  if (!delivery.deferBatches) await refreshBatches(tx, context, productOrder);
-
   await tx.stockMovement.createMany({
-    data: checked.map((line) => ({
+    data: checked.map((line, index) => ({
       businessId,
       productId: line.productId,
       locationId: location.id,
+      batchId: batchOfLine.get(index) ?? null,
       type: delivery.imported?.movementType ?? ("RECEIPT" as const),
       quantityDelta: quantityToString(line.baseQuantity),
       unitName: line.unitName,

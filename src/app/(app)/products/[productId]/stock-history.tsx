@@ -92,7 +92,10 @@ export async function StockHistory({ context, productId, from, to, picked }: { c
                 <TableRow key={row.id} data-testid="history-row">
                   <TableCell className="whitespace-nowrap">{formatDateTime(row.at)}</TableCell>
                   <TableCell>{MOVEMENT_LABELS[row.type] ?? row.type}</TableCell>
-                  <TableCell>{row.locationName}</TableCell>
+                  <TableCell>
+                    {row.locationName}
+                    {row.batch && <span className="block text-xs text-muted-foreground" data-testid="history-batch">Batch {row.batch}</span>}
+                  </TableCell>
                   <TableCell className={out ? "text-right text-destructive tabular-nums" : "text-right text-emerald-700 tabular-nums dark:text-emerald-400"}>
                     {signedNumber(row.quantity)}
                     {/* As it was entered, when that was not in the smallest unit: "2 carton". */}

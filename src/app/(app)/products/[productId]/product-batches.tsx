@@ -6,8 +6,9 @@ import type { AppContext } from "@/server/auth/context";
 import { getProductBatches } from "@/server/business/stock";
 
 /**
- * The batches of a product that has batch numbers or expiry dates (C73): what is left of each
- * and where, the one that should go first on top. Nothing is drawn for other products.
+ * The Storeroom's batches of a product that has batch numbers or expiry dates (C76): what is
+ * left of each, the one that should go first on top. The Shelf is not counted by batch.
+ * Nothing is drawn for other products.
  */
 export async function ProductBatches({ context, productId }: { context: AppContext; productId: string }) {
   const data = await getProductBatches(context, { productId });
@@ -16,15 +17,16 @@ export async function ProductBatches({ context, productId }: { context: AppConte
   return (
     <Card id="batches" data-testid="product-batches-card">
       <CardHeader>
-        <CardTitle>Batches in stock</CardTitle>
+        <CardTitle>Batches in the {data.storeroom?.name ?? "Storeroom"}</CardTitle>
         <CardDescription>
-          What is left of each batch, the one that should be sold or moved first on top: the earliest expiry date, and where there is none, the one that
-          came in first.
+          What is left of each batch, the one that should be moved first on top: the earliest expiry date, and where there is none, the one that came in
+          first. Every delivery, transfer and adjustment in the {data.storeroom?.name ?? "Storeroom"} names its batch, so these figures are exact. On the
+          Shelf: {plainNumber(data.onShelf)} {data.baseUnitName}, not counted by batch.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {data.batches.length === 0 ? (
-          <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">None of this product is in stock.</p>
+          <p className="rounded-3xl border border-dashed p-10 text-center text-sm text-muted-foreground">None of this product is in the {data.storeroom?.name ?? "Storeroom"}.</p>
         ) : (
           <Table>
             <TableHeader>
@@ -32,12 +34,7 @@ export async function ProductBatches({ context, productId }: { context: AppConte
                 <TableHead>Batch</TableHead>
                 <TableHead>Expires</TableHead>
                 <TableHead>First came in</TableHead>
-                {data.locations.map((location) => (
-                  <TableHead key={location.id} className="text-right">
-                    {location.name}
-                  </TableHead>
-                ))}
-                <TableHead className="text-right">In all</TableHead>
+                <TableHead className="text-right">Left</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -60,24 +57,15 @@ export async function ProductBatches({ context, productId }: { context: AppConte
                     )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">{formatDay(batch.receivedOn)}</TableCell>
-                  {data.locations.map((location) => (
-                    <TableCell key={location.id} className="text-right tabular-nums">
-                      {plainNumber(batch.byLocation[location.id] ?? "0")}
-                    </TableCell>
-                  ))}
                   <TableCell className="text-right font-semibold tabular-nums">
-                    {plainNumber(batch.total)} <span className="font-normal text-muted-foreground">{data.baseUnitName}</span>
+                    {plainNumber(batch.quantity)} <span className="font-normal text-muted-foreground">{data.baseUnitName}</span>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
-        <p className="text-xs text-muted-foreground">
-          How much is left of each batch is worked out on the rule that what goes first was sold first. Which batch is on the Shelf and which in the Storeroom
-          is an estimate for now — the batch that goes first is taken to be on the Shelf — until transfers are recorded batch by batch. Rows in red expire soon
-          or have expired.
-        </p>
+        <p className="text-xs text-muted-foreground">Rows in red expire soon or have expired.</p>
       </CardContent>
     </Card>
   );

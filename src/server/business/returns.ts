@@ -14,7 +14,7 @@ import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { takeDocumentNumber } from "@/server/document-number";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
-import { refreshBatches } from "@/server/stock-batches";
+import { addToBatch, settleStoreroomBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 import { type Disposition, returnableLines, type ReturnableLine, returnSchema, workOutReturn } from "@/server/return-lines";
@@ -232,6 +232,8 @@ export async function postReturn(context: AppContext, input: unknown): Promise<R
 
         // Goods put back come back at the cost they left with; written-off goods do not come back at all.
         const restocked = lines.filter((line) => line.location);
+        const storeroomId = (await tx.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true } }))?.id ?? null;
+        const batchBack = new Map<string, string>();
         for (const productId of productOrder) {
           const back = restocked.filter((line) => line.productId === productId);
           if (back.length === 0) continue;
@@ -246,12 +248,24 @@ export async function postReturn(context: AppContext, input: unknown): Promise<R
           const perPlace = new Map<string, Decimal>();
           for (const line of back) perPlace.set(line.location!.id, (perPlace.get(line.location!.id) ?? new Decimal(0)).plus(line.baseQuantity));
           for (const [locationId, quantity] of [...perPlace.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+            // Into the Storeroom, a product with batches goes back into a batch it came from (C76).
+            if (locationId === storeroomId && (await settleStoreroomBatches(tx, context, productId))) {
+              const took = await tx.stockMovement.findFirst({ where: { documentId: sale.id, productId, locationId, type: "SALE", batchId: { not: null } }, orderBy: { id: "asc" }, select: { batchId: true } });
+              if (!took) {
+                const line = back.find((entry) => entry.location!.id === locationId)!;
+                throw new ValidationError("Nothing was returned. Please correct the highlighted lines.", {
+                  [`lines.${Math.max(0, data.lines.findIndex((entry) => entry.saleLineId === line.saleLineId))}.disposition`]:
+                    `"${line.productName}" was sold from the Shelf, so which batch it belongs to is not known. Put it back on the Shelf, then move it to the Storeroom with a transfer that names its batch.`,
+                });
+              }
+              await addToBatch(tx, context, { batchId: took.batchId!, productId, locationId, quantity });
+              batchBack.set(`${productId}|${locationId}`, took.batchId!);
+            }
             const raised = await tx.stockBalance.updateMany({ where: { productId, locationId }, data: { quantity: { increment: quantityToString(quantity) } } });
             if (raised.count === 0) await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(quantity) } });
             await coverStockOwed(tx, context, { productId, locationId, arrivedWith: returnNumber(number) });
           }
         }
-        await refreshBatches(tx, context, productOrder);
 
         const saved = await tx.saleReturn.create({
           data: {
@@ -306,6 +320,7 @@ export async function postReturn(context: AppContext, input: unknown): Promise<R
               businessId,
               productId: line.productId,
               locationId: line.location!.id,
+              batchId: batchBack.get(`${line.productId}|${line.location!.id}`) ?? null,
               type: "SALE_RETURN" as const,
               quantityDelta: quantityToString(line.baseQuantity),
               unitName: line.unitName,

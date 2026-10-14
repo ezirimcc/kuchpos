@@ -108,7 +108,7 @@ test("a product that uses batch and expiry must give them, and then shows under 
   await expect(expiring).toContainText("20 litre");
   // The product's own page lists its batches, with what is left of each (C73).
   await expiring.getByRole("link", { name: "Liquid Herbicide" }).click();
-  await expect(page.getByTestId("product-batches-card")).toContainText("Batches in stock");
+  await expect(page.getByTestId("product-batches-card")).toContainText("Batches in the Storeroom");
   await expect(page.getByTestId("batch-row")).toHaveCount(1);
   await expect(page.getByTestId("batch-row")).toContainText("LH-2026-09");
   await expect(page.getByTestId("batch-row")).toContainText("20 litre");
@@ -345,6 +345,45 @@ test("an accountant can read transfers but not make one; a cashier sees neither;
   await expectSignedInAs(page, "Manager");
   await page.goto("/stock/transfers");
   await expect(page.getByText("No stock has been moved between locations yet.")).toBeVisible();
+});
+
+test("moving a batch out of the Storeroom names it, and moving a later one warns that an earlier one is still there (C76)", async ({ page }) => {
+  await signIn(page, "gv.storekeeper");
+  await expectSignedInAs(page, "Storekeeper");
+  // A second batch of the herbicide, expiring sooner than LH-2026-09 (45 days).
+  await gotoReady(page, "/stock/receive");
+  await page.getByLabel("Supplier", { exact: true }).selectOption({ label: "Farm Inputs Depot (sample)" });
+  await fillLine(page, 1, "Liquid Herbicide", /^5 litre keg/, "1", "6000");
+  const row = page.getByTestId("delivery-line-1");
+  await row.getByLabel("Batch number").fill("LH-EARLY");
+  await row.getByLabel("Expiry date").fill(addDays(40));
+  await page.getByRole("button", { name: "Save delivery" }).click();
+  await expect(page.getByRole("heading", { name: /Delivery GR-/ })).toBeVisible();
+
+  await gotoReady(page, "/stock/transfers/new");
+  const line = page.getByTestId("transfer-line-1");
+  await line.getByLabel("Product").fill("Liquid Herbicide");
+  const batch = line.getByLabel("Batch taken out of the Storeroom");
+  // The batch that should go first is offered first, and chosen.
+  await expect(batch.locator("option:checked")).toContainText("LH-EARLY");
+  await expect(batch.locator("option:checked")).toContainText("should go first");
+  await expect(page.getByTestId("earlier-batch-1")).toHaveCount(0);
+  // Choosing the later batch warns; it can still be moved.
+  await batch.selectOption({ label: (await batch.locator("option").allInnerTexts()).find((label) => label.startsWith("LH-2026-09"))! });
+  await expect(page.getByTestId("earlier-batch-1")).toContainText("LH-EARLY");
+  await line.getByLabel("Unit").selectOption({ label: await unitLabel(line, /^litre/) });
+  await line.getByLabel("How many to move").fill("2");
+  await page.getByRole("button", { name: "Move to Shelf" }).click();
+  await expect(page.getByRole("heading", { name: /Transfer TR-/ })).toBeVisible();
+  await expect(page.getByTestId("transfer-line-1")).toContainText("Batch LH-2026-09");
+  await expect(page.getByTestId("earlier-batch-note-1")).toBeVisible();
+
+  // The product's page shows what is left of each batch in the Storeroom.
+  await page.goto("/stock/expiring");
+  await page.getByTestId("expiring-row").first().getByRole("link", { name: "Liquid Herbicide" }).click();
+  await expect(page.getByTestId("batch-row")).toHaveCount(2);
+  await expect(page.getByTestId("batch-row").first()).toContainText("LH-EARLY");
+  await expect(page.getByTestId("batch-row").nth(1)).toContainText("18 litre");
 });
 
 async function stockOf(page: Page, product: string, location: "Storeroom" | "Shelf"): Promise<number> {

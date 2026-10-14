@@ -19,7 +19,6 @@ import type { CheckedLine } from "@/server/receipt-lines";
 import { writeGoodsReceipt } from "@/server/receipt-write";
 import type { CheckedSaleLine } from "@/server/sale-lines";
 import { type CheckedPayment, writeSale } from "@/server/sale-write";
-import { refreshBatches } from "@/server/stock-batches";
 import { cellDay, cellMinutes, cellText, type Problem, readWorkbook, rowsOf } from "@/server/workbook";
 
 /**
@@ -671,7 +670,6 @@ export async function runHistoryImport(context: AppContext, input: unknown, byte
               note: event.note,
               lines: event.lines,
               imported: { movementType: "RECEIPT", at: event.at, label: `delivery ${event.reference} from ${supplier.name} (${label})` },
-              deferBatches: true,
             });
             continue;
           }
@@ -719,14 +717,10 @@ export async function runHistoryImport(context: AppContext, input: unknown, byte
             acceptShortage: true,
             notes,
             imported: { runId: run.id, at: event.at },
-            deferBatches: true,
             taxRate,
           });
           exceptions += notes.length;
         }
-
-        // Batches are worked out once, for everything that came in and went out (C73).
-        await refreshBatches(tx, context, productIds);
 
         await tx.activityLog.create({
           data: activityRow(context, {

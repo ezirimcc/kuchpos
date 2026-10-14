@@ -113,7 +113,10 @@ export default async function AdjustmentPage({ params }: PageProps<"/stock/adjus
             const after = line.stockNow === null ? null : new Decimal(line.stockNow).plus(netOf.get(line.productId) ?? 0);
             return (
               <TableRow key={line.lineNumber} data-testid={`adjustment-line-${line.lineNumber}`}>
-                <TableCell className="font-medium">{line.productName}</TableCell>
+                <TableCell>
+                  <span className="font-medium">{line.productName}</span>
+                  {line.batch && <span className="block text-xs text-muted-foreground">Batch {line.batch}</span>}
+                </TableCell>
                 <TableCell className="text-right font-semibold tabular-nums">
                   {signedNumber(line.quantity)} {line.unitName}
                 </TableCell>

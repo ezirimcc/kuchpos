@@ -11,7 +11,7 @@ import { parseInput } from "@/server/auth/users";
 import { businessDb, businessIdOf } from "@/server/db/scoped";
 import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
-import { refreshBatches } from "@/server/stock-batches";
+import { addToBatch, batchesIn, batchFor, batchKeyOf, settleStoreroomBatches, takeFirstBatches, takeFromBatch } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize } from "@/server/permissions";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES, type SavedLine } from "@/server/receipt-lines";
@@ -275,12 +275,34 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
     sum.newCost = sum.newCost.plus(line.lineCost);
     move(line.productId, newLocation.id, line.baseQuantity);
   }
+  // In the Storeroom, batches change with the delivery (C76): per product, per batch, what the
+  // delivery put in before against what it should have. Only products with batches have any.
+  const storeroomId = (await db.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true } }))?.id ?? null;
+  type BatchChange = { batchNumber: string | null; expiryDay: string | null; delta: Decimal };
+  const perBatch = new Map<string, Map<string, BatchChange>>();
+  const batchMove = (productId: string, batchNumber: string | null, expiryDate: Date | null, quantity: Decimal) => {
+    if (!batchNumber && !expiryDate) return;
+    const expiryDay = expiryDate ? dateToDay(expiryDate) : null;
+    const key = batchKeyOf(batchNumber, expiryDay);
+    const batches = perBatch.get(productId) ?? new Map<string, BatchChange>();
+    const known = batches.get(key) ?? { batchNumber: batchNumber?.trim() || null, expiryDay, delta: zero };
+    batches.set(key, { ...known, delta: known.delta.plus(quantity) });
+    perBatch.set(productId, batches);
+  };
+  if (receipt.locationId === storeroomId) {
+    for (const old of receipt.lines) batchMove(old.productId, old.batchNumber, old.expiryDate, new Decimal(old.baseQuantity.toFixed(3)).negated());
+  }
+  if (newLocation.id === storeroomId) {
+    for (const line of checked) batchMove(line.productId, line.batchNumber, line.expiryDate, line.baseQuantity);
+  }
+  const batchChanged = (productId: string) => [...(perBatch.get(productId)?.values() ?? [])].some((change) => !change.delta.isZero());
+
   // Always in the same order (product, then location), so two savers cannot block each other.
   const productOrder = [...perProduct.keys()]
     .filter((productId) => {
       const sum = perProduct.get(productId)!;
       const moved = [...perPlace.get(productId)!.values()].some((quantity) => !quantity.isZero());
-      return moved || !sum.oldCost.equals(sum.newCost);
+      return moved || batchChanged(productId) || !sum.oldCost.equals(sum.newCost);
     })
     .sort();
   const locationNames = new Map([
@@ -435,6 +457,8 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
             data: { updatedAt: new Date() },
             select: { averageCost: true },
           });
+          // The Storeroom's batches must add up to its stock before anything changes (C76).
+          const batched = storeroomId !== null && (await settleStoreroomBatches(tx, context, productId));
           const before = await tx.stockBalance.aggregate({ where: { productId }, _sum: { quantity: true } });
           const average = correctedAverageCost({
             quantityNow: new Decimal(before._sum.quantity?.toFixed(3) ?? "0"),
@@ -494,10 +518,29 @@ export async function correctReceipt(context: AppContext, input: unknown): Promi
               userName: context.actor.name,
             });
           }
+          if (batched && storeroomId) {
+            // Batches put in: added. Batches taken back: from that batch, as far as it still holds
+            // them; the rest from the batches that go first (the Storeroom's total was checked above).
+            const changes = [...(perBatch.get(productId)?.values() ?? [])].sort((a, b) => a.delta.comparedTo(b.delta));
+            for (const change of changes) {
+              if (change.delta.isZero()) continue;
+              const batch = await batchFor(tx, context, { productId, batchNumber: change.batchNumber, expiryDay: change.expiryDay, receivedOn: dateToDay(receivedDate) });
+              if (change.delta.greaterThan(0)) {
+                await addToBatch(tx, context, { batchId: batch.id, productId, locationId: storeroomId, quantity: change.delta });
+                continue;
+              }
+              const needed = change.delta.negated();
+              const held = new Decimal((await batchesIn(tx, productId, storeroomId)).find((entry) => entry.id === batch.id)?.quantity ?? "0");
+              const fromBatch = Decimal.min(held, needed);
+              if (fromBatch.greaterThan(0)) await takeFromBatch(tx, { batchId: batch.id, locationId: storeroomId, quantity: fromBatch });
+              if (needed.greaterThan(fromBatch)) await takeFirstBatches(tx, { productId, locationId: storeroomId, quantity: needed.minus(fromBatch) });
+            }
+            // A delivery that no longer came into the Storeroom, or a product without batch figures
+            // on its lines, leaves the Storeroom's total and its batches apart: put them right.
+            await settleStoreroomBatches(tx, context, productId);
+          }
         }
         if (movements.length > 0) await tx.stockMovement.createMany({ data: movements });
-        // The delivery's lines are as corrected by now: what is left of each batch follows from them (C73).
-        await refreshBatches(tx, context, productOrder);
 
         await tx.activityLog.create({
           data: activityRow(context, {

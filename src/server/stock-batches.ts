@@ -2,39 +2,42 @@ import "server-only";
 import { Decimal } from "@/lib/decimal";
 import { dateToDay, dayToDate, shopToday } from "@/lib/format";
 import { quantityToString } from "@/lib/quantity";
+import type { BatchSummary } from "@/lib/batch-order";
 import type { AppContext } from "@/server/auth/context";
-import { type businessDb, businessIdOf } from "@/server/db/scoped";
+import { businessDb, businessIdOf } from "@/server/db/scoped";
 
 /**
- * Stock counted batch by batch (C73), step 1 of 4 (C75).
+ * Batches, recorded in the Storeroom only (C73 as changed by C76).
  *
  * A product with batch numbers or expiry dates has batches: everything that came in with the
- * same batch number and expiry date is one batch. `stock_balance` stays the figure that
- * everything else uses; `stock_batch_balance` says which batches that figure is made of, and
- * for such a product the two always add up to the same in every place (a test rule).
+ * same batch number and expiry date is one batch (`stock_batch`). The STOREROOM keeps exact
+ * figures per batch (`stock_batch_balance`); the Shelf keeps only its quantity, as for any
+ * product. Every movement into or out of the Storeroom of such a product names its batch and
+ * changes that batch's figure in the same transaction — nothing is estimated. Rule held by
+ * the tests: the batches in the Storeroom add up to the Storeroom's stock, and no other place
+ * has batch figures.
  *
- * In this step the batches are WORKED OUT, not recorded movement by movement: what is left of
- * each batch follows from the product's deliveries and its stock now, on the rule that what
- * goes first is sold first — the earliest expiry date, and without one (or with the same one)
- * what came in first. Which batch stands where is an estimate until transfers carry a batch
- * (step 2): the batches that go first are taken to be on the Shelf. `refreshBatches` redoes the
- * sum, and is called at the end of every transaction that changes a product's stock.
- *
- * Not operations. `refreshBatches` must run inside a stock transaction with each product's
- * "turn" already taken.
+ * Not operations. Everything here runs inside a stock transaction with the product's "turn"
+ * already taken.
  */
 
 type Db = ReturnType<typeof businessDb>;
 type Tx = Parameters<Parameters<Db["$transaction"]>[0]>[0];
+type Reader = Db | Tx;
+
+export { type BatchSummary, earlierBatchThan } from "@/lib/batch-order";
+
+/** Only products with batch numbers or expiry dates have batches. */
+export function hasBatches(product: { tracksBatch: boolean; tracksExpiry: boolean }): boolean {
+  return product.tracksBatch || product.tracksExpiry;
+}
 
 /** What makes a batch one batch within its product. Capitals and outer spaces in the batch number do not count. */
 export function batchKeyOf(batchNumber: string | null, expiryDay: string | null): string {
   return `${(batchNumber ?? "").trim().toLowerCase()}|${expiryDay ?? ""}`;
 }
 
-type Candidate = { key: string; batchNumber: string | null; expiryDay: string | null; receivedOn: string; quantity: Decimal };
-
-/** The order batches leave in: earliest expiry first (none at all goes last), then what came in first. */
+/** The order batches should leave in: earliest expiry first (none at all goes last), then what came in first. */
 export function goesFirst(a: { expiryDay: string | null; receivedOn: string; key: string }, b: { expiryDay: string | null; receivedOn: string; key: string }): number {
   if (a.expiryDay !== b.expiryDay) {
     if (a.expiryDay === null) return 1;
@@ -44,107 +47,198 @@ export function goesFirst(a: { expiryDay: string | null; receivedOn: string; key
   return a.receivedOn.localeCompare(b.receivedOn) || a.key.localeCompare(b.key);
 }
 
-/**
- * Works out again what is left of each batch of these products, and where. Products without
- * batch numbers or expiry dates are skipped.
- */
-export async function refreshBatches(tx: Tx, context: AppContext, productIds: string[]): Promise<void> {
-  const businessId = businessIdOf(context);
-  for (const productId of [...new Set(productIds)].sort()) {
-    const product = await tx.product.findFirst({ where: { id: productId }, select: { tracksBatch: true, tracksExpiry: true } });
-    if (!product || (!product.tracksBatch && !product.tracksExpiry)) continue;
+/** The batch with this number and expiry date, made if it does not exist yet. */
+export async function batchFor(
+  tx: Tx,
+  context: AppContext,
+  input: { productId: string; batchNumber: string | null; expiryDay: string | null; receivedOn: string },
+): Promise<{ id: string; batchNumber: string | null; expiryDay: string | null }> {
+  const batchNumber = input.batchNumber?.trim() || null;
+  const key = batchKeyOf(batchNumber, input.expiryDay);
+  const found = await tx.stockBatch.findFirst({ where: { productId: input.productId, batchKey: key }, select: { id: true, batchNumber: true, expiryDate: true, receivedOn: true } });
+  if (found) {
+    if (input.receivedOn < dateToDay(found.receivedOn)) await tx.stockBatch.update({ where: { id: found.id }, data: { receivedOn: dayToDate(input.receivedOn)! } });
+    return { id: found.id, batchNumber: found.batchNumber, expiryDay: found.expiryDate ? dateToDay(found.expiryDate) : null };
+  }
+  const created = await tx.stockBatch.create({
+    data: {
+      businessId: businessIdOf(context),
+      productId: input.productId,
+      batchNumber,
+      expiryDate: input.expiryDay ? dayToDate(input.expiryDay) : null,
+      batchKey: key,
+      receivedOn: dayToDate(input.receivedOn)!,
+    },
+    select: { id: true },
+  });
+  return { id: created.id, batchNumber, expiryDay: input.expiryDay };
+}
 
-    const [lines, balances] = await Promise.all([
-      tx.goodsReceiptLine.findMany({ where: { productId }, select: { baseQuantity: true, batchNumber: true, expiryDate: true, receipt: { select: { receivedOn: true } } } }),
-      tx.stockBalance.findMany({ where: { productId, quantity: { gt: 0 } }, select: { locationId: true, quantity: true, location: { select: { kind: true } } } }),
-    ]);
-
-    // Everything that ever came in, gathered into batches.
-    const batches = new Map<string, Candidate>();
-    for (const line of lines) {
-      const expiryDay = line.expiryDate ? dateToDay(line.expiryDate) : null;
-      const key = batchKeyOf(line.batchNumber, expiryDay);
-      const receivedOn = dateToDay(line.receipt.receivedOn);
-      const batch = batches.get(key);
-      if (batch) {
-        batch.quantity = batch.quantity.plus(line.baseQuantity.toFixed(3));
-        if (receivedOn < batch.receivedOn) batch.receivedOn = receivedOn;
-      } else {
-        batches.set(key, { key, batchNumber: line.batchNumber?.trim() || null, expiryDay, receivedOn, quantity: new Decimal(line.baseQuantity.toFixed(3)) });
-      }
-    }
-    const held = balances.reduce((sum, balance) => sum.plus(balance.quantity.toFixed(3)), new Decimal(0));
-    const received = [...batches.values()].reduce((sum, batch) => sum.plus(batch.quantity), new Decimal(0));
-    // More in stock than ever came in by delivery (found in a count, say): it belongs to no batch on record.
-    if (held.greaterThan(received)) {
-      const none = batchKeyOf(null, null);
-      const extra = held.minus(received);
-      const batch = batches.get(none);
-      if (batch) batch.quantity = batch.quantity.plus(extra);
-      else batches.set(none, { key: none, batchNumber: null, expiryDay: null, receivedOn: shopToday(), quantity: extra });
-    }
-
-    // What has gone (sold, written off, moved out for good) went from the batches that go first.
-    const order = [...batches.values()].sort(goesFirst);
-    let gone = Decimal.max(received.minus(held), 0);
-    for (const batch of order) {
-      const out = Decimal.min(gone, batch.quantity);
-      batch.quantity = batch.quantity.minus(out);
-      gone = gone.minus(out);
-    }
-    const left = order.filter((batch) => batch.quantity.greaterThan(0));
-
-    // Where each stands: the Shelf is filled from the batches that go first, the other places from the rest.
-    const places = [...balances].sort((a, b) => Number(a.location.kind !== "SHELF") - Number(b.location.kind !== "SHELF") || a.locationId.localeCompare(b.locationId));
-    const rows: { key: string; locationId: string; quantity: Decimal }[] = [];
-    for (const place of places) {
-      let room = new Decimal(place.quantity.toFixed(3));
-      for (const batch of left) {
-        if (!room.greaterThan(0)) break;
-        const here = Decimal.min(room, batch.quantity);
-        if (!here.greaterThan(0)) continue;
-        batch.quantity = batch.quantity.minus(here);
-        room = room.minus(here);
-        rows.push({ key: batch.key, locationId: place.locationId, quantity: here });
-      }
-    }
-
-    // The batches themselves are kept (later steps refer to them); what each holds is written afresh.
-    const known = new Map((await tx.stockBatch.findMany({ where: { productId }, select: { id: true, batchKey: true, receivedOn: true } })).map((batch) => [batch.batchKey, batch]));
-    for (const key of new Set(rows.map((row) => row.key))) {
-      const batch = batches.get(key)!;
-      const saved = known.get(key);
-      if (!saved) {
-        const created = await tx.stockBatch.create({
-          data: { businessId, productId, batchNumber: batch.batchNumber, expiryDate: batch.expiryDay ? dayToDate(batch.expiryDay) : null, batchKey: key, receivedOn: dayToDate(batch.receivedOn)! },
-          select: { id: true, batchKey: true, receivedOn: true },
-        });
-        known.set(key, created);
-      } else if (dateToDay(saved.receivedOn) !== batch.receivedOn && key !== batchKeyOf(null, null)) {
-        // A correction can change the day a delivery came in.
-        await tx.stockBatch.update({ where: { id: saved.id }, data: { receivedOn: dayToDate(batch.receivedOn)! } });
-      }
-    }
-    await tx.stockBatchBalance.deleteMany({ where: { productId } });
-    if (rows.length > 0) {
-      await tx.stockBatchBalance.createMany({
-        data: rows.map((row) => ({ businessId, batchId: known.get(row.key)!.id, productId, locationId: row.locationId, quantity: quantityToString(row.quantity) })),
-      });
-    }
+/** Puts this much into a batch in a place. */
+export async function addToBatch(tx: Tx, context: AppContext, input: { batchId: string; productId: string; locationId: string; quantity: Decimal }): Promise<void> {
+  if (!input.quantity.greaterThan(0)) return;
+  const amount = quantityToString(input.quantity);
+  const raised = await tx.stockBatchBalance.updateMany({ where: { batchId: input.batchId, locationId: input.locationId }, data: { quantity: { increment: amount } } });
+  if (raised.count === 0) {
+    await tx.stockBatchBalance.create({ data: { businessId: businessIdOf(context), batchId: input.batchId, productId: input.productId, locationId: input.locationId, quantity: amount } });
   }
 }
 
-/** True when a product's batches no longer add up to its stock somewhere (stock that was there before batches were counted). */
-export async function batchesAreBehind(db: Db | Tx, productId: string): Promise<boolean> {
-  const [balances, batches] = await Promise.all([
-    db.stockBalance.findMany({ where: { productId }, select: { locationId: true, quantity: true } }),
-    db.stockBatchBalance.groupBy({ by: ["locationId"], where: { productId }, _sum: { quantity: true } }),
-  ]);
-  const inBatches = new Map(batches.map((group) => [group.locationId, group._sum.quantity?.toFixed(3) ?? "0.000"]));
-  const places = new Set([...balances.map((balance) => balance.locationId), ...inBatches.keys()]);
-  for (const locationId of places) {
-    const held = balances.find((balance) => balance.locationId === locationId)?.quantity.toFixed(3) ?? "0.000";
-    if (!new Decimal(held).equals(inBatches.get(locationId) ?? "0")) return true;
+/** Takes this much out of a batch, only if that much is there — one statement, like every lowering of stock. */
+export async function takeFromBatch(tx: Tx, input: { batchId: string; locationId: string; quantity: Decimal }): Promise<boolean> {
+  if (!input.quantity.greaterThan(0)) return true;
+  const amount = quantityToString(input.quantity);
+  const lowered = await tx.stockBatchBalance.updateMany({ where: { batchId: input.batchId, locationId: input.locationId, quantity: { gte: amount } }, data: { quantity: { decrement: amount } } });
+  return lowered.count === 1;
+}
+
+/** A product's batches in a place that still hold something, the one that should go first on top. */
+export async function batchesIn(db: Reader, productId: string, locationId: string): Promise<BatchSummary[]> {
+  const rows = await db.stockBatchBalance.findMany({
+    where: { productId, locationId, quantity: { gt: 0 } },
+    select: { quantity: true, batch: { select: { id: true, batchNumber: true, expiryDate: true, receivedOn: true, batchKey: true } } },
+  });
+  return rows
+    .map((row) => ({
+      id: row.batch.id,
+      batchNumber: row.batch.batchNumber,
+      expiryDate: row.batch.expiryDate ? dateToDay(row.batch.expiryDate) : null,
+      receivedOn: dateToDay(row.batch.receivedOn),
+      quantity: row.quantity.toFixed(3),
+      order: { expiryDay: row.batch.expiryDate ? dateToDay(row.batch.expiryDate) : null, receivedOn: dateToDay(row.batch.receivedOn), key: row.batch.batchKey },
+    }))
+    .sort((a, b) => goesFirst(a.order, b.order))
+    .map((batch) => ({ id: batch.id, batchNumber: batch.batchNumber, expiryDate: batch.expiryDate, receivedOn: batch.receivedOn, quantity: batch.quantity }));
+}
+
+/**
+ * Takes this much out of a place's batches, the one that should go first first (for a sale
+ * straight from the Storeroom, and stock taken to cover a sale beyond stock). Returns what was
+ * taken from each. The batches always add up to the place's stock, so they always suffice.
+ */
+export async function takeFirstBatches(tx: Tx, input: { productId: string; locationId: string; quantity: Decimal }): Promise<{ batchId: string; quantity: Decimal }[]> {
+  const taken: { batchId: string; quantity: Decimal }[] = [];
+  let left = input.quantity;
+  for (const batch of await batchesIn(tx, input.productId, input.locationId)) {
+    if (!left.greaterThan(0)) break;
+    const part = Decimal.min(left, batch.quantity);
+    if (!(await takeFromBatch(tx, { batchId: batch.id, locationId: input.locationId, quantity: part }))) throw new Error("A batch changed while stock was being taken from it.");
+    taken.push({ batchId: batch.id, quantity: part });
+    left = left.minus(part);
   }
-  return false;
+  if (left.greaterThan(0)) throw new Error("The Storeroom's batches do not add up to its stock.");
+  return taken;
+}
+
+/**
+ * Makes sure a product's Storeroom batches add up to the Storeroom's stock before anything
+ * changes it. They always do — except for stock that was there before batches were recorded
+ * (C76 (4)). That stock is split into batches once, on the rule that what came in first went
+ * first: the batches still held are those that came in last. Batch figures anywhere other than
+ * the Storeroom (left over from C75) are removed. Returns whether the product has batches.
+ */
+export async function settleStoreroomBatches(tx: Tx, context: AppContext, productId: string): Promise<boolean> {
+  const product = await tx.product.findFirst({ where: { id: productId }, select: { tracksBatch: true, tracksExpiry: true } });
+  if (!product || !hasBatches(product)) return false;
+  const storeroom = await tx.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true } });
+  if (!storeroom) return true;
+  await tx.stockBatchBalance.deleteMany({ where: { productId, locationId: { not: storeroom.id } } });
+
+  const balance = await tx.stockBalance.findFirst({ where: { productId, locationId: storeroom.id }, select: { quantity: true } });
+  const held = new Decimal(balance?.quantity.toFixed(3) ?? "0");
+  const inBatches = await tx.stockBatchBalance.aggregate({ where: { productId, locationId: storeroom.id }, _sum: { quantity: true } });
+  const recorded = new Decimal(inBatches._sum.quantity?.toFixed(3) ?? "0");
+  if (held.equals(recorded)) return true;
+
+  if (recorded.greaterThan(held)) {
+    // Never expected; take the surplus from the batches that go first so that the figures agree again.
+    await takeFirstBatches(tx, { productId, locationId: storeroom.id, quantity: recorded.minus(held) });
+    return true;
+  }
+
+  // Stock from before batches were recorded: given to the batches that came in last, as far as their deliveries go.
+  let missing = held.minus(recorded);
+  const lines = await tx.goodsReceiptLine.findMany({ where: { productId }, select: { baseQuantity: true, batchNumber: true, expiryDate: true, receipt: { select: { receivedOn: true } } } });
+  const candidates = new Map<string, { key: string; batchNumber: string | null; expiryDay: string | null; receivedOn: string; received: Decimal }>();
+  for (const line of lines) {
+    const expiryDay = line.expiryDate ? dateToDay(line.expiryDate) : null;
+    const key = batchKeyOf(line.batchNumber, expiryDay);
+    const receivedOn = dateToDay(line.receipt.receivedOn);
+    const known = candidates.get(key);
+    if (known) {
+      known.received = known.received.plus(line.baseQuantity.toFixed(3));
+      if (receivedOn < known.receivedOn) known.receivedOn = receivedOn;
+    } else {
+      candidates.set(key, { key, batchNumber: line.batchNumber?.trim() || null, expiryDay, receivedOn, received: new Decimal(line.baseQuantity.toFixed(3)) });
+    }
+  }
+  const already = new Map((await batchesIn(tx, productId, storeroom.id)).map((batch) => [batch.id, new Decimal(batch.quantity)]));
+  for (const candidate of [...candidates.values()].sort(goesFirst).reverse()) {
+    if (!missing.greaterThan(0)) break;
+    const batch = await batchFor(tx, context, { productId, batchNumber: candidate.batchNumber, expiryDay: candidate.expiryDay, receivedOn: candidate.receivedOn });
+    const room = candidate.received.minus(already.get(batch.id) ?? 0);
+    const part = Decimal.min(missing, Decimal.max(room, 0));
+    if (!part.greaterThan(0)) continue;
+    await addToBatch(tx, context, { batchId: batch.id, productId, locationId: storeroom.id, quantity: part });
+    missing = missing.minus(part);
+  }
+  if (missing.greaterThan(0)) {
+    // More than every delivery on record brought in: it belongs to no batch on record.
+    const none = await batchFor(tx, context, { productId, batchNumber: null, expiryDay: null, receivedOn: shopToday() });
+    await addToBatch(tx, context, { batchId: none.id, productId, locationId: storeroom.id, quantity: missing });
+  }
+  return true;
+}
+
+/** True when a product's Storeroom batches no longer add up to the Storeroom's stock (stock from before batches were recorded). */
+export async function batchesAreBehind(db: Reader, productId: string): Promise<boolean> {
+  const storeroom = await db.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true } });
+  if (!storeroom) return false;
+  const [balance, inBatches, elsewhere] = await Promise.all([
+    db.stockBalance.findFirst({ where: { productId, locationId: storeroom.id }, select: { quantity: true } }),
+    db.stockBatchBalance.aggregate({ where: { productId, locationId: storeroom.id }, _sum: { quantity: true } }),
+    db.stockBatchBalance.count({ where: { productId, locationId: { not: storeroom.id } } }),
+  ]);
+  return elsewhere > 0 || !new Decimal(balance?.quantity.toFixed(3) ?? "0").equals(inBatches._sum.quantity?.toFixed(3) ?? "0");
+}
+
+/**
+ * What the transfer and adjustment screens offer for products with batches: the batches each
+ * holds in the Storeroom (the one that should go first on top), and every batch it has had (for
+ * goods going back in). Stock from before batches were recorded is split into batches once
+ * first, under each product's turn. Called by operations that have already checked permission.
+ */
+export async function storeroomBatchChoices(
+  context: AppContext,
+  products: { id: string; tracksBatch: boolean; tracksExpiry: boolean }[],
+  storeroomId: string | null,
+): Promise<{ batchesOf: Map<string, BatchSummary[]>; knownBatches: Map<string, { id: string; batchNumber: string | null; expiryDate: string | null }[]> }> {
+  const db = businessDb(context);
+  const batched = products.filter((product) => hasBatches(product));
+  const knownBatches = new Map<string, { id: string; batchNumber: string | null; expiryDate: string | null }[]>();
+  if (!storeroomId || batched.length === 0) return { batchesOf: new Map(), knownBatches };
+  const behind = (await Promise.all(batched.map(async (product) => ((await batchesAreBehind(db, product.id)) ? product.id : null)))).filter((id): id is string => id !== null);
+  if (behind.length > 0) {
+    await db.$transaction(
+      async (tx) => {
+        for (const productId of behind.sort()) {
+          await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
+          await settleStoreroomBatches(tx, context, productId);
+        }
+      },
+      { isolationLevel: "ReadCommitted" },
+    );
+  }
+  const batchesOf = new Map(await Promise.all(batched.map(async (product) => [product.id, await batchesIn(db, product.id, storeroomId)] as const)));
+  const rows = await db.stockBatch.findMany({
+    where: { productId: { in: batched.map((product) => product.id) } },
+    orderBy: [{ expiryDate: "asc" }, { receivedOn: "asc" }],
+    select: { id: true, productId: true, batchNumber: true, expiryDate: true },
+  });
+  for (const row of rows) {
+    const list = knownBatches.get(row.productId) ?? [];
+    list.push({ id: row.id, batchNumber: row.batchNumber, expiryDate: row.expiryDate ? dateToDay(row.expiryDate) : null });
+    knownBatches.set(row.productId, list);
+  }
+  return { batchesOf, knownBatches };
 }

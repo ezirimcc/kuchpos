@@ -9,7 +9,7 @@ import { type businessDb, businessIdOf } from "@/server/db/scoped";
 import { ValidationError } from "@/server/errors";
 import type { OfflineNote } from "@/server/offline-cashier";
 import type { CheckedSaleLine } from "@/server/sale-lines";
-import { refreshBatches } from "@/server/stock-batches";
+import { settleStoreroomBatches, takeFirstBatches } from "@/server/stock-batches";
 import { addStockOwed } from "@/server/stock-owed";
 
 type Tx = Parameters<Parameters<ReturnType<typeof businessDb>["$transaction"]>[0]>[0];
@@ -60,8 +60,6 @@ export type SaleToWrite = {
   notes: OfflineNote[];
   /** For a sale brought in from Excel: the import, and the moment it was really made. */
   imported?: { runId: string; at: Date };
-  /** For an import that replays many sales: the caller works the batches out once, at the end. */
-  deferBatches?: boolean;
   /** The tax rate, when the caller has read it already. Otherwise it is read here. */
   taxRate?: Decimal;
 };
@@ -103,6 +101,10 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
   // What each line could not take out of stock, in base units (only when a shortage is accepted).
   const shortOf = new Map<number, Decimal>();
   const costOf = new Map<string, Decimal>();
+  // A sale straight from the Storeroom of a product with batches takes the batch that should go
+  // first (C76): what was taken from each batch, per product and place, in that order.
+  const storeroom = await tx.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true } });
+  const batchesTaken = new Map<string, { batchId: string; quantity: Decimal }[]>();
   for (const productId of productOrder) {
     // The product's "turn", as for every other stock change; its average cost is read here.
     const product = await tx.product.update({
@@ -114,6 +116,7 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
 
     const places = [...perPlace.get(productId)!.entries()].sort(([a], [b]) => a.localeCompare(b));
     for (const [locationId, quantity] of places) {
+      const batched = locationId === storeroom?.id && (await settleStoreroomBatches(tx, context, productId));
       // Taken out only if that much is there — one statement, so two cashiers can never
       // both sell the last one.
       const needed = quantityToString(quantity);
@@ -121,7 +124,10 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
         where: { productId, locationId, quantity: { gte: needed } },
         data: { quantity: { decrement: needed } },
       });
-      if (lowered.count === 1) continue;
+      if (lowered.count === 1) {
+        if (batched) batchesTaken.set(`${productId}|${locationId}`, await takeFirstBatches(tx, { productId, locationId, quantity }));
+        continue;
+      }
       const there = await tx.stockBalance.findFirst({ where: { productId, locationId }, select: { quantity: true } });
       if (sale.acceptShortage) {
         // The goods have left the shop. Take what the system holds (this product's turn is
@@ -133,6 +139,7 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
             data: { quantity: { decrement: quantityToString(held) } },
           });
           if (taken.count !== 1) throw new Error("Stock changed while it was being taken for a sale that had already happened.");
+          if (batched) batchesTaken.set(`${productId}|${locationId}`, await takeFirstBatches(tx, { productId, locationId, quantity: held }));
         }
         let left = held;
         for (const line of checked) {
@@ -164,9 +171,6 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
   if (Object.keys(short).length > 0) {
     throw new ValidationError("Nothing was sold: there is not enough stock.", short);
   }
-
-  // What is left of each batch of these products is worked out again (C73).
-  if (!sale.deferBatches) await refreshBatches(tx, context, productOrder);
 
   // The discount is shared out over the lines, so each line knows what was really charged for it.
   const shares = shareDiscount(
@@ -267,6 +271,37 @@ export async function writeSale(tx: Tx, context: AppContext, sale: SaleToWrite):
     const lacking = shortOf.get(line.index);
     const moved = lacking ? line.baseQuantity.minus(lacking) : line.baseQuantity;
     if (!moved.greaterThan(0)) return [];
+    // From the Storeroom, one movement per batch it came from, in the base unit (C76).
+    const fromBatches = batchesTaken.get(`${line.productId}|${line.location.id}`);
+    if (fromBatches) {
+      const parts: { batchId: string; quantity: Decimal }[] = [];
+      let left = moved;
+      while (left.greaterThan(0) && fromBatches.length > 0) {
+        const next = fromBatches[0];
+        const part = Decimal.min(left, next.quantity);
+        parts.push({ batchId: next.batchId, quantity: part });
+        left = left.minus(part);
+        next.quantity = next.quantity.minus(part);
+        if (!next.quantity.greaterThan(0)) fromBatches.shift();
+      }
+      return parts.map((part) => ({
+        businessId,
+        productId: line.productId,
+        locationId: line.location.id,
+        batchId: part.batchId,
+        type: "SALE" as const,
+        quantityDelta: `-${quantityToString(part.quantity)}`,
+        unitName: line.baseUnitName,
+        unitFactor: "1.000",
+        unitQuantity: `-${quantityToString(part.quantity)}`,
+        documentType: "sale",
+        documentId: saved.id,
+        documentNumber: receiptNumber,
+        userId: context.actor.userId,
+        userName: context.actor.name,
+        ...at,
+      }));
+    }
     return [
       {
         businessId,

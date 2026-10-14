@@ -322,7 +322,7 @@ describe("the paper trail", () => {
     const transfer = await getTransfer(world.a.as.ACCOUNTANT, { transferId: id });
     expect(transfer).toMatchObject({ number: 1, fromLocationName: "Storeroom", toLocationName: "Shelf", note: "Restocking the front", createdByName: "Test a.admin", lineCount: 1 });
     expect(transfer.lines).toEqual([
-      { lineNumber: 1, productId: world.a.product.id, productName: "A Seed Sachet", unitName: "carton", unitFactor: "100.000", quantity: "1.000", baseQuantity: "100.000" },
+      { lineNumber: 1, productId: world.a.product.id, productName: "A Seed Sachet", unitName: "carton", unitFactor: "100.000", quantity: "1.000", baseQuantity: "100.000", batchNumber: null, expiryDate: null, hasBatch: false, earlierBatchWaiting: false },
     ]);
 
     const db = getDb();

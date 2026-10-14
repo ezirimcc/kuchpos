@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { plainNumber, shopDayEnd, shopDayStart, transferNumber } from "@/lib/format";
+import { dateToDay, dayToDate, formatDay, plainNumber, shopDayEnd, shopDayStart, shopToday, transferNumber } from "@/lib/format";
 import { parseQuantity, quantityToString, toBaseQuantity } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
@@ -12,7 +12,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { takeDocumentNumber } from "@/server/document-number";
-import { refreshBatches } from "@/server/stock-batches";
+import { addToBatch, type BatchSummary, batchesIn, batchFor, earlierBatchThan, hasBatches, settleStoreroomBatches, storeroomBatchChoices, takeFromBatch } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 
@@ -45,6 +45,13 @@ export type TransferProduct = {
   units: { id: string; name: string; factor: string; isBase: boolean }[];
   /** How much is in each location now, in base units (a missing location means none). */
   stock: Record<string, string>;
+  /** For a product with batch numbers or expiry dates (C76): */
+  tracksBatch: boolean;
+  tracksExpiry: boolean;
+  /** what each batch holds in the Storeroom, the one that should go first on top; */
+  storeroomBatches: BatchSummary[];
+  /** and every batch it has had, for goods going back into the Storeroom. */
+  knownBatches: { id: string; batchNumber: string | null; expiryDate: string | null }[];
 };
 
 export type TransferOptions = {
@@ -67,6 +74,8 @@ export async function getTransferOptions(context: AppContext): Promise<TransferO
         name: true,
         code: true,
         allowsFraction: true,
+        tracksBatch: true,
+        tracksExpiry: true,
         units: {
           where: { retiredAt: null },
           orderBy: { factor: "asc" },
@@ -76,9 +85,14 @@ export async function getTransferOptions(context: AppContext): Promise<TransferO
       },
     }),
   ]);
+  const { batchesOf, knownBatches } = await storeroomBatchChoices(context, products, locations.find((location) => location.kind === "STOREROOM")?.id ?? null);
   return {
     locations,
     products: products.map((product) => ({
+      tracksBatch: product.tracksBatch,
+      tracksExpiry: product.tracksExpiry,
+      storeroomBatches: batchesOf.get(product.id) ?? [],
+      knownBatches: knownBatches.get(product.id) ?? [],
       id: product.id,
       name: product.name,
       code: product.code,
@@ -105,7 +119,18 @@ const transferSchema = z.object({
   toLocationId: z.string().uuid("Choose where the goods are going."),
   note: optionalText(300, "The note is too long (300 characters at most).").optional().default(""),
   lines: z
-    .array(z.object({ productId: z.string().trim(), unitId: z.string().trim(), quantity: z.string().trim() }))
+    .array(
+      z.object({
+        productId: z.string().trim(),
+        unitId: z.string().trim(),
+        quantity: z.string().trim(),
+        /** For a product with batches, into or out of the Storeroom (C76): the batch moved… */
+        batchId: z.string().trim().optional().default(""),
+        /** …or, for goods going INTO the Storeroom, a batch not yet on record. */
+        batchNumber: z.string().trim().max(60, "The batch number is too long (60 characters at most).").optional().default(""),
+        expiryDate: z.string().trim().optional().default(""),
+      }),
+    )
     .min(1, "Add at least one product to the transfer.")
     .max(MAX_LINES, `A transfer can have at most ${MAX_LINES} lines. Split it into two transfers.`),
 });
@@ -121,7 +146,14 @@ type CheckedLine = {
   unitFactor: string;
   quantity: string;
   baseQuantity: Decimal;
+  /** For a product with batches moving into or out of the Storeroom (C76). */
+  batch: { batchId: string | null; batchNumber: string | null; expiryDay: string | null } | null;
 };
+
+/** A batch as people name it: "LH-7 (expires 31 Mar 2027)". */
+function batchLabel(batch: { batchNumber: string | null; expiryDay: string | null }): string {
+  return [batch.batchNumber ?? "with no number", batch.expiryDay ? `(expires ${formatDay(batch.expiryDay)})` : ""].filter(Boolean).join(" ");
+}
 
 /**
  * Moves stock from one location to the other: the document, its lines, an "out" and an "in"
@@ -148,8 +180,8 @@ export async function transferStock(context: AppContext, input: unknown): Promis
 
   // --- The two locations -----------------------------------------------------------
   const [from, to] = await Promise.all([
-    db.location.findFirst({ where: { id: data.fromLocationId }, select: { id: true, name: true } }),
-    db.location.findFirst({ where: { id: data.toLocationId }, select: { id: true, name: true } }),
+    db.location.findFirst({ where: { id: data.fromLocationId }, select: { id: true, name: true, kind: true } }),
+    db.location.findFirst({ where: { id: data.toLocationId }, select: { id: true, name: true, kind: true } }),
   ]);
   if (!from) fieldErrors.fromLocationId = "Choose where the goods are coming from.";
   if (!to) fieldErrors.toLocationId = "Choose where the goods are going.";
@@ -164,10 +196,19 @@ export async function transferStock(context: AppContext, input: unknown): Promis
       name: true,
       allowsFraction: true,
       deactivatedAt: true,
+      tracksBatch: true,
+      tracksExpiry: true,
       units: { select: { id: true, name: true, factor: true, isBase: true, retiredAt: true } },
     },
   });
   const productById = new Map(products.map((product) => [product.id, product]));
+  const outOfStoreroom = from?.kind === "STOREROOM";
+  const intoStoreroom = to?.kind === "STOREROOM";
+  // The batches each product with batches has had: a batch named by the browser must be one of them.
+  const knownBatches = await db.stockBatch.findMany({
+    where: { productId: { in: products.filter((product) => hasBatches(product)).map((product) => product.id) } },
+    select: { id: true, productId: true },
+  });
 
   const checked: CheckedLine[] = [];
   data.lines.forEach((line, index) => {
@@ -195,7 +236,35 @@ export async function transferStock(context: AppContext, input: unknown): Promis
       }
       const baseQuantity = toBaseQuantity(quantity, new Decimal(unit.factor.toFixed(3)));
       if (baseQuantity.greaterThan(MAX_BASE_QUANTITY)) throw new Error("too large");
+
+      // Into or out of the Storeroom, a product with batches names its batch (C76).
+      let batch: CheckedLine["batch"] = null;
+      if (hasBatches(product) && (outOfStoreroom || intoStoreroom)) {
+        const known = knownBatches.find((candidate) => candidate.id === line.batchId && candidate.productId === product.id);
+        if (known) {
+          batch = { batchId: known.id, batchNumber: null, expiryDay: null };
+        } else if (outOfStoreroom) {
+          fieldErrors[at("batchId")] = `Choose which batch of "${product.name}" is being moved out of the Storeroom.`;
+          return;
+        } else {
+          const expiryDay = line.expiryDate && dayToDate(line.expiryDate) ? line.expiryDate : null;
+          if (line.expiryDate && !expiryDay) {
+            fieldErrors[at("expiryDate")] = "Enter the expiry date as a real date.";
+            return;
+          }
+          if (product.tracksBatch && !line.batchNumber) {
+            fieldErrors[at("batchId")] = `Choose the batch of "${product.name}" going into the Storeroom, or type its batch number.`;
+            return;
+          }
+          if (product.tracksExpiry && !expiryDay) {
+            fieldErrors[at("expiryDate")] = `Choose the batch of "${product.name}" going into the Storeroom, or enter its expiry date.`;
+            return;
+          }
+          batch = { batchId: null, batchNumber: product.tracksBatch ? line.batchNumber : null, expiryDay: product.tracksExpiry ? expiryDay : null };
+        }
+      }
       checked.push({
+        batch,
         index,
         productId: product.id,
         productUnitId: unit.id,
@@ -233,6 +302,27 @@ export async function transferStock(context: AppContext, input: unknown): Promis
           await tx.product.update({ where: { id: productId }, data: { updatedAt: new Date() }, select: { id: true } });
         }
 
+        // Batches (C76): the Storeroom's must add up to its stock before anything moves; a new batch
+        // going into the Storeroom is put on record; and a batch moved out while one that should go
+        // first is still there is noted on the line (the screen warned about it).
+        const batchOf = new Map<number, { id: string; batchNumber: string | null; expiryDay: string | null; earlierWaiting: boolean }>();
+        const storeroomId = outOfStoreroom ? from.id : to.id;
+        const before = new Map<string, Awaited<ReturnType<typeof batchesIn>>>();
+        for (const productId of [...new Set(checked.filter((line) => line.batch).map((line) => line.productId))].sort()) {
+          await settleStoreroomBatches(tx, context, productId);
+          before.set(productId, await batchesIn(tx, productId, storeroomId));
+        }
+        for (const line of checked) {
+          if (!line.batch) continue;
+          const saved = line.batch.batchId
+            ? await tx.stockBatch
+                .findFirstOrThrow({ where: { id: line.batch.batchId }, select: { id: true, batchNumber: true, expiryDate: true } })
+                .then((row) => ({ id: row.id, batchNumber: row.batchNumber, expiryDay: row.expiryDate ? dateToDay(row.expiryDate) : null }))
+            : await batchFor(tx, context, { productId: line.productId, batchNumber: line.batch.batchNumber, expiryDay: line.batch.expiryDay, receivedOn: shopToday() });
+          const earlier = outOfStoreroom ? earlierBatchThan(before.get(line.productId) ?? [], saved.id) : null;
+          batchOf.set(line.index, { ...saved, earlierWaiting: earlier !== null });
+        }
+
         const transfer = await tx.stockTransfer.create({
           data: {
             businessId,
@@ -259,6 +349,10 @@ export async function transferStock(context: AppContext, input: unknown): Promis
             unitFactor: line.unitFactor,
             quantity: line.quantity,
             baseQuantity: quantityToString(line.baseQuantity),
+            batchId: batchOf.get(line.index)?.id ?? null,
+            batchNumber: batchOf.get(line.index)?.batchNumber ?? null,
+            expiryDate: batchOf.get(line.index)?.expiryDay ? dayToDate(batchOf.get(line.index)!.expiryDay!) : null,
+            earlierBatchWaiting: batchOf.get(line.index)?.earlierWaiting ?? false,
           })),
         });
 
@@ -291,20 +385,38 @@ export async function transferStock(context: AppContext, input: unknown): Promis
           if (raised.count === 0) {
             await tx.stockBalance.create({ data: { businessId, productId, locationId: to.id, quantity: moving } });
           }
+          // The batches move with the stock, line by line (C76).
+          for (const line of checked) {
+            const batch = batchOf.get(line.index);
+            if (line.productId !== productId || !batch) continue;
+            if (outOfStoreroom) {
+              if (!(await takeFromBatch(tx, { batchId: batch.id, locationId: from.id, quantity: line.baseQuantity }))) {
+                const there = (before.get(productId) ?? []).find((candidate) => candidate.id === batch.id)?.quantity ?? "0";
+                short[`lines.${line.index}.quantity`] =
+                  `Only ${plainNumber(there)} ${baseUnitOf(productId)} of batch ${batchLabel(batch)} is in ${from.name}. ` +
+                  `You asked to move ${plainNumber(quantityToString(line.baseQuantity))} ${baseUnitOf(productId)}.`;
+              }
+            } else {
+              await addToBatch(tx, context, { batchId: batch.id, productId, locationId: to.id, quantity: line.baseQuantity });
+            }
+          }
           await coverStockOwed(tx, context, { productId, locationId: to.id, arrivedWith: transferNumber(number) });
         }
         // Throwing here undoes everything above, including the lines that did have enough.
         if (Object.keys(short).length > 0) {
           throw new ValidationError(`Nothing was moved: there is not enough in ${from.name}.`, short);
         }
-        await refreshBatches(tx, context, productOrder);
+
 
         const movement = (line: CheckedLine, type: "TRANSFER_OUT" | "TRANSFER_IN") => {
           const sign = type === "TRANSFER_OUT" ? "-" : "";
+          const place = type === "TRANSFER_OUT" ? from : to;
           return {
             businessId,
             productId: line.productId,
-            locationId: type === "TRANSFER_OUT" ? from.id : to.id,
+            locationId: place.id,
+            // The Storeroom side names its batch (C76).
+            batchId: place.kind === "STOREROOM" ? (batchOf.get(line.index)?.id ?? null) : null,
             type,
             quantityDelta: `${sign}${quantityToString(line.baseQuantity)}`,
             unitName: line.unitName,
@@ -461,6 +573,11 @@ export type TransferDetail = Omit<TransferSummary, "products"> & {
     unitFactor: string;
     quantity: string;
     baseQuantity: string;
+    /** The Storeroom batch moved (C76), and whether one that should have gone first was still there. */
+    batchNumber: string | null;
+    expiryDate: string | null;
+    hasBatch: boolean;
+    earlierBatchWaiting: boolean;
   }[];
 };
 
@@ -490,6 +607,10 @@ export async function getTransfer(context: AppContext, input: unknown): Promise<
       unitFactor: line.unitFactor.toFixed(3),
       quantity: line.quantity.toFixed(3),
       baseQuantity: line.baseQuantity.toFixed(3),
+      batchNumber: line.batchNumber,
+      expiryDate: line.expiryDate ? dateToDay(line.expiryDate) : null,
+      hasBatch: line.batchId !== null,
+      earlierBatchWaiting: line.earlierBatchWaiting,
     })),
   };
 }

@@ -8,7 +8,7 @@ import {
   reasonLabel,
 } from "@/lib/adjustment-reasons";
 import { Decimal } from "@/lib/decimal";
-import { adjustmentNumber, countNumber, plainNumber, shopDayEnd, shopDayStart } from "@/lib/format";
+import { adjustmentNumber, countNumber, dateToDay, dayToDate, formatDay, plainNumber, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
 import { parseQuantity, quantityToString, toBaseQuantity } from "@/lib/quantity";
 import { activityRow } from "@/server/activity";
 import type { AppContext } from "@/server/auth/context";
@@ -18,7 +18,7 @@ import { NotFoundError, ValidationError } from "@/server/errors";
 import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { takeDocumentNumber } from "@/server/document-number";
-import { refreshBatches } from "@/server/stock-batches";
+import { addToBatch, type BatchSummary, batchesIn, batchFor, hasBatches, settleStoreroomBatches, storeroomBatchChoices, takeFirstBatches, takeFromBatch } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 
@@ -59,6 +59,13 @@ type PreparedLine = {
   quantity: string;
   baseQuantity: Decimal;
   reason: AdjustmentReasonValue;
+  /**
+   * For a product with batches in the Storeroom (C76): the batch named — an existing one
+   * (`batchId`), or for stock added, one not yet on record. Null when no batch was named (a line
+   * from a count, or saved before batches were recorded): then stock taken out comes from the
+   * batch that should go first, and stock added belongs to no batch on record.
+   */
+  batch: { batchId: string | null; batchNumber: string | null; expiryDay: string | null } | null;
 };
 
 export type AdjustmentResult = { id: string; number: number; status: AdjustmentStatus; alreadySaved: boolean };
@@ -83,6 +90,14 @@ async function applyToStock(
   for (const line of lines) {
     perProduct.set(line.productId, (perProduct.get(line.productId) ?? new Decimal(0)).plus(line.baseQuantity));
   }
+  // In the Storeroom, products with batches change batch by batch (C76). Their batches must add up first.
+  const place = await tx.location.findFirst({ where: { id: adjustment.locationId }, select: { kind: true } });
+  const batched = new Set<string>();
+  if (place?.kind === "STOREROOM") {
+    for (const productId of [...perProduct.keys()].sort()) {
+      if (await settleStoreroomBatches(tx, context, productId)) batched.add(productId);
+    }
+  }
 
   const short: Record<string, string> = {};
   const problems: string[] = [];
@@ -103,7 +118,6 @@ async function applyToStock(
           data: { businessId, productId, locationId: adjustment.locationId, quantity: quantityToString(net) },
         });
       }
-      await coverStockOwed(tx, context, { productId, locationId: adjustment.locationId, arrivedWith: adjustmentNumber(adjustment.number) });
       continue;
     }
 
@@ -130,13 +144,73 @@ async function applyToStock(
   if (problems.length > 0) {
     throw new ValidationError(`Stock was not changed. ${problems.join(" ")}`, short);
   }
-  await refreshBatches(tx, context, [...perProduct.keys()]);
+
+  // The batches, line by line: what was taken out of a named batch must be there.
+  const batchOfLine = new Map<string, string[]>();
+  const movementParts = new Map<string, { batchId: string | null; quantity: Decimal }[]>();
+  for (const line of lines) {
+    if (!batched.has(line.productId)) continue;
+    const out = line.baseQuantity.isNegative();
+    const amount = line.baseQuantity.abs();
+    let batchId = line.batch?.batchId ?? null;
+    if (!batchId && line.batch && !out) {
+      batchId = (await batchFor(tx, context, { productId: line.productId, batchNumber: line.batch.batchNumber, expiryDay: line.batch.expiryDay, receivedOn: shopToday() })).id;
+    }
+    if (out) {
+      if (batchId) {
+        if (!(await takeFromBatch(tx, { batchId, locationId: adjustment.locationId, quantity: amount }))) {
+          const there = (await batchesIn(tx, line.productId, adjustment.locationId)).find((batch) => batch.id === batchId)?.quantity ?? "0";
+          const message = `Only ${plainNumber(there)} ${line.baseUnitName} of that batch of "${line.productName}" is in ${adjustment.locationName}. This adjustment takes out ${plainNumber(quantityToString(amount))} ${line.baseUnitName}.`;
+          problems.push(message);
+          short[`lines.${line.key}.quantity`] = message;
+          continue;
+        }
+        movementParts.set(line.key, [{ batchId, quantity: amount }]);
+      } else {
+        movementParts.set(line.key, await takeFirstBatches(tx, { productId: line.productId, locationId: adjustment.locationId, quantity: amount }));
+      }
+    } else {
+      if (!batchId) batchId = (await batchFor(tx, context, { productId: line.productId, batchNumber: null, expiryDay: null, receivedOn: shopToday() })).id;
+      await addToBatch(tx, context, { batchId, productId: line.productId, locationId: adjustment.locationId, quantity: amount });
+      movementParts.set(line.key, [{ batchId, quantity: amount }]);
+    }
+    batchOfLine.set(line.key, (movementParts.get(line.key) ?? []).map((part) => part.batchId ?? ""));
+  }
+  if (problems.length > 0) {
+    throw new ValidationError(`Stock was not changed. ${problems.join(" ")}`, short);
+  }
+  // Stock added in a place that owed some to a sale beyond stock covers that first (C72) — after the batches are right.
+  for (const productId of [...perProduct.keys()].sort()) {
+    if (perProduct.get(productId)!.greaterThan(0)) await coverStockOwed(tx, context, { productId, locationId: adjustment.locationId, arrivedWith: adjustmentNumber(adjustment.number) });
+  }
 
   await tx.stockMovement.createMany({
-    data: lines.map((line) => ({
+    data: lines.flatMap((line) => {
+      const parts = movementParts.get(line.key);
+      // A line split over several batches (taken from the batch that should go first) is one movement per batch, in the base unit.
+      if (parts && parts.length > 1) {
+        return parts.map((part) => ({
+          businessId,
+          productId: line.productId,
+          locationId: adjustment.locationId,
+          batchId: part.batchId,
+          type: "ADJUSTMENT" as const,
+          quantityDelta: `-${quantityToString(part.quantity)}`,
+          unitName: line.baseUnitName,
+          unitFactor: "1.000",
+          unitQuantity: `-${quantityToString(part.quantity)}`,
+          documentType: "stock_adjustment",
+          documentId: adjustment.id,
+          documentNumber: adjustmentNumber(adjustment.number),
+          userId: context.actor.userId,
+          userName: context.actor.name,
+        }));
+      }
+      return [{
       businessId,
       productId: line.productId,
       locationId: adjustment.locationId,
+      batchId: parts?.[0]?.batchId ?? null,
       type: "ADJUSTMENT" as const,
       quantityDelta: quantityToString(line.baseQuantity),
       unitName: line.unitName,
@@ -147,7 +221,8 @@ async function applyToStock(
       documentNumber: adjustmentNumber(adjustment.number),
       userId: context.actor.userId,
       userName: context.actor.name,
-    })),
+      }];
+    }),
   });
 }
 
@@ -195,6 +270,20 @@ async function saveAdjustment(
           }
         }
 
+        // A batch named on a line is put on record now, so the line can name it (C76).
+        const batchOf = new Map<string, { id: string; batchNumber: string | null; expiryDay: string | null }>();
+        for (const line of input.lines) {
+          if (!line.batch) continue;
+          if (line.batch.batchId) {
+            const row = await tx.stockBatch.findFirstOrThrow({ where: { id: line.batch.batchId }, select: { id: true, batchNumber: true, expiryDate: true } });
+            batchOf.set(line.key, { id: row.id, batchNumber: row.batchNumber, expiryDay: row.expiryDate ? dateToDay(row.expiryDate) : null });
+          } else {
+            const made = await batchFor(tx, context, { productId: line.productId, batchNumber: line.batch.batchNumber, expiryDay: line.batch.expiryDay, receivedOn: shopToday() });
+            batchOf.set(line.key, made);
+            line.batch = { ...line.batch, batchId: made.id };
+          }
+        }
+
         const adjustment = await tx.stockAdjustment.create({
           data: {
             businessId,
@@ -221,6 +310,9 @@ async function saveAdjustment(
             quantity: line.quantity,
             baseQuantity: quantityToString(line.baseQuantity),
             reason: line.reason,
+            batchId: batchOf.get(line.key)?.id ?? null,
+            batchNumber: batchOf.get(line.key)?.batchNumber ?? null,
+            expiryDate: batchOf.get(line.key)?.expiryDay ? dayToDate(batchOf.get(line.key)!.expiryDay!) : null,
           })),
         });
 
@@ -294,6 +386,11 @@ export type AdjustmentProduct = {
   units: { id: string; name: string; factor: string; isBase: boolean }[];
   /** How much is in each location now, in base units (a missing location means none). */
   stock: Record<string, string>;
+  /** For a product with batch numbers or expiry dates (C76): its batches in the Storeroom, the one that should go first on top, and every batch it has had. */
+  tracksBatch: boolean;
+  tracksExpiry: boolean;
+  storeroomBatches: BatchSummary[];
+  knownBatches: { id: string; batchNumber: string | null; expiryDate: string | null }[];
 };
 
 export type AdjustmentOptions = {
@@ -316,6 +413,8 @@ export async function getAdjustmentOptions(context: AppContext): Promise<Adjustm
         name: true,
         code: true,
         allowsFraction: true,
+        tracksBatch: true,
+        tracksExpiry: true,
         units: {
           where: { retiredAt: null },
           orderBy: { factor: "asc" },
@@ -325,10 +424,15 @@ export async function getAdjustmentOptions(context: AppContext): Promise<Adjustm
       },
     }),
   ]);
+  const { batchesOf, knownBatches } = await storeroomBatchChoices(context, products, locations.find((location) => location.kind === "STOREROOM")?.id ?? null);
   return {
     appliesAtOnce: can(context, "stock.adjust.approve"),
     locations,
     products: products.map((product) => ({
+      tracksBatch: product.tracksBatch,
+      tracksExpiry: product.tracksExpiry,
+      storeroomBatches: batchesOf.get(product.id) ?? [],
+      knownBatches: knownBatches.get(product.id) ?? [],
       id: product.id,
       name: product.name,
       code: product.code,
@@ -360,6 +464,11 @@ const recordSchema = z.object({
         direction: z.enum(["add", "remove"], { message: "Choose whether stock is being added or taken out." }),
         quantity: z.string().trim(),
         reason: reasonSchema,
+        /** In the Storeroom, for a product with batches (C76): the batch… */
+        batchId: z.string().trim().optional().default(""),
+        /** …or, for stock added, a batch not yet on record. */
+        batchNumber: z.string().trim().max(60, "The batch number is too long (60 characters at most).").optional().default(""),
+        expiryDate: z.string().trim().optional().default(""),
       }),
     )
     .min(1, "Add at least one product to the adjustment.")
@@ -391,7 +500,7 @@ export async function recordAdjustment(context: AppContext, input: unknown): Pro
   const fieldErrors: Record<string, string> = {};
   requireNoteForOther(data.lines, data.note ?? "", fieldErrors);
 
-  const location = await db.location.findFirst({ where: { id: data.locationId }, select: { id: true, name: true } });
+  const location = await db.location.findFirst({ where: { id: data.locationId }, select: { id: true, name: true, kind: true } });
   if (!location) fieldErrors.locationId = "Choose the location.";
 
   const productIds = [...new Set(data.lines.map((line) => line.productId).filter(Boolean))];
@@ -402,10 +511,14 @@ export async function recordAdjustment(context: AppContext, input: unknown): Pro
       name: true,
       allowsFraction: true,
       deactivatedAt: true,
+      tracksBatch: true,
+      tracksExpiry: true,
       units: { select: { id: true, name: true, factor: true, isBase: true, retiredAt: true } },
     },
   });
   const productById = new Map(products.map((product) => [product.id, product]));
+  const inStoreroom = location?.kind === "STOREROOM";
+  const knownBatches = await db.stockBatch.findMany({ where: { productId: { in: products.filter((product) => hasBatches(product)).map((product) => product.id) } }, select: { id: true, productId: true } });
 
   const prepared: PreparedLine[] = [];
   data.lines.forEach((line, index) => {
@@ -434,7 +547,25 @@ export async function recordAdjustment(context: AppContext, input: unknown): Pro
       const baseQuantity = toBaseQuantity(quantity, new Decimal(unit.factor.toFixed(3)));
       if (baseQuantity.greaterThan(MAX_BASE_QUANTITY)) throw new Error("too large");
       const sign = line.direction === "remove" ? -1 : 1;
+      // In the Storeroom, a product with batches names its batch (C76).
+      let batch: PreparedLine["batch"] = null;
+      if (inStoreroom && hasBatches(product)) {
+        const known = knownBatches.find((candidate) => candidate.id === line.batchId && candidate.productId === product.id);
+        if (known) batch = { batchId: known.id, batchNumber: null, expiryDay: null };
+        else if (line.direction === "remove") {
+          fieldErrors[at("batchId")] = `Choose which batch of "${product.name}" is being taken out of the Storeroom.`;
+          return;
+        } else {
+          const expiryDay = line.expiryDate && dayToDate(line.expiryDate) ? line.expiryDate : null;
+          if ((product.tracksBatch && !line.batchNumber) || (product.tracksExpiry && !expiryDay)) {
+            fieldErrors[at("batchId")] = `Choose the batch of "${product.name}" being added, or give its ${product.tracksBatch && product.tracksExpiry ? "batch number and expiry date" : product.tracksBatch ? "batch number" : "expiry date"}.`;
+            return;
+          }
+          batch = { batchId: null, batchNumber: product.tracksBatch ? line.batchNumber : null, expiryDay: product.tracksExpiry ? expiryDay : null };
+        }
+      }
       prepared.push({
+        batch,
         key: String(index),
         productId: product.id,
         productUnitId: unit.id,
@@ -518,6 +649,8 @@ export async function adjustFromCount(context: AppContext, input: unknown): Prom
       quantity: line.difference.toFixed(3),
       baseQuantity: new Decimal(line.difference.toFixed(3)),
       reason: reason.data,
+      // A count is by product, not by batch: see PreparedLine.batch.
+      batch: null,
     });
   }
   requireNoteForOther(prepared, data.note ?? "", fieldErrors);
@@ -601,6 +734,7 @@ export async function decideAdjustment(context: AppContext, input: unknown): Pro
     quantity: line.quantity.toFixed(3),
     baseQuantity: new Decimal(line.baseQuantity.toFixed(3)),
     reason: line.reason,
+    batch: line.batchId ? { batchId: line.batchId, batchNumber: line.batchNumber, expiryDay: line.expiryDate ? dateToDay(line.expiryDate) : null } : null,
   }));
 
   const save = () =>
@@ -780,6 +914,8 @@ export type AdjustmentDetail = Omit<AdjustmentSummary, "products"> & {
     baseQuantity: string;
     baseUnitName: string;
     reason: AdjustmentReasonValue;
+    /** The Storeroom batch named on the line (C76): "LH-7 (expires 31 Mar 2027)"; null when none was named. */
+    batch: string | null;
     /** While waiting: how much is in the location now, in base units. Null once decided. */
     stockNow: string | null;
   }[];
@@ -833,6 +969,7 @@ export async function getAdjustment(context: AppContext, input: unknown): Promis
       baseQuantity: line.baseQuantity.toFixed(3),
       baseUnitName: baseUnitOf.get(line.productId) ?? "",
       reason: line.reason,
+      batch: line.batchId ? [line.batchNumber ?? "with no number", line.expiryDate ? `(expires ${formatDay(dateToDay(line.expiryDate))})` : null].filter(Boolean).join(" ") : null,
       stockNow: row.decision ? null : (stockOf.get(line.productId) ?? "0.000"),
     })),
   };

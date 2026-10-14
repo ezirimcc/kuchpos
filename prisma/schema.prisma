@@ -508,6 +508,9 @@ model StockBatch {
   createdAt   DateTime  @default(now()) @db.DateTime(3)
 
   balances StockBatchBalance[]
+  movements StockMovement[]
+  transferLines StockTransferLine[]
+  adjustmentLines StockAdjustmentLine[]
 
   @@unique([productId, batchKey])
   @@index([businessId])
@@ -574,6 +577,9 @@ model StockMovement {
   unitFactor     Decimal           @db.Decimal(12, 3)
   unitQuantity   Decimal           @db.Decimal(16, 3)
   /// The document this movement belongs to.
+  /// For a product with batches, the Storeroom batch this movement put in or took out (C76); empty everywhere else.
+  batchId        String?           @db.Char(36)
+  batch          StockBatch?       @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   documentType   String            @db.VarChar(30)
   documentId     String            @db.Char(36)
   documentNumber String            @db.VarChar(30)
@@ -793,6 +799,13 @@ model StockTransferLine {
   /// How many of the chosen unit, and the same amount in base units.
   quantity      Decimal       @db.Decimal(16, 3)
   baseQuantity  Decimal       @db.Decimal(16, 3)
+  /// The Storeroom batch moved (C76), as it was named then; empty for a product without batches.
+  batchId       String?       @db.Char(36)
+  batch         StockBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  batchNumber   String?       @db.VarChar(60)
+  expiryDate    DateTime?     @db.Date
+  /// True when a batch that should have gone first was still in the Storeroom: the warning was passed over.
+  earlierBatchWaiting Boolean @default(false)
 
   @@unique([transferId, lineNumber])
   @@index([productId])
@@ -920,6 +933,11 @@ model StockAdjustmentLine {
   quantity      Decimal          @db.Decimal(16, 3)
   baseQuantity  Decimal          @db.Decimal(16, 3)
   reason        AdjustmentReason
+  /// The Storeroom batch adjusted (C76), as it was named then; empty for a product without batches or outside the Storeroom.
+  batchId       String?          @db.Char(36)
+  batch         StockBatch?      @relation(fields: [batchId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  batchNumber   String?          @db.VarChar(60)
+  expiryDate    DateTime?        @db.Date
 
   @@unique([adjustmentId, lineNumber])
   @@index([productId])

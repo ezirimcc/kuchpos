@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { addMonths, dateToDay, dayToDate, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
+import { addMonths, dateToDay, dayToDate, formatDay, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
 import { quantityToString } from "@/lib/quantity";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
@@ -12,7 +12,7 @@ import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { EXPIRY_MONTH_CHOICES } from "@/lib/expiry";
 import { authorize, can } from "@/server/permissions";
-import { batchesAreBehind, goesFirst, refreshBatches } from "@/server/stock-batches";
+import { batchesAreBehind, batchesIn, settleStoreroomBatches } from "@/server/stock-batches";
 import { countUnreconciledSales, unreconciledSales } from "@/server/stock-owed";
 import { type CheckedLine, checkLines, lineSchema, MAX_LINES } from "@/server/receipt-lines";
 import { writeGoodsReceipt } from "@/server/receipt-write";
@@ -648,8 +648,10 @@ export type ProductBatches = {
   /** False for a product without batch numbers or expiry dates: it has no batches. */
   tracked: boolean;
   baseUnitName: string;
-  locations: { id: string; name: string }[];
-  /** The batches that still have stock, the one that should go first on top. */
+  /** The Storeroom, where batches are kept (C76), and how much is on the Shelf — not counted by batch. */
+  storeroom: { id: string; name: string } | null;
+  onShelf: string;
+  /** The Storeroom's batches that still hold something, the one that should go first on top. */
   batches: {
     id: string;
     batchNumber: string | null;
@@ -659,15 +661,14 @@ export type ProductBatches = {
     soon: boolean;
     /** The day the first of it came in. */
     receivedOn: string;
-    byLocation: Record<string, string>;
-    total: string;
+    quantity: string;
   }[];
 };
 
 /**
- * What is left of each batch of a product, and where — the one that should go first on top
- * (earliest expiry, then first in). If the product had stock before batches were counted, they
- * are worked out here first.
+ * What is left of each batch of a product in the Storeroom (C76), the one that should go first
+ * on top (earliest expiry, then first in). The Shelf holds a quantity only. Stock that was in
+ * the Storeroom before batches were recorded is split into batches here, once.
  */
 export async function getProductBatches(context: AppContext, input: unknown): Promise<ProductBatches> {
   authorize(context, "stock.view");
@@ -675,22 +676,22 @@ export async function getProductBatches(context: AppContext, input: unknown): Pr
   const db = businessDb(context);
   const product = await db.product.findFirst({
     where: { id: productId },
-    select: { id: true, tracksBatch: true, tracksExpiry: true, units: { where: { isBase: true }, select: { name: true } } },
+    select: { id: true, tracksBatch: true, tracksExpiry: true, units: { where: { isBase: true }, select: { name: true } }, stockBalances: { select: { quantity: true, location: { select: { kind: true } } } } },
   });
   if (!product) throw new NotFoundError("That product could not be found.");
-  const [locations, business] = await Promise.all([
-    db.location.findMany({ orderBy: { kind: "asc" }, select: { id: true, name: true } }),
+  const [storeroom, business] = await Promise.all([
+    db.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true, name: true } }),
     db.business.findFirst({ select: { expiringSoonMonths: true } }),
   ]);
   const baseUnitName = product.units[0]?.name ?? "";
-  if (!product.tracksBatch && !product.tracksExpiry) return { tracked: false, baseUnitName, locations, batches: [] };
+  const onShelf = quantityToString(product.stockBalances.filter((balance) => balance.location.kind === "SHELF").reduce((sum, balance) => sum.plus(balance.quantity.toFixed(3)), new Decimal(0)));
+  if (!product.tracksBatch && !product.tracksExpiry) return { tracked: false, baseUnitName, storeroom, onShelf, batches: [] };
 
-  // Stock from before batches were counted: work them out once, under the product's turn like any stock change.
   if (await batchesAreBehind(db, product.id)) {
     await db.$transaction(
       async (tx) => {
         await tx.product.update({ where: { id: product.id }, data: { updatedAt: new Date() }, select: { id: true } });
-        await refreshBatches(tx, context, [product.id]);
+        await settleStoreroomBatches(tx, context, product.id);
       },
       { isolationLevel: "ReadCommitted" },
     );
@@ -698,27 +699,21 @@ export async function getProductBatches(context: AppContext, input: unknown): Pr
 
   const today = shopToday();
   const soonUntil = addMonths(today, business?.expiringSoonMonths ?? 3);
-  const rows = await db.stockBatch.findMany({
-    where: { productId: product.id, balances: { some: { quantity: { gt: 0 } } } },
-    select: { id: true, batchNumber: true, expiryDate: true, batchKey: true, receivedOn: true, balances: { where: { quantity: { gt: 0 } }, select: { locationId: true, quantity: true } } },
-  });
+  const rows = storeroom ? await batchesIn(db, product.id, storeroom.id) : [];
   return {
     tracked: true,
     baseUnitName,
-    locations,
-    batches: rows
-      .map((row) => ({ row, expiryDay: row.expiryDate ? dateToDay(row.expiryDate) : null, receivedOn: dateToDay(row.receivedOn), key: row.batchKey }))
-      .sort(goesFirst)
-      .map(({ row, expiryDay, receivedOn }) => ({
-        id: row.id,
-        batchNumber: row.batchNumber,
-        expiryDate: expiryDay,
-        expired: expiryDay !== null && expiryDay < today,
-        soon: expiryDay !== null && expiryDay <= soonUntil,
-        receivedOn,
-        byLocation: Object.fromEntries(row.balances.map((balance) => [balance.locationId, balance.quantity.toFixed(3)])),
-        total: quantityToString(row.balances.reduce((sum, balance) => sum.plus(balance.quantity.toFixed(3)), new Decimal(0))),
-      })),
+    storeroom,
+    onShelf,
+    batches: rows.map((row) => ({
+      id: row.id,
+      batchNumber: row.batchNumber,
+      expiryDate: row.expiryDate,
+      expired: row.expiryDate !== null && row.expiryDate < today,
+      soon: row.expiryDate !== null && row.expiryDate <= soonUntil,
+      receivedOn: row.receivedOn,
+      quantity: row.quantity,
+    })),
   };
 }
 
@@ -740,6 +735,8 @@ export type StockHistoryRow = {
   leftThere: string;
   leftInAll: string;
   userName: string;
+  /** The Storeroom batch it went into or came out of (C76): "B12 (expires 1 Mar 2027)"; null when none was recorded. */
+  batch: string | null;
   documentNumber: string;
   /** Where the document can be opened; null when it has no page of its own. */
   documentHref: string | null;
@@ -813,7 +810,7 @@ export async function getProductStockHistory(context: AppContext, input: unknown
       // listed first, so "left in all" never shows goods counted twice.
       orderBy: [{ createdAt: "asc" }, { quantityDelta: "asc" }, { id: "asc" }],
       take: STOCK_HISTORY_ROWS,
-      select: { id: true, createdAt: true, type: true, locationId: true, quantityDelta: true, unitName: true, unitQuantity: true, documentType: true, documentId: true, documentNumber: true, userName: true },
+      select: { id: true, createdAt: true, type: true, locationId: true, quantityDelta: true, unitName: true, unitQuantity: true, documentType: true, documentId: true, documentNumber: true, userName: true, batch: { select: { batchNumber: true, expiryDate: true } } },
     }),
   ]);
   const inPeriod = await db.stockMovement.groupBy({ by: ["locationId"], where: { productId: product.id, createdAt: { gte: start, lt: end } }, _sum: { quantityDelta: true } });
@@ -853,6 +850,9 @@ export async function getProductStockHistory(context: AppContext, input: unknown
       leftThere: quantityToString(there),
       leftInAll: quantityToString(all),
       userName: movement.userName,
+      batch: movement.batch
+        ? [movement.batch.batchNumber ?? "No batch number", movement.batch.expiryDate ? `(expires ${formatDay(dateToDay(movement.batch.expiryDate))})` : ""].filter(Boolean).join(" ")
+        : null,
       documentNumber: movement.documentNumber,
       documentHref: documentHref(movement.documentType, movement.documentId),
     };

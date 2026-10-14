@@ -9,15 +9,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import { BatchChoice, NEW_BATCH } from "@/components/batch-choice";
 import { breakIntoUnits, plainNumber } from "@/lib/format";
 import type { TransferOptions, TransferProduct } from "@/server/business/transfers";
 import { transferStockAction } from "../../actions";
 
-type Line = { key: string; productName: string; unitId: string; quantity: string };
+/** `batchId`: a batch on record; "new" = going into the Storeroom with a batch not on record yet (C76). */
+type Line = { key: string; productName: string; unitId: string; quantity: string; batchId: string; batchNumber: string; expiryDate: string };
 
 // The first line has a fixed key so the page the server sends matches what the browser draws;
 // lines added later get a random one.
-const newLine = (key: string = crypto.randomUUID()): Line => ({ key, productName: "", unitId: "", quantity: "" });
+const newLine = (key: string = crypto.randomUUID()): Line => ({ key, productName: "", unitId: "", quantity: "", batchId: "", batchNumber: "", expiryDate: "" });
 
 export function TransferForm({ options }: { options: TransferOptions }) {
   const router = useRouter();
@@ -37,6 +39,13 @@ export function TransferForm({ options }: { options: TransferOptions }) {
   );
   const find = (name: string): TransferProduct | undefined => productByName.get(name.trim().toLowerCase());
   const locationName = (id: string) => options.locations.find((location) => location.id === id)?.name ?? "";
+  const storeroomId = options.locations.find((location) => location.kind === "STOREROOM")?.id ?? "";
+  // Which way the Storeroom is involved, for products with batches (C76).
+  const outOfStoreroom = fromLocationId === storeroomId;
+  const intoStoreroom = toLocationId === storeroomId;
+  const batched = (product: TransferProduct | undefined) => !!product && (product.tracksBatch || product.tracksExpiry) && (outOfStoreroom || intoStoreroom);
+  // Out of the Storeroom, the batch that should go first is offered first.
+  const firstBatch = (product: TransferProduct | undefined) => (product && outOfStoreroom ? (product.storeroomBatches[0]?.id ?? "") : "");
 
   function change(key: string, patch: Partial<Line>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -45,23 +54,37 @@ export function TransferForm({ options }: { options: TransferOptions }) {
   function chooseProduct(key: string, productName: string) {
     const product = find(productName);
     // Default to the largest unit (stock usually moves by the carton or bag).
-    change(key, { productName, unitId: product ? (product.units.at(-1)?.id ?? "") : "" });
+    change(key, { productName, unitId: product ? (product.units.at(-1)?.id ?? "") : "", batchId: firstBatch(product), batchNumber: "", expiryDate: "" });
+  }
+
+  // The batch chosen on a line means nothing once the direction changes: start it again.
+  function resetBatches(from: string) {
+    setLines((current) =>
+      current.map((line) => {
+        const product = find(line.productName);
+        return { ...line, batchId: product && from === storeroomId ? (product.storeroomBatches[0]?.id ?? "") : "", batchNumber: "", expiryDate: "" };
+      }),
+    );
   }
 
   function chooseFrom(id: string) {
     // With two locations, choosing one end decides the other.
     if (id === toLocationId) setToLocationId(fromLocationId);
     setFromLocationId(id);
+    resetBatches(id);
   }
 
   function chooseTo(id: string) {
+    const from = id === fromLocationId ? toLocationId : fromLocationId;
     if (id === fromLocationId) setFromLocationId(toLocationId);
     setToLocationId(id);
+    resetBatches(from);
   }
 
   function swap() {
     setFromLocationId(toLocationId);
     setToLocationId(fromLocationId);
+    resetBatches(toLocationId);
   }
 
   function save(event: React.FormEvent) {
@@ -75,7 +98,18 @@ export function TransferForm({ options }: { options: TransferOptions }) {
         fromLocationId,
         toLocationId,
         note,
-        lines: lines.map((line) => ({ productId: find(line.productName)?.id ?? "", unitId: line.unitId, quantity: line.quantity })),
+        lines: lines.map((line) => {
+          const product = find(line.productName);
+          const withBatch = batched(product);
+          return {
+            productId: product?.id ?? "",
+            unitId: line.unitId,
+            quantity: line.quantity,
+            batchId: withBatch && line.batchId !== NEW_BATCH ? line.batchId : "",
+            batchNumber: withBatch && line.batchId === NEW_BATCH ? line.batchNumber : "",
+            expiryDate: withBatch && line.batchId === NEW_BATCH ? line.expiryDate : "",
+          };
+        }),
       });
       if (result.status === "success" && result.transferId) {
         setRequestId(crypto.randomUUID());
@@ -197,7 +231,23 @@ export function TransferForm({ options }: { options: TransferOptions }) {
                   />
                   {problem(`lines.${index}.quantity`)}
                 </div>
-                <div className="flex items-end justify-end md:col-span-1">
+                {batched(product) && product && (
+                  <div className="md:col-span-11">
+                    <BatchChoice
+                      lineKey={line.key}
+                      index={index}
+                      value={line}
+                      product={product}
+                      taking={outOfStoreroom}
+                      label={outOfStoreroom ? `Batch taken out of the ${locationName(storeroomId)}` : `Batch going into the ${locationName(storeroomId)}`}
+                      storeroomName={locationName(storeroomId)}
+                      warnEarlier
+                      errors={errors}
+                      onChange={(patch) => change(line.key, patch)}
+                    />
+                  </div>
+                )}
+                <div className="flex items-end justify-end md:col-span-1 md:col-start-12 md:row-start-1">
                   <Button
                     type="button"
                     variant="ghost"
@@ -240,3 +290,4 @@ export function TransferForm({ options }: { options: TransferOptions }) {
     </form>
   );
 }
+

@@ -237,10 +237,11 @@ export async function expectBalancesMatchMovements(): Promise<void> {
     throw new Error(`Stock owed does not match the shortfalls less what was covered, or a place holds stock while owing some: ${JSON.stringify(owedWrong)}`);
   }
 
-  // Batches (C73): for a product with batch numbers or expiry dates, what its batches hold in a
-  // place adds up to its stock there; a product without either has no batches.
-  const batchesWrong = await db.$queryRaw<{ productId: string; locationId: string; held: string; inBatches: string; tracked: number }[]>`
-    SELECT k.productId, k.locationId,
+  // Batches (C76): only the Storeroom keeps batch figures. For a product with batch numbers or
+  // expiry dates, its batches in the Storeroom add up to its Storeroom stock; no other place has
+  // batch figures; a product without either has none anywhere.
+  const batchesWrong = await db.$queryRaw<{ productId: string; locationId: string; kind: string; held: string; inBatches: string; tracked: number }[]>`
+    SELECT k.productId, k.locationId, l.kind,
            CAST(COALESCE(b.quantity, 0) AS CHAR) AS held,
            CAST(COALESCE(t.quantity, 0) AS CHAR) AS inBatches,
            (p.tracksBatch OR p.tracksExpiry) AS tracked
@@ -250,14 +251,19 @@ export async function expectBalancesMatchMovements(): Promise<void> {
       SELECT productId, locationId FROM stock_batch_balance
     ) k
     JOIN product p ON p.id = k.productId
+    JOIN location l ON l.id = k.locationId
     LEFT JOIN stock_balance b ON b.productId = k.productId AND b.locationId = k.locationId
     LEFT JOIN (
       SELECT productId, locationId, SUM(quantity) AS quantity FROM stock_batch_balance GROUP BY productId, locationId
     ) t ON t.productId = k.productId AND t.locationId = k.locationId
-    WHERE ((p.tracksBatch OR p.tracksExpiry) AND COALESCE(b.quantity, 0) <> COALESCE(t.quantity, 0))
+    LEFT JOIN (
+      SELECT productId, locationId, COUNT(*) AS n FROM stock_batch_balance GROUP BY productId, locationId
+    ) c ON c.productId = k.productId AND c.locationId = k.locationId
+    WHERE (l.kind = 'STOREROOM' AND (p.tracksBatch OR p.tracksExpiry) AND COALESCE(b.quantity, 0) <> COALESCE(t.quantity, 0))
+       OR (l.kind <> 'STOREROOM' AND COALESCE(c.n, 0) > 0)
        OR (NOT (p.tracksBatch OR p.tracksExpiry) AND COALESCE(t.quantity, 0) <> 0)`;
   if (batchesWrong.length > 0) {
-    throw new Error(`Batches do not add up to the stock of their product and place: ${JSON.stringify(batchesWrong)}`);
+    throw new Error(`Batches do not add up to the Storeroom stock of their product: ${JSON.stringify(batchesWrong)}`);
   }
 }
 

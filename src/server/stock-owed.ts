@@ -3,6 +3,7 @@ import { Decimal } from "@/lib/decimal";
 import { quantityToString } from "@/lib/quantity";
 import type { AppContext } from "@/server/auth/context";
 import { type businessDb, businessIdOf } from "@/server/db/scoped";
+import { hasBatches, takeFirstBatches } from "@/server/stock-batches";
 
 /**
  * Stock "owed" (C72). When a sale whose goods have already left the shop — one made without
@@ -61,24 +62,32 @@ export async function coverStockOwed(
   const lowered = await tx.stockBalance.updateMany({ where: { productId: input.productId, locationId: input.locationId, quantity: { gte: amount } }, data: { quantity: { decrement: amount } } });
   if (lowered.count !== 1) throw new Error("Stock changed while a sale beyond stock was being covered.");
   await tx.stockOwed.update({ where: { id: owed.id }, data: { quantity: { decrement: amount } } });
+  // In the Storeroom, a product with batches gives it from the batch that should go first (C76).
+  const place = await tx.location.findFirst({ where: { id: input.locationId }, select: { kind: true } });
+  const product = await tx.product.findFirst({ where: { id: input.productId }, select: { tracksBatch: true, tracksExpiry: true } });
+  const parts =
+    place?.kind === "STOREROOM" && product && hasBatches(product)
+      ? await takeFirstBatches(tx, { productId: input.productId, locationId: input.locationId, quantity: taking })
+      : [{ batchId: null, quantity: taking }];
   const base = await tx.productUnit.findFirst({ where: { productId: input.productId, isBase: true }, select: { name: true } });
-  await tx.stockMovement.create({
-    data: {
+  await tx.stockMovement.createMany({
+    data: parts.map((part) => ({
       businessId: businessIdOf(context),
       productId: input.productId,
       locationId: input.locationId,
-      type: "SHORTFALL_COVERED",
-      quantityDelta: `-${amount}`,
+      batchId: part.batchId,
+      type: "SHORTFALL_COVERED" as const,
+      quantityDelta: `-${quantityToString(part.quantity)}`,
       unitName: base?.name ?? "",
       unitFactor: "1.000",
-      unitQuantity: `-${amount}`,
+      unitQuantity: `-${quantityToString(part.quantity)}`,
       documentType: "stock_owed",
       documentId: owed.id,
       documentNumber: input.arrivedWith.slice(0, 30),
       userId: context.actor.userId,
       userName: context.actor.name,
       ...(input.at ? { createdAt: input.at } : {}),
-    },
+    })),
   });
   return taking;
 }

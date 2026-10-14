@@ -16,7 +16,7 @@ import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { claimApproval } from "@/server/approval-claim";
 import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
-import { refreshBatches } from "@/server/stock-batches";
+import { addToBatch, batchFor, settleStoreroomBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedPayment, writeSale } from "@/server/sale-write";
@@ -1104,6 +1104,9 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
           });
         }
 
+        // Into the Storeroom, a product with batches goes back batch by batch (C76).
+        const storeroomId = (await tx.location.findFirst({ where: { kind: "STOREROOM" }, select: { id: true } }))?.id ?? null;
+        const batchesBack = new Map<string, { batchId: string; quantity: Decimal }[]>();
         // Always in the same order (product, then location), as for every other stock change.
         for (const productId of [...perProduct.keys()].sort()) {
           const back = perProduct.get(productId)!;
@@ -1123,6 +1126,7 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
           await tx.product.update({ where: { id: productId }, data: { averageCost: average.toFixed(4) } });
 
           for (const [locationId, quantity] of [...back.places.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+            const batched = locationId === storeroomId && (await settleStoreroomBatches(tx, context, productId));
             const raised = await tx.stockBalance.updateMany({
               where: { productId, locationId },
               data: { quantity: { increment: quantityToString(quantity) } },
@@ -1130,23 +1134,65 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
             if (raised.count === 0) {
               await tx.stockBalance.create({ data: { businessId, productId, locationId, quantity: quantityToString(quantity) } });
             }
+            if (batched) {
+              // Back into the batches the sale took them from (C76). Anything beyond what the sale
+              // took (it sold more than was there) belongs to no batch on record.
+              const took = await tx.stockMovement.findMany({ where: { documentId: sale.id, productId, locationId, type: "SALE", batchId: { not: null } }, orderBy: { id: "asc" }, select: { batchId: true, quantityDelta: true } });
+              const parts = took.map((movement) => ({ batchId: movement.batchId!, quantity: new Decimal(movement.quantityDelta.toFixed(3)).negated() }));
+              const extra = quantity.minus(parts.reduce((sum, part) => sum.plus(part.quantity), new Decimal(0)));
+              if (extra.greaterThan(0)) parts.push({ batchId: (await batchFor(tx, context, { productId, batchNumber: null, expiryDay: null, receivedOn: shopToday() })).id, quantity: extra });
+              for (const part of parts) await addToBatch(tx, context, { batchId: part.batchId, productId, locationId, quantity: part.quantity });
+              batchesBack.set(`${productId}|${locationId}`, parts);
+            }
             // If the sale had taken more than the place held, what it left owed is covered by its own goods coming back (C72).
             await coverStockOwed(tx, context, { productId, locationId, arrivedWith: sale.receiptNumber });
           }
         }
-
-        await refreshBatches(tx, context, [...perProduct.keys()]);
 
         // Checked with every product's turn taken, so a return of these goods cannot slip in between.
         if ((await tx.saleReturn.count({ where: { saleId: sale.id } })) > 0) {
           throw new ValidationError("Nothing was cancelled: goods from this sale have already been returned, so the sale can no longer be cancelled whole. Return the rest instead.");
         }
 
+        const baseUnitOf = new Map(
+          (await tx.productUnit.findMany({ where: { productId: { in: [...perProduct.keys()] }, isBase: true }, select: { productId: true, name: true } })).map((unit) => [unit.productId, unit.name]),
+        );
         await tx.stockMovement.createMany({
-          data: sale.lines.map((line) => ({
+          data: sale.lines.flatMap((line) => {
+            const parts = batchesBack.get(`${line.productId}|${line.locationId}`);
+            if (parts) {
+              // One movement per batch, in the base unit, taking this line's share of what went back.
+              const out: { batchId: string; quantity: Decimal }[] = [];
+              let left = new Decimal(line.baseQuantity.toFixed(3));
+              while (left.greaterThan(0) && parts.length > 0) {
+                const part = Decimal.min(left, parts[0].quantity);
+                out.push({ batchId: parts[0].batchId, quantity: part });
+                left = left.minus(part);
+                parts[0].quantity = parts[0].quantity.minus(part);
+                if (!parts[0].quantity.greaterThan(0)) parts.shift();
+              }
+              return out.map((part) => ({
+                businessId,
+                productId: line.productId,
+                locationId: line.locationId,
+                batchId: part.batchId as string | null,
+                type: "SALE_CANCELLATION" as const,
+                quantityDelta: quantityToString(part.quantity),
+                unitName: baseUnitOf.get(line.productId) ?? line.unitName,
+                unitFactor: "1.000",
+                unitQuantity: quantityToString(part.quantity),
+                documentType: "sale_cancellation",
+                documentId: cancellation.id,
+                documentNumber: sale.receiptNumber,
+                userId: context.actor.userId,
+                userName: context.actor.name,
+              }));
+            }
+            return [{
             businessId,
             productId: line.productId,
             locationId: line.locationId,
+            batchId: null as string | null,
             type: "SALE_CANCELLATION" as const,
             quantityDelta: line.baseQuantity.toFixed(3),
             unitName: line.unitName,
@@ -1157,7 +1203,8 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
             documentNumber: sale.receiptNumber,
             userId: context.actor.userId,
             userName: context.actor.name,
-          })),
+            }];
+          }),
         });
 
         if (sale.payments.length > 0) {

@@ -9,16 +9,18 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
+import { BatchChoice, NEW_BATCH } from "@/components/batch-choice";
 import { ADJUSTMENT_REASONS } from "@/lib/adjustment-reasons";
 import { breakIntoUnits, plainNumber } from "@/lib/format";
 import type { AdjustmentOptions, AdjustmentProduct } from "@/server/business/adjustments";
 import { recordAdjustmentAction } from "../../actions";
 
-type Line = { key: string; productName: string; direction: "remove" | "add"; unitId: string; quantity: string; reason: string };
+/** `batchId`: a Storeroom batch on record; "new" = stock added to a batch not on record yet (C76). */
+type Line = { key: string; productName: string; direction: "remove" | "add"; unitId: string; quantity: string; reason: string; batchId: string; batchNumber: string; expiryDate: string };
 
 // The first line has a fixed key so the page the server sends matches what the browser draws;
 // lines added later get a random one.
-const newLine = (key: string = crypto.randomUUID()): Line => ({ key, productName: "", direction: "remove", unitId: "", quantity: "", reason: "" });
+const newLine = (key: string = crypto.randomUUID()): Line => ({ key, productName: "", direction: "remove", unitId: "", quantity: "", reason: "", batchId: "", batchNumber: "", expiryDate: "" });
 
 export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
   const router = useRouter();
@@ -37,6 +39,11 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
   );
   const find = (name: string): AdjustmentProduct | undefined => productByName.get(name.trim().toLowerCase());
   const locationName = options.locations.find((location) => location.id === locationId)?.name ?? "";
+  // In the Storeroom, a product with batches names the batch it changes (C76).
+  const inStoreroom = options.locations.find((location) => location.id === locationId)?.kind === "STOREROOM";
+  const batched = (product: AdjustmentProduct | undefined) => !!product && (product.tracksBatch || product.tracksExpiry) && inStoreroom;
+  // Taking out, the batch that should go first is offered first; adding, nothing is chosen for the person.
+  const startBatch = (product: AdjustmentProduct | undefined, direction: Line["direction"]) => (product && direction === "remove" ? (product.storeroomBatches[0]?.id ?? "") : "");
 
   function change(key: string, patch: Partial<Line>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
@@ -45,7 +52,20 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
   function chooseProduct(key: string, productName: string) {
     const product = find(productName);
     // Default to the smallest unit: damage and loss are usually a few singles, not cartons.
-    change(key, { productName, unitId: product ? (product.units[0]?.id ?? "") : "" });
+    const direction = lines.find((line) => line.key === key)?.direction ?? "remove";
+    change(key, { productName, unitId: product ? (product.units[0]?.id ?? "") : "", batchId: startBatch(product, direction), batchNumber: "", expiryDate: "" });
+  }
+
+  function chooseLocation(id: string) {
+    setLocationId(id);
+    // A batch chosen for one place means nothing in another: start again.
+    const storeroom = options.locations.find((location) => location.id === id)?.kind === "STOREROOM";
+    setLines((current) => current.map((line) => ({ ...line, batchId: storeroom ? startBatch(find(line.productName), line.direction) : "", batchNumber: "", expiryDate: "" })));
+  }
+
+  function chooseDirection(key: string, direction: Line["direction"]) {
+    const product = find(lines.find((line) => line.key === key)?.productName ?? "");
+    change(key, { direction, batchId: startBatch(product, direction), batchNumber: "", expiryDate: "" });
   }
 
   function save(event: React.FormEvent) {
@@ -64,6 +84,11 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
           direction: line.direction,
           quantity: line.quantity,
           reason: line.reason,
+          ...(batched(find(line.productName))
+            ? line.batchId === NEW_BATCH
+              ? { batchId: "", batchNumber: line.batchNumber, expiryDate: line.expiryDate }
+              : { batchId: line.batchId, batchNumber: "", expiryDate: "" }
+            : {}),
         })),
       });
       if (result.status === "success" && result.adjustmentId) {
@@ -100,7 +125,7 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
         <CardContent>
           <div className="flex max-w-xs flex-col gap-1.5">
             <Label htmlFor="location">Which location?</Label>
-            <NativeSelect id="location" value={locationId} onChange={(event) => setLocationId(event.target.value)} aria-invalid={!!errors.locationId} required>
+            <NativeSelect id="location" value={locationId} onChange={(event) => chooseLocation(event.target.value)} aria-invalid={!!errors.locationId} required>
               <option value="">Choose a location…</option>
               {options.locations.map((location) => (
                 <option key={location.id} value={location.id}>
@@ -146,7 +171,7 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
                   <NativeSelect
                     id={`direction-${line.key}`}
                     value={line.direction}
-                    onChange={(event) => change(line.key, { direction: event.target.value === "add" ? "add" : "remove" })}
+                    onChange={(event) => chooseDirection(line.key, event.target.value === "add" ? "add" : "remove")}
                     aria-invalid={!!errors[`lines.${index}.direction`]}
                   >
                     <option value="remove">Take out</option>
@@ -215,6 +240,21 @@ export function AdjustmentForm({ options }: { options: AdjustmentOptions }) {
                     <Trash2 className="size-4" aria-hidden />
                   </Button>
                 </div>
+                {batched(product) && product && (
+                  <div className="md:col-span-11">
+                    <BatchChoice
+                      lineKey={line.key}
+                      index={index}
+                      value={line}
+                      product={product}
+                      taking={line.direction === "remove"}
+                      label={line.direction === "remove" ? `Batch taken out of the ${locationName}` : "Batch the stock is added to"}
+                      storeroomName={locationName}
+                      errors={errors}
+                      onChange={(patch) => change(line.key, patch)}
+                    />
+                  </div>
+                )}
                 {errors[`lines.${index}.quantity`] && <div className="md:col-span-12">{problem(`lines.${index}.quantity`)}</div>}
               </div>
             );

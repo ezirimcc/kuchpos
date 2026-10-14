@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDateTime, plainNumber, transferNumber } from "@/lib/format";
+import { formatDateTime, formatDay, plainNumber, transferNumber } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { getTransfer } from "@/server/business/transfers";
 import { NotFoundError, ValidationError } from "@/server/errors";
@@ -68,7 +68,19 @@ export default async function TransferPage({ params }: PageProps<"/stock/transfe
         <TableBody>
           {transfer.lines.map((line) => (
             <TableRow key={line.lineNumber} data-testid={`transfer-line-${line.lineNumber}`}>
-              <TableCell className="font-medium">{line.productName}</TableCell>
+              <TableCell>
+                <span className="font-medium">{line.productName}</span>
+                {line.hasBatch && (
+                  <span className="block text-xs text-muted-foreground">
+                    Batch {[line.batchNumber ?? "with no number", line.expiryDate ? `· expires ${formatDay(line.expiryDate)}` : null].filter(Boolean).join(" ")}
+                  </span>
+                )}
+                {line.earlierBatchWaiting && (
+                  <span className="block text-xs font-medium text-amber-700 dark:text-amber-300" data-testid={`earlier-batch-note-${line.lineNumber}`}>
+                    A batch that should have gone first was still in the Storeroom.
+                  </span>
+                )}
+              </TableCell>
               <TableCell className="text-right tabular-nums">
                 {plainNumber(line.quantity)} {line.unitName}
               </TableCell>

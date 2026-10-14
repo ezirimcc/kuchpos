@@ -2,6 +2,7 @@
 
 import {
   Bug,
+  DatabaseBackup,
   ChartColumn,
   ChartNoAxesCombined,
   History,
@@ -42,6 +43,7 @@ const ICONS: Record<string, LucideIcon> = {
   owners: ShieldCheck,
   system: ServerCog,
   errors: Bug,
+  backups: DatabaseBackup,
 };
 
 function NavLink({ item, active, collapsed }: { item: SideNavItem; active: boolean; collapsed: boolean }) {

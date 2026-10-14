@@ -36,6 +36,7 @@ const OWNER_MENU: NavEntry[] = [
   { label: "Owners", icon: "owners", href: "/owner/owners", anyOf: ["owner.manage"] },
   { label: "System check", icon: "system", href: "/owner/system", anyOf: ["owner.manage"] },
   { label: "Error log", icon: "errors", href: "/owner/errors", anyOf: ["owner.manage"] },
+  { label: "Backups", icon: "backups", href: "/owner/backups", anyOf: ["owner.manage"] },
 ];
 
 function visible(subject: PermissionSubject, entries: NavEntry[]): NavItem[] {

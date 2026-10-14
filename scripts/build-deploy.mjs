@@ -61,6 +61,10 @@ console.log("3/5  Packing the database tools …");
 const esbuild = join(root, "node_modules", ".bin", "esbuild");
 const common = ["--bundle", "--platform=node", "--target=node20", "--format=cjs", "--log-level=warning"];
 run(esbuild, [join("hosting", "migrate-cli.ts"), ...common, `--outfile=${join(bundle, "tools", "migrate.cjs")}`]);
+// KuchPos's own backups, the restore drill and the first owner of a new live site (C79).
+run(esbuild, [join("hosting", "backup-cli.ts"), ...common, `--outfile=${join(bundle, "tools", "backup.cjs")}`]);
+run(esbuild, [join("hosting", "restore-cli.ts"), ...common, `--outfile=${join(bundle, "tools", "restore.cjs")}`]);
+run(esbuild, [join("hosting", "create-owner-cli.ts"), ...common, `--outfile=${join(bundle, "tools", "create-owner.cjs")}`]);
 // The generated database client asks for "import.meta.url", which this file format lacks; supply it.
 run(esbuild, [
   join("prisma", "seed.ts"),

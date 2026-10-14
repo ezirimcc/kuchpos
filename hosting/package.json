@@ -4,6 +4,9 @@
   "description": "KuchPos as uploaded to the hosting server. Built on the development computer; nothing is installed here.",
   "scripts": {
     "migrate": "node tools/migrate.cjs",
-    "seed": "node tools/seed.cjs"
+    "seed": "node tools/seed.cjs",
+    "backup": "node tools/backup.cjs nightly",
+    "restore": "node tools/restore.cjs",
+    "create-owner": "node tools/create-owner.cjs"
   }
 }

@@ -28,6 +28,7 @@ import * as transfers from "@/server/business/transfers";
 import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
+import * as backups from "@/server/platform/backups";
 import * as errorLog from "@/server/platform/error-log";
 import * as overview from "@/server/platform/overview";
 import * as owners from "@/server/platform/owners";
@@ -1207,6 +1208,11 @@ const OPERATIONS: Operation[] = [
       owners.resetOwnerPassword(context, { userId: world.owner.id, password: "another-password" }),
   },
   {
+    name: "backups.listBackupRuns",
+    allowed: OWNERS,
+    run: (context) => backups.listBackupRuns(context),
+  },
+  {
     name: "errorLog.listErrors",
     allowed: OWNERS,
     run: (context) => errorLog.listErrors(context),
@@ -1255,6 +1261,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(overview).map((name) => `overview.${name}`),
       ...Object.keys(system).map((name) => `system.${name}`),
       ...Object.keys(errorLog).map((name) => `errorLog.${name}`),
+      ...Object.keys(backups).map((name) => `backups.${name}`),
     ].sort();
     expect(OPERATIONS.map((operation) => operation.name).sort()).toEqual(exported);
   });

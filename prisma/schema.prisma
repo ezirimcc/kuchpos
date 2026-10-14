@@ -1837,3 +1837,27 @@ model ErrorLog {
   @@index([createdAt])
   @@map("error_log")
 }
+
+/// One run of KuchPos's own backup (C79), written by the backup tool on the hosting server.
+/// Not business-scoped (a backup covers the whole database) and not add-only: a run is
+/// written when it starts and completed when it ends. Read only by owners.
+model BackupRun {
+  id          String    @id @default(uuid()) @db.Char(36)
+  /// "daytime" (every 2 hours in shop hours) or "nightly".
+  kind        String    @db.VarChar(20)
+  startedAt   DateTime  @default(now()) @db.DateTime(3)
+  finishedAt  DateTime? @db.DateTime(3)
+  fileName    String?   @db.VarChar(200)
+  sizeBytes   Int?
+  tableCount  Int?
+  rowCount    Int?
+  /// When the copy reached Backblaze B2; null if it did not (see `problem`).
+  uploadedAt  DateTime? @db.DateTime(3)
+  /// Also kept as this month's copy (the first nightly backup of a month).
+  monthly     Boolean   @default(false)
+  /// What went wrong, in plain words; null when all went well.
+  problem     String?   @db.VarChar(1000)
+
+  @@index([startedAt])
+  @@map("backup_run")
+}

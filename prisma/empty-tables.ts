@@ -13,6 +13,7 @@ const TABLES = [
   "stock_batch",
   "stock_owed",
   "error_log",
+  "backup_run",
   "activity_log",
   "stock_movement",
   "document_counter",

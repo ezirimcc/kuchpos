@@ -57,6 +57,8 @@ export async function applyMigrations(options: {
   databaseUrl: string;
   migrationsDir: string;
   log?: (message: string) => void;
+  /** Apply only the migrations up to and including this one (a restore rebuilds the structure a backup was made with). */
+  upTo?: string;
 }): Promise<MigrateResult> {
   const log = options.log ?? (() => {});
   if (!existsSync(options.migrationsDir)) {
@@ -65,7 +67,8 @@ export async function applyMigrations(options: {
   const names = readdirSync(options.migrationsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(options.migrationsDir, entry.name, "migration.sql")))
     .map((entry) => entry.name)
-    .sort();
+    .sort()
+    .filter((name) => options.upTo === undefined || name <= options.upTo);
 
   const connection = await createConnection(connectionSettings(options.databaseUrl));
   const result: MigrateResult = { applied: [], alreadyApplied: [] };

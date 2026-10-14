@@ -62,6 +62,7 @@ const SCREENS = [
   "/owner/owners",
   "/owner/system",
   "/owner/errors",
+  "/owner/backups",
   "/api/health",
 ];
 

@@ -78,10 +78,10 @@ Both: start-up file `app.js`, Node.js 24.21.0, own `.env` and own `BETTER_AUTH_S
 3. **Application Keys** → Add a New Application Key: name `kuchpos-backup`, access to **that bucket only**, type **Read and Write**, and **no** permission to delete files if the page offers that choice. Copy the keyID and applicationKey into the live site's `.env` (`B2_KEY_ID`, `B2_APPLICATION_KEY`) — and into the test site's `.env` for drills. The applicationKey is shown only once.
 4. Choose a `BACKUP_PASSPHRASE` of at least 20 characters, keep it in your password manager (and make sure Peace can reach it), and put it in both `.env` files. **Without it no backup can be opened.** Never change it once backups exist.
 5. Restart the application(s). **Run JS script** → `backup`: it must end with "Sent to Backblaze B2". In KuchPos, owner menu → **Backups** shows the run as "Stored".
-6. DirectAdmin → Cron Jobs → two jobs for the LIVE site. The server clock is universal time (Lagos − 1 hour). `NODE` is the node program of the live application — the path shown at the top of its page in Setup Node.js App, ending in `/bin/node` (for example `/home/kuchcom/nodevenv/domains/kuchpos-live/24/bin/node`):
-   - Every 2 hours, 8 am–8 pm Lagos: minute `0`, hour `7-19/2`, other fields `*`, command
+6. DirectAdmin → Cron Jobs → two jobs for the LIVE site. **Cron Jobs run on the server's local time, South African time (Lagos + 1 hour)** — not universal time, which is what the app and the database use. Found on 2026-10-15: a job set for hour 7 ran at 06:00 Lagos. `NODE` is the node program of the live application — the path shown at the top of its page in Setup Node.js App, ending in `/bin/node` (for example `/home/kuchcom/nodevenv/domains/kuchpos-live/24/bin/node`):
+   - Every 2 hours, 8 am–8 pm Lagos: minute `0`, hour `9-21/2`, other fields `*`, command
      `cd /home/kuchcom/domains/kuchpos-live && NODE tools/backup.cjs daytime >> backups/backup.log 2>&1`
-   - Nightly, 00:30 Lagos: minute `30`, hour `23`, other fields `*`, command
+   - Nightly, 00:30 Lagos: minute `30`, hour `1`, other fields `*`, command
      `cd /home/kuchcom/domains/kuchpos-live && NODE tools/backup.cjs nightly >> backups/backup.log 2>&1`
 7. The next day: owner menu → **Backups** should list the runs, all "Stored", and no red warning.
 

@@ -370,7 +370,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 - 🧑 The same staff member keeps selling through a simulated outage without help.
 - 🤖 Full test suite passes. Security checklist completed and recorded.
 
-### M17 · Live environment, backups and restore drill
+### M17 · Live environment, backups and restore drill ✅ (done 2026-10-15)
 **Goal:** A separate live system that can survive a mistake or failure.
 - Live database and live site at their own address on the hosting account, separate from the test site and its sample data.
 - KuchPos's own scheduled backup (a timed job on the host) copied to a second place off the server, in addition to the host's daily backups. **Practise a restore** into a scratch database and verify it.

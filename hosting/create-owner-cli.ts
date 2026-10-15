@@ -3,7 +3,7 @@ import { hashPassword } from "better-auth/crypto";
 import { createConnection } from "mariadb";
 import { MAX_USERNAME_LENGTH, MIN_USERNAME_LENGTH, USERNAME_PATTERN } from "../src/server/auth/config";
 import { connectionSettings } from "./backup-core";
-import { loadToolEnv, required } from "./tool-env";
+import { databaseAddress, loadToolEnv, required } from "./tool-env";
 
 /**
  * Creates the FIRST owner on an empty live database (C79), with "Run JS script" → create-owner.
@@ -14,7 +14,7 @@ import { loadToolEnv, required } from "./tool-env";
  */
 async function main() {
   loadToolEnv();
-  const databaseUrl = required("DATABASE_URL", "");
+  const databaseUrl = databaseAddress("DATABASE_URL");
   const name = required("FIRST_OWNER_NAME", "Put your full name there.").trim();
   const username = required("FIRST_OWNER_USERNAME", "Put the username you will sign in with there.").trim().toLowerCase();
   if (!USERNAME_PATTERN.test(username) || username.length < MIN_USERNAME_LENGTH || username.length > MAX_USERNAME_LENGTH) {

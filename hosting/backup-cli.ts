@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { createConnection } from "mariadb";
 import { b2Authorize, b2Upload } from "./b2";
 import { connectionSettings, createBackup, MIN_PASSPHRASE_LENGTH } from "./backup-core";
-import { lagosMonth, loadToolEnv, required } from "./tool-env";
+import { databaseAddress, lagosMonth, loadToolEnv, required } from "./tool-env";
 
 /**
  * KuchPos's own backup (C79). Run by the host's Cron Jobs from the application folder:
@@ -20,7 +20,7 @@ async function main() {
   const kind = process.argv[2];
   if (kind !== "daytime" && kind !== "nightly") throw new Error('Say which backup: "daytime" or "nightly".');
   const { site, appVersion } = loadToolEnv();
-  const databaseUrl = required("DATABASE_URL", "");
+  const databaseUrl = databaseAddress("DATABASE_URL");
   const passphrase = required("BACKUP_PASSPHRASE", `Choose a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters and keep a copy in your password manager.`);
 
   const db = await createConnection(connectionSettings(databaseUrl));

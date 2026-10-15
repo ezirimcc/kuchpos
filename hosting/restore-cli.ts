@@ -2,7 +2,7 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { b2Authorize, b2Download, b2List } from "./b2";
 import { restoreBackup } from "./backup-core";
-import { loadToolEnv, required } from "./tool-env";
+import { databaseAddress, loadToolEnv, required } from "./tool-env";
 
 /**
  * Loads a backup into the spare database named by RESTORE_DATABASE_URL (C79) and checks it.
@@ -15,7 +15,8 @@ import { loadToolEnv, required } from "./tool-env";
 async function main() {
   loadToolEnv();
   const passphrase = required("BACKUP_PASSPHRASE", "It is the passphrase the backups were made with.");
-  const targetUrl = required("RESTORE_DATABASE_URL", 'Create a spare database with "restore" in its name and put its address here.');
+  required("RESTORE_DATABASE_URL", 'Create a spare database with "restore" in its name and put its address here.');
+  const targetUrl = databaseAddress("RESTORE_DATABASE_URL");
   const folder = resolve(process.cwd(), "backups");
   const local = (name: string) => join(folder, name.split("/").at(-1)!);
   const b2 = process.env.B2_KEY_ID && process.env.B2_APPLICATION_KEY ? await b2Authorize(process.env.B2_KEY_ID, process.env.B2_APPLICATION_KEY) : null;

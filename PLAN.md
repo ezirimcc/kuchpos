@@ -358,7 +358,7 @@ Legend: 🧑 = you check on screen · 🤖 = automated test
 
 **Progress (C66 changed the shape: one five-sheet workbook per shop, plus export buttons):** step 1, export for Excel on the list pages — built. Step 2, import of Products, Customers and Stock — built 2026-10-11, waiting for the owner's check. Step 3, import of Deliveries and Sales since the starting day — built 2026-10-11, waiting for the owner's check.
 
-### M16 · Hardening (in progress: the assistant's part done 2026-10-12; the owner's trials on Windows, with a new staff member and with a printer still to do)
+### M16 · Hardening ✅ (done 2026-10-23)
 **Goal:** Ready to be trusted with real money.
 - Review of every server action for permission checks, business separation and input checks; sign-in attempt limiting; session expiry; security review of dependencies.
 - Try the whole app on a **Windows** computer in Chrome and Edge, with a real receipt printer at 58 mm and 80 mm.

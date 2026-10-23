@@ -16,6 +16,7 @@ import { optionalText } from "@/server/input";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
 import { cashierOfPass } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
+import { methodShifts } from "@/server/payment-corrections";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -888,13 +889,20 @@ export async function getTillSession(context: AppContext, input: unknown): Promi
       _sum: { amount: true },
     }),
   ]);
-  const byMethod = groups
-    .map((group) => ({
-      methodName: group.methodName,
-      kind: group.kind,
-      count: group._count._all,
-      amount: new Decimal(group._sum.amount?.toFixed(2) ?? "0"),
-    }))
+  // Ways of paying as corrected by a manager (C81).
+  const shifts = await methodShifts(db, { tillSessionId: session.id });
+  const methods = new Map(
+    groups.map((group) => [
+      `${group.methodName}|${group.kind}`,
+      { methodName: group.methodName, kind: group.kind, count: group._count._all, amount: new Decimal(group._sum.amount?.toFixed(2) ?? "0") },
+    ]),
+  );
+  for (const [key, shift] of shifts) {
+    const entry = methods.get(key) ?? { methodName: shift.methodName, kind: shift.kind, count: 0, amount: new Decimal(0) };
+    methods.set(key, { ...entry, count: entry.count + shift.count, amount: entry.amount.plus(shift.amount) });
+  }
+  const byMethod = [...methods.values()]
+    .filter((entry) => entry.count > 0 || !entry.amount.isZero())
     .sort((a, b) => b.amount.comparedTo(a.amount) || a.methodName.localeCompare(b.methodName));
   const drawer = await drawerMovements(db, session.id);
   // Cash handed back: for cancelled sales and for returned goods.

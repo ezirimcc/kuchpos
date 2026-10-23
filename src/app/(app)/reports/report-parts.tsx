@@ -10,13 +10,15 @@ type Tab = "sales" | "collections" | "debts" | "stock-movements" | "customers" |
 
 /** The row of links shared by the report screens. Only the ones the person may open are shown. */
 export function ReportTabs({ context, current }: { context: AppContext; current: Tab | null }) {
+  // A manager's last-7-days view (C82) shows only Sales and Collections of the Reports pages.
+  const full = can(context, "report.pages.view");
   const tabs: { key: Tab | string; href: string; label: string; icon: LucideIcon; show: boolean }[] = [
     { key: "sales", href: "/reports/sales", label: "Sales", icon: ChartColumn, show: can(context, "report.sales.view") },
     { key: "collections", href: "/reports/collections", label: "Collections", icon: HandCoins, show: can(context, "report.collections.view") },
-    { key: "customers", href: "/reports/customers", label: "Customers", icon: UserRoundCheck, show: can(context, "report.sales.view") && can(context, "customer.statement.view") },
-    { key: "debts", href: "/reports/debts", label: "Customer debts", icon: Users, show: can(context, "report.customerDebt.view") },
-    { key: "stock", href: "/reports/stock", label: "Stock figures", icon: Boxes, show: can(context, "report.stock.view") },
-    { key: "stock-movements", href: "/reports/stock-movements", label: "Stock movements", icon: ArrowLeftRight, show: can(context, "report.stock.view") },
+    { key: "customers", href: "/reports/customers", label: "Customers", icon: UserRoundCheck, show: full && can(context, "report.sales.view") && can(context, "customer.statement.view") },
+    { key: "debts", href: "/reports/debts", label: "Customer debts", icon: Users, show: full && can(context, "report.customerDebt.view") },
+    { key: "stock", href: "/reports/stock", label: "Stock figures", icon: Boxes, show: full && can(context, "report.stock.view") },
+    { key: "stock-movements", href: "/reports/stock-movements", label: "Stock movements", icon: ArrowLeftRight, show: full && can(context, "report.stock.view") },
     { key: "returns", href: "/returns", label: "Returns", icon: Undo2, show: can(context, "report.sales.view") },
     { key: "discounts", href: "/sales/discounts", label: "Discounts & approvals", icon: BadgePercent, show: can(context, "report.discounts.view") },
     { key: "offline", href: "/sales/offline", label: "Offline exceptions", icon: CloudOff, show: can(context, "report.sales.view") },
@@ -78,6 +80,16 @@ export function analysisPeriods(): { label: string; from: string; to: string }[]
     { label: "This month", from: `${today.slice(0, 8)}01`, to: today },
     { label: "This quarter", from: `${today.slice(0, 5)}${quarterStart}-01`, to: today },
     { label: "This year", from: `${today.slice(0, 4)}-01-01`, to: today },
+  ];
+}
+
+/** The ready-made periods of a manager's last-7-days view (C82). */
+export function recentPeriods(): { label: string; from: string; to: string }[] {
+  const today = shopToday();
+  return [
+    { label: "Today", from: today, to: today },
+    { label: "Yesterday", from: dayBefore(today, 1), to: dayBefore(today, 1) },
+    { label: "Last 7 days", from: dayBefore(today, 6), to: today },
   ];
 }
 
@@ -156,6 +168,8 @@ export function ExportLink({
   params: Record<string, string>;
 }) {
   if (!can(context, "report.export")) return null;
+  // Reports export only with the full Reports permission (C82: the 7-day view is for the screen).
+  if (report && !can(context, "report.pages.view")) return null;
   const query = new URLSearchParams({ ...(list ? { list } : { report: report ?? "" }), ...Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "")) });
   return (
     // A plain link on purpose: it is a file download, not a page of the app.

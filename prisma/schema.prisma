@@ -82,6 +82,7 @@ model Business {
   tillSessionRecounts TillSessionRecount[]
   saleCancellations SaleCancellation[]
   refunds       Refund[]
+  paymentCorrections PaymentCorrection[]
   customers     Customer[]
   customerAccountEntries CustomerAccountEntry[]
   creditLimitChanges CreditLimitChange[]
@@ -1020,6 +1021,7 @@ model Sale {
   receiptPrints   SaleReceiptPrint[]
   cancellation    SaleCancellation?
   refunds         Refund[]
+  paymentCorrections PaymentCorrection[]
   accountEntries  CustomerAccountEntry[]
   repaymentParts  RepaymentAllocation[]
   approvalUses    ApprovalUse[]
@@ -1105,6 +1107,8 @@ model PaymentMethod {
 
   payments      Payment[]
   refunds       Refund[]
+  correctionsFrom PaymentCorrection[] @relation("CorrectedFrom")
+  correctionsTo   PaymentCorrection[] @relation("CorrectedTo")
   repayments    Repayment[]
 
   @@unique([businessId, name])
@@ -1138,11 +1142,54 @@ model Payment {
   createdAt        DateTime      @default(now()) @db.DateTime(3)
 
   refund           Refund?
+  corrections      PaymentCorrection[]
 
   @@index([saleId])
   @@index([businessId, createdAt])
   @@index([tillSessionId])
   @@map("payment")
+}
+
+/// A manager's correction of HOW a payment was made (C81): the cashier chose the wrong way of
+/// paying. The payment itself is never changed (add-only); the latest correction of a payment
+/// says how it was really paid, and everything that adds payments up by method or kind takes the
+/// corrections into account. Allowed only while the till the money was taken into is still open.
+/// Add-only.
+model PaymentCorrection {
+  id                String        @id @default(uuid()) @db.Char(36)
+  businessId        String        @db.Char(36)
+  business          Business      @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// Made by the browser; a repeat returns the correction already saved.
+  requestId         String        @unique @db.Char(36)
+  paymentId         String        @db.Char(36)
+  payment           Payment       @relation(fields: [paymentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  saleId            String        @db.Char(36)
+  sale              Sale          @relation(fields: [saleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// The payment's till session (copied, for adding up a drawer).
+  tillSessionId     String        @db.Char(36)
+  tillSession       TillSession   @relation(fields: [tillSessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// The payment's amount (copied).
+  amount            Decimal       @db.Decimal(14, 2)
+  /// How it was recorded until now, and how it was really paid.
+  fromMethodId      String        @db.Char(36)
+  fromMethod        PaymentMethod @relation("CorrectedFrom", fields: [fromMethodId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  fromMethodName    String        @db.VarChar(60)
+  fromKind          PaymentKind
+  toMethodId        String        @db.Char(36)
+  toMethod          PaymentMethod @relation("CorrectedTo", fields: [toMethodId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  toMethodName      String        @db.VarChar(60)
+  toKind            PaymentKind
+  toReference       String?       @db.VarChar(60)
+  reason            String        @db.VarChar(300)
+  correctedByUserId String?
+  correctedByName   String
+  createdAt         DateTime      @default(now()) @db.DateTime(3)
+
+  @@index([paymentId, createdAt])
+  @@index([saleId])
+  @@index([tillSessionId])
+  @@index([businessId, createdAt])
+  @@map("payment_correction")
 }
 
 /// Each time a receipt is printed. The first is the original; later ones are reprints. Add-only.
@@ -1211,6 +1258,7 @@ model TillSession {
   sales          Sale[]
   payments       Payment[]
   refunds        Refund[]
+  paymentCorrections PaymentCorrection[]
   repayments     Repayment[]
   close          TillSessionClose?
   recounts       TillSessionRecount[]

@@ -39,8 +39,8 @@ const MENUS: Array<{ username: string; role: string; menu: string[] }> = [
   {
     username: "gv.manager",
     role: "Manager",
-    // No Reports for a manager (C70).
-    menu: ["Sell", "Sales", "Till", "Customers", "Stock", "Products & Categories", "Activity log"],
+    // Reports for a manager: Sales and Collections of the last 7 days only (C82; C70 had none).
+    menu: ["Sell", "Sales", "Till", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"],
   },
   { username: "gv.accountant", role: "Accountant", menu: ["Sales", "Till", "Customers", "Stock", "Products & Categories", "Reports", "Activity log"] },
   { username: "gv.cashier", role: "Cashier", menu: ["Sell", "Sales", "Till", "Customers", "Stock", "Products & Categories"] },

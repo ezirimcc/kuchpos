@@ -15,6 +15,7 @@ import { getSale } from "@/server/business/sales";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/server/errors";
 import { can } from "@/server/permissions";
 import { CancelSaleForm } from "./cancel-sale-form";
+import { CorrectPaymentForm } from "./correct-payment-form";
 import { ReceiptWithActions } from "./receipt-actions";
 
 export const metadata: Metadata = { title: "Sale — KuchPos" };
@@ -164,6 +165,30 @@ export default async function SalePage({ params, searchParams }: PageProps<"/sal
             </Link>
           )}
         </div>
+      )}
+
+      {sale.payments.some((payment) => payment.corrections.length > 0) && (
+        <div className="rounded-3xl border px-4 py-3 text-sm" data-testid="payment-corrections">
+          <p className="font-semibold">How it was paid was corrected</p>
+          <ul className="mt-1 flex flex-col gap-1">
+            {sale.payments.flatMap((payment) =>
+              payment.corrections.map((correction, index) => (
+                <li key={`${payment.id}-${index}`} data-testid="payment-correction">
+                  {nairaFromText(payment.amount)} entered as {correction.fromMethodName}, corrected to{" "}
+                  <span className="font-medium">{correction.toMethodName}</span> by {correction.correctedByName} on {formatDateTime(correction.createdAt)}.{" "}
+                  <span className="text-muted-foreground">Reason: {correction.reason}</span>
+                </li>
+              )),
+            )}
+          </ul>
+        </div>
+      )}
+
+      {sale.paymentCorrection && (
+        <CorrectPaymentForm
+          payments={sale.payments.map((payment) => ({ id: payment.id, methodName: payment.methodName, amount: payment.amount }))}
+          methods={sale.paymentCorrection.methods}
+        />
       )}
 
       {sale.canCancel && <CancelSaleForm saleId={sale.id} refunds={sale.payments.map((payment) => ({ methodName: payment.methodName, amount: payment.amount }))} />}

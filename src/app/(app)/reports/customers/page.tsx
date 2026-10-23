@@ -23,6 +23,8 @@ function text(value: string | string[] | undefined): string {
 
 export default async function CustomerReportPage({ searchParams }: PageProps<"/reports/customers">) {
   const context = await requirePagePermission("report.sales.view");
+  // Not part of the last-7-days view of a manager (C82).
+  await requirePagePermission("report.pages.view");
   if (!can(context, "customer.statement.view")) redirect("/reports");
   const params = await searchParams;
   const asked = { from: text(params.from), to: text(params.to) };

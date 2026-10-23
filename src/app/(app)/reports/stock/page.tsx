@@ -32,6 +32,8 @@ function Tile({ title, value, note, testId, highlight }: { title: string; value:
 
 export default async function StockReportPage({ searchParams }: PageProps<"/reports/stock">) {
   const context = await requirePagePermission("report.stock.view");
+  // Not part of the last-7-days view of a manager (C82).
+  await requirePagePermission("report.pages.view");
   const params = await searchParams;
   const filters = { q: text(params.q), show: text(params.show), from: text(params.from), to: text(params.to) };
   const ask = (dates: { from: string; to: string }) => getStockReport(context, { ...dates, search: filters.q, show: filters.show, page: text(params.page) });

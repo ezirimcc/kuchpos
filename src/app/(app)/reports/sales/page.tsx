@@ -11,7 +11,7 @@ import { formatDay, formatMonth, formatShortDay, nairaFromText } from "@/lib/for
 import { requirePagePermission } from "@/server/auth/request";
 import { getSalesReport, type SalesGrouping } from "@/server/business/reports";
 import { ValidationError } from "@/server/errors";
-import { ExportLink, PeriodLinks, periodText, ReportTabs } from "../report-parts";
+import { ExportLink, PeriodLinks, periodText, recentPeriods, ReportTabs } from "../report-parts";
 
 export const metadata: Metadata = { title: "Sales report — KuchPos" };
 
@@ -88,10 +88,10 @@ export default async function SalesReportPage({ searchParams }: PageProps<"/repo
         <ExportLink context={context} report="sales" params={{ from: period.from, to: period.to, by: report.by }} />
       </PageHeader>
       <ReportTabs context={context} current="sales" />
-      {problem && <Alert variant="destructive">{problem} Showing this month instead.</Alert>}
+      {problem && <Alert variant="destructive">{problem} Showing {report.limited ? "the last 7 days" : "this month"} instead.</Alert>}
 
       <div className="flex flex-wrap items-center gap-3">
-        <PeriodLinks path="/reports/sales" period={period} keep={{ by: report.by === "day" ? "" : report.by }} />
+        <PeriodLinks path="/reports/sales" period={period} keep={{ by: report.by === "day" ? "" : report.by }} periods={report.limited ? recentPeriods() : undefined} />
         <Suspense>
           <FilterDate name="from" label="From" />
           <FilterDate name="to" label="To" />
@@ -99,12 +99,12 @@ export default async function SalesReportPage({ searchParams }: PageProps<"/repo
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Tile highlight testId="kpi-net-sales" title="Net sales" value={nairaFromText(summary.netSales)} note={<Change now={summary.netSales} before={before.netSales} />} />
+        <Tile highlight testId="kpi-net-sales" title="Net sales" value={nairaFromText(summary.netSales)} note={before ? <Change now={summary.netSales} before={before.netSales} /> : undefined} />
         <Tile
           testId="kpi-sales-count"
           title="Number of sales"
           value={summary.salesCount.toLocaleString("en-NG")}
-          note={<span className="text-xs text-muted-foreground">{before.salesCount.toLocaleString("en-NG")} in the period before</span>}
+          note={before ? <span className="text-xs text-muted-foreground">{before.salesCount.toLocaleString("en-NG")} in the period before</span> : undefined}
         />
         <Tile
           testId="kpi-average-sale"

@@ -23,7 +23,8 @@ const BUSINESS_MENU: NavEntry[] = [
     href: "/reports",
     // Opening the Reports pages is a permission of its own (C70): a manager has several of
     // the reports' permissions for other screens, but not this one.
-    anyOf: ["report.pages.view"],
+    // A manager sees the Sales and Collections reports for the last 7 days (C82).
+    anyOf: ["report.pages.view", "report.recent.view"],
   },
   { label: "Staff", icon: "staff", href: "/staff", anyOf: ["staff.manage"] },
   { label: "Activity log", icon: "activity", href: "/activity", anyOf: ["activityLog.view"] },

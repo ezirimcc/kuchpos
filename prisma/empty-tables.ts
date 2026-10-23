@@ -34,6 +34,7 @@ const TABLES = [
   "customer_account_entry",
   "repayment",
   "credit_limit_change",
+  "payment_correction",
   "refund",
   "sale_cancellation",
   "sale_receipt_print",

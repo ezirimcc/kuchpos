@@ -4,6 +4,7 @@ import { shopDayStart, shopToday } from "@/lib/format";
 import { moneyToString, sumMoney } from "@/lib/money";
 import type { AppContext } from "@/server/auth/context";
 import { businessDb } from "@/server/db/scoped";
+import { kindShifts } from "@/server/payment-corrections";
 import { authorize, can } from "@/server/permissions";
 import { countUnreconciledSales, unreconciledSales } from "@/server/stock-owed";
 import type { ActivityItem } from "@/server/platform/owners";
@@ -101,11 +102,15 @@ export async function getDashboard(context: AppContext): Promise<DashboardSnapsh
     ...returnedToday.map((group) => ({ kind: group.refundKind as string, amount: new Decimal(group._sum.refundPaid?.toFixed(2) ?? "0") })),
   ];
 
+  // Payments of today whose way of paying a manager corrected (C81) count under the corrected kind.
+  const shifts = collected ? await kindShifts(db, { payment: { createdAt: { gte: startOfToday } } }) : new Map<string, Decimal>();
+
   // Money received today — for sales and against debts — less money given back today for cancelled sales and returns.
   const net = (kinds: (kind: string) => boolean) =>
-    sumMoney(
-      [...(collected ?? []), ...(repaid ?? [])].filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0")),
-    ).minus(
+    sumMoney([
+      ...[...(collected ?? []), ...(repaid ?? [])].filter((group) => kinds(group.kind)).map((group) => new Decimal(group._sum.amount?.toFixed(2) ?? "0")),
+      ...[...shifts.entries()].filter(([kind]) => kinds(kind)).map(([, amount]) => amount),
+    ]).minus(
       sumMoney(handedBack.filter((entry) => kinds(entry.kind)).map((entry) => entry.amount)),
     );
 

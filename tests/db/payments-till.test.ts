@@ -128,7 +128,7 @@ describe("paying", () => {
     await renamePaymentMethod(world.a.as.ADMIN, { methodId: world.a.transferMethodId, name: "Transfer – Access" });
 
     expect((await getSale(world.a.as.CASHIER, { saleId: result.id })).payments).toEqual([
-      { methodName: "Bank transfer", kind: "TRANSFER", amount: "300.00", tendered: null, change: null, reference: "GTB-99812" },
+      { id: expect.any(String), methodName: "Bank transfer", kind: "TRANSFER", amount: "300.00", tendered: null, change: null, reference: "GTB-99812", corrections: [] },
     ]);
   });
 
@@ -139,8 +139,8 @@ describe("paying", () => {
     const detail = await getSale(world.a.as.CASHIER, { saleId: result.id });
     expect(detail.change).toBe("1000.00");
     expect(detail.payments).toEqual([
-      { methodName: "Cash", kind: "CASH", amount: "4000.00", tendered: "5000.00", change: "1000.00", reference: null },
-      { methodName: "Bank transfer", kind: "TRANSFER", amount: "6000.00", tendered: null, change: null, reference: "TRF-1" },
+      { id: expect.any(String), methodName: "Cash", kind: "CASH", amount: "4000.00", tendered: "5000.00", change: "1000.00", reference: null, corrections: [] },
+      { id: expect.any(String), methodName: "Bank transfer", kind: "TRANSFER", amount: "6000.00", tendered: null, change: null, reference: "TRF-1", corrections: [] },
     ]);
     expect(await onShelf()).toBe("400.000");
   });

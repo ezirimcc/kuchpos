@@ -11,6 +11,8 @@ export const metadata: Metadata = { title: "Reports — KuchPos" };
 
 export default async function ReportsPage() {
   const context = await requirePageContext();
+  // A manager's last-7-days view (C82) has only the Sales and Collections reports.
+  if (!can(context, "report.pages.view")) redirect(can(context, "report.recent.view") ? "/reports/sales" : "/");
   const cards = [
     { href: "/reports/sales", title: "Sales", text: "What was sold, returned and earned: by day, product, category, cashier, hour and how it was paid.", show: can(context, "report.sales.view") },
     { href: "/reports/sales?by=product", title: "Sales by product", text: "Which products bring in the most, with their profit and margin.", show: can(context, "report.sales.view") },

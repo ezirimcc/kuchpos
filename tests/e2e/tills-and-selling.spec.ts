@@ -515,6 +515,45 @@ test("a manager cancels a sale with a note: the goods are back, the cash is refu
   await expect(page.getByText(/Green Valley Manager cancelled sale T1-\d+ \(₦500.00, sold by Green Valley Manager\)/)).toBeVisible();
 });
 
+test("a manager corrects a sale rung up as Cash that was paid by transfer; the receipt and the activity log show it (C81)", async ({ page }) => {
+  await signIn(page, "gv.manager");
+  await expectSignedInAs(page, "Manager");
+  await openCheckout(page);
+  await addToSale(page, "tomato");
+  await page.getByRole("button", { name: "Exact" }).click();
+  await page.getByTestId("complete-sale").click();
+  await expect(page.getByTestId("receipt-total-amount")).toHaveText("₦500.00");
+  // The longer receipt: the number of items and a closing line (C83).
+  await expect(page.getByTestId("receipt-item-count")).toContainText("1");
+  await expect(page.getByTestId("receipt-footer")).not.toBeEmpty();
+  const saleUrl = page.url().replace("?sold=1", "");
+
+  await gotoReady(page, saleUrl);
+  await page.getByRole("button", { name: "Correct how it was paid" }).click();
+  const form = page.getByTestId("correct-payment-form");
+  await expect(form).toContainText("₦500.00 is recorded as Cash");
+  await form.getByLabel("How was it really paid?").selectOption({ label: "Transfer – GTBank" });
+  await form.getByLabel("Reference (optional)").fill("GT-5521");
+  await form.getByLabel("Why is it being corrected?").fill("Customer paid by transfer; Cash was chosen by mistake");
+  await form.getByRole("button", { name: "Save the correction" }).click();
+
+  await expect(page.getByTestId("payment-correction")).toContainText("₦500.00 entered as Cash, corrected to Transfer – GTBank by Green Valley Manager");
+  await expect(page.getByTestId("receipt-payment-1")).toContainText("Paid: Transfer – GTBank");
+  await expect(page.getByTestId("receipt-payment-1")).toContainText("Ref: GT-5521");
+  await page.goto("/activity");
+  await expect(page.getByText(/corrected how receipt T1-\d+ was paid: ₦500\.00 entered as Cash, corrected to Transfer – GTBank/)).toBeVisible();
+
+  // Cancelled again so the till and stock are as the next tests expect: the refund goes back by transfer.
+  await gotoReady(page, saleUrl);
+  await page.getByRole("button", { name: "Cancel this sale" }).click();
+  const cancel = page.getByTestId("cancel-sale-form");
+  await expect(cancel).toContainText("₦500.00 (Transfer – GTBank)");
+  await cancel.getByLabel("Why is it being cancelled?").fill("Test of the correction");
+  await cancel.getByRole("button", { name: "Cancel the sale and refund" }).click();
+  await expect(page.getByTestId("cancelled-mark")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Correct how it was paid" })).toHaveCount(0);
+});
+
 test("a customer is added, given a credit limit, buys partly on credit, and repays part of it", async ({ page }) => {
   // The cashier adds the customer. A new customer has no credit.
   await signIn(page, "gv.cashier");
@@ -542,7 +581,17 @@ test("a customer is added, given a credit limit, buys partly on credit, and repa
   await gotoReady(page, customerUrl);
   await expect(page.getByLabel("Credit limit (₦)")).toHaveCount(0);
   await expect(page.getByTestId("customer-purchases-card")).toHaveCount(0);
+  // A manager's Reports are the last 7 days of Sales and Collections only (C82): no other report, no export.
   await page.goto("/reports");
+  await expect(page).toHaveURL(/\/reports\/sales$/);
+  await expect(page.getByRole("heading", { name: "Sales report" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Last 7 days" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "This month" })).toHaveCount(0);
+  await expect(page.getByTestId("export-csv")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Customer debts" })).toHaveCount(0);
+  await page.goto("/reports/collections");
+  await expect(page.getByRole("heading", { name: "Collections report" })).toBeVisible();
+  await page.goto("/reports/debts");
   await expect(page).toHaveURL(/\/$/);
   await signOut(page);
 
@@ -1252,7 +1301,8 @@ test("the cashier closes the till with a count and is not told the result; the m
   // While it is open, the cashier is shown transfers taken but not the cash figure.
   await page.getByRole("link", { name: /See this session/ }).click();
   await expect(page.getByTestId("till-expected")).toHaveCount(0);
-  await expect(page.getByTestId("till-method-Transfer – GTBank")).toContainText("₦5,000.00");
+  // ₦5,000 split-paid by transfer, and ₦500 rung up as cash, corrected to this transfer and then cancelled (C81).
+  await expect(page.getByTestId("till-method-Transfer – GTBank")).toContainText("₦5,500.00");
   await expect(page.getByTestId("till-method-Cash")).toHaveCount(0);
   await page.goBack();
   await expect(page.locator("html")).toHaveAttribute("data-ready", "true");

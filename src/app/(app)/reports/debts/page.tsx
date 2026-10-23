@@ -15,6 +15,8 @@ const amount = (value: string) => (value === "0.00" ? <span className="text-mute
 
 export default async function DebtReportPage() {
   const context = await requirePagePermission("report.customerDebt.view");
+  // Not part of the last-7-days view of a manager (C82).
+  await requirePagePermission("report.pages.view");
   const { rows, totals } = await getDebtReport(context);
 
   return (

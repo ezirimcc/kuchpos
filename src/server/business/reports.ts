@@ -2,13 +2,14 @@ import "server-only";
 import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client";
 import { Decimal } from "@/lib/decimal";
-import { dayToDate, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
+import { dayToDate, formatDay, shopDayEnd, shopDayStart, shopToday } from "@/lib/format";
 import { moneyToString, sumMoney } from "@/lib/money";
 import type { AppContext } from "@/server/auth/context";
 import { parseInput } from "@/server/auth/users";
 import { businessDb } from "@/server/db/scoped";
 import { ValidationError } from "@/server/errors";
 import { PAGE_SIZE, type Paged, paged, pageNumber } from "@/server/paging";
+import { withCorrections } from "@/server/payment-corrections";
 import { authorize, can } from "@/server/permissions";
 
 /**
@@ -49,6 +50,30 @@ export function rangeOf(input: { from: string; to: string }): Range {
   const days = Math.round((dayToDate(to)!.getTime() - dayToDate(from)!.getTime()) / DAY_MS) + 1;
   if (days > MAX_DAYS) throw new ValidationError("A report can cover at most five years. Choose a shorter period.", { from: "At most five years." });
   return { from, to, days, start: shopDayStart(from)!, end: shopDayEnd(to)! };
+}
+
+/** How many shop days (today included) a manager may see in the Sales and Collections reports (C82). */
+export const RECENT_REPORT_DAYS = 7;
+
+/**
+ * The period of a Sales or Collections report, and whether it is limited. Those who open the
+ * Reports pages may ask for any period. A manager (C82) sees only the last 7 shop days: with no
+ * period asked, those days; a period reaching further back is refused. Limited reports leave out
+ * the comparison with the period before, which would show older days.
+ */
+function reportRange(context: AppContext, asked: { from: string; to: string }): { range: Range; limited: boolean } {
+  if (can(context, "report.pages.view")) return { range: rangeOf(asked), limited: false };
+  authorize(context, "report.recent.view");
+  const today = shopToday();
+  // Counted in calendar days of the shop: today and the six days before it.
+  const earliest = new Date(dayToDate(today)!.getTime() - (RECENT_REPORT_DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+  const range = rangeOf(asked.from || asked.to ? asked : { from: earliest, to: today });
+  if (range.from < earliest || range.to > today) {
+    throw new ValidationError(`You can see the last ${RECENT_REPORT_DAYS} days only, from ${formatDay(earliest)} to today. Choose a period inside them.`, {
+      from: `From ${formatDay(earliest)} at the earliest.`,
+    });
+  }
+  return { range, limited: true };
 }
 
 /** The period of the same length that ends the day before this one starts. */
@@ -154,7 +179,12 @@ async function salesFacts(db: Db, range: Range, need: { lines?: boolean; payment
     need.lines
       ? db.saleLine.findMany({ where: { sale: madeIn(range) }, select: { saleId: true, productId: true, productName: true, lineTotal: true, discountAmount: true, lineCost: true } })
       : [],
-    need.payments ? db.payment.findMany({ where: { sale: madeIn(range) }, select: { saleId: true, methodName: true, amount: true } }) : [],
+    need.payments
+      ? db.payment
+          .findMany({ where: { sale: madeIn(range) }, select: { id: true, saleId: true, methodId: true, methodName: true, kind: true, reference: true, amount: true } })
+          // As a manager corrected them (C81).
+          .then((rows) => withCorrections(db, rows))
+      : [],
   ]);
   const gather = <Row extends { saleId: string }>(rows: Row[]) => {
     const bySale = new Map<string, Row[]>();
@@ -207,18 +237,27 @@ const salesSchema = periodSchema.extend({ by: z.string().trim().optional().defau
 export async function getSalesReport(
   context: AppContext,
   input: unknown = {},
-): Promise<{ period: Period; previous: Period; by: SalesGrouping; summary: SalesSummary; before: SalesSummary; rows: SalesRow[]; showsCost: boolean }> {
+): Promise<{
+  period: Period;
+  /** The period before, and its figures; null for a manager limited to the last 7 days (C82). */
+  previous: Period | null;
+  by: SalesGrouping;
+  summary: SalesSummary;
+  before: SalesSummary | null;
+  rows: SalesRow[];
+  showsCost: boolean;
+  limited: boolean;
+}> {
   authorize(context, "report.sales.view");
-  authorize(context, "report.pages.view");
   const data = parseInput(salesSchema, input);
+  const { range, limited } = reportRange(context, data);
   const by = (SALES_GROUPS as readonly string[]).includes(data.by) ? (data.by as SalesGrouping) : "day";
-  const range = rangeOf(data);
-  const previous = before(range);
+  const previous = limited ? null : before(range);
   const db = businessDb(context);
   const seesCost = can(context, "cost.view");
   const [facts, earlier] = await Promise.all([
     salesFacts(db, range, { lines: by === "product" || by === "category", payments: by === "method" }),
-    salesFacts(db, previous),
+    previous ? salesFacts(db, previous) : null,
   ]);
 
   const madeAt = (sale: { offline: boolean; deviceTime: Date | null; createdAt: Date }) => (sale.offline && sale.deviceTime ? sale.deviceTime : sale.createdAt);
@@ -294,11 +333,12 @@ export async function getSalesReport(
   const withCost = seesCost && by !== "method";
   return {
     period: { from: range.from, to: range.to, days: range.days },
-    previous: { from: previous.from, to: previous.to, days: previous.days },
+    previous: previous ? { from: previous.from, to: previous.to, days: previous.days } : null,
     by,
     showsCost: withCost,
+    limited,
     summary: summarise(facts, seesCost),
-    before: summarise(earlier, seesCost),
+    before: earlier ? summarise(earlier, seesCost) : null,
     rows: ordered.map(([key, entry]) => {
       const net = entry.sales.minus(entry.refunds);
       const profit = net.minus(entry.cost);
@@ -340,18 +380,17 @@ export type CollectionRow = {
 export async function getCollectionsReport(
   context: AppContext,
   input: unknown = {},
-): Promise<{ period: Period; rows: CollectionRow[]; totals: Omit<CollectionRow, "methodName" | "kind">; cashNet: string }> {
+): Promise<{ period: Period; rows: CollectionRow[]; totals: Omit<CollectionRow, "methodName" | "kind">; cashNet: string; limited: boolean }> {
   authorize(context, "report.collections.view");
-  authorize(context, "report.pages.view");
-  const range = rangeOf(parseInput(periodSchema, input));
+  const { range, limited } = reportRange(context, parseInput(periodSchema, input));
   const db = businessDb(context);
   const inRange = { gte: range.start, lt: range.end };
   const [payments, repayments, refunds, returns] = await Promise.all([
     // A payment is received when its sale is made (for an offline sale, by the checkout's clock).
     db.payment.findMany({
       where: { OR: [{ sale: { offline: false }, createdAt: inRange }, { sale: { offline: true, deviceTime: inRange } }] },
-      select: { methodName: true, kind: true, amount: true },
-    }),
+      select: { id: true, methodId: true, methodName: true, kind: true, reference: true, amount: true },
+    }).then((rows) => withCorrections(db, rows)), // as a manager corrected them (C81)
     db.repayment.groupBy({ by: ["methodName", "kind"], where: { createdAt: inRange }, _sum: { amount: true } }),
     db.refund.groupBy({ by: ["methodName", "kind"], where: { createdAt: inRange }, _sum: { amount: true } }),
     db.saleReturn.groupBy({ by: ["refundMethodName", "refundKind"], where: { createdAt: inRange, refundKind: { not: null } }, _sum: { refundPaid: true } }),
@@ -395,6 +434,7 @@ export async function getCollectionsReport(
     })),
     totals: { fromSales: moneyToString(total.fromSales), fromDebts: moneyToString(total.fromDebts), refunded: moneyToString(total.refunded), net: moneyToString(net(total)) },
     cashNet: moneyToString(sumMoney(listed.filter((entry) => entry.kind === "CASH").map(net))),
+    limited,
   };
 }
 
@@ -955,6 +995,8 @@ export type ReportExport = { filename: string; header: string[]; rows: (string |
  */
 export async function exportReport(context: AppContext, input: unknown): Promise<ReportExport> {
   authorize(context, "report.export");
+  // The last-7-days view of a manager (C82) is for the screen only.
+  authorize(context, "report.pages.view");
   const { report, ...filters } = parseInput(exportSchema, input);
   const stamp = (period: Period) => `${period.from}_to_${period.to}`;
   const iso = (moment: Date | null) => (moment ? new Date(moment.getTime() + SHOP_OFFSET_MS).toISOString().slice(0, 16).replace("T", " ") : "");

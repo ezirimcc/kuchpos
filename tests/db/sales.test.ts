@@ -136,7 +136,7 @@ describe("a cash sale", () => {
 
     const detail = await getSale(world.a.as.CASHIER, { saleId: result.id });
     expect(detail).toMatchObject({ receiptNumber: "T1-000001", cashierName: "Test a.cashier", terminalCode: "T1", total: "8800.00", change: "1200.00", taxTotal: "0.00", printCount: 0 });
-    expect(detail.payments).toEqual([{ methodName: "Cash", kind: "CASH", amount: "8800.00", tendered: "10000.00", change: "1200.00", reference: null }]);
+    expect(detail.payments).toEqual([{ id: expect.any(String), methodName: "Cash", kind: "CASH", amount: "8800.00", tendered: "10000.00", change: "1200.00", reference: null, corrections: [] }]);
     expect(detail.lines).toEqual([
       { lineNumber: 1, productName: "A Seed Sachet", unitName: "carton", quantity: "1.000", baseQuantity: "100.000", unitPrice: "8500.00", lineTotal: "8500.00", taxAmount: "0.00", locationName: "Shelf" },
       { lineNumber: 2, productName: "A Seed Sachet", unitName: "single", quantity: "3.000", baseQuantity: "3.000", unitPrice: "100.00", lineTotal: "300.00", taxAmount: "0.00", locationName: "Shelf" },
@@ -579,6 +579,7 @@ describe("the checkout's copy of the catalogue, and receipts", () => {
       receiptFooter: "No refund after 7 days",
       taxNumber: "12345678-0001",
       autoPrintReceipts: true,
+      returnDays: 7,
     });
   });
 });

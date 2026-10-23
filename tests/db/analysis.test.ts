@@ -199,7 +199,7 @@ describe("how one product sold", () => {
       await expect(getProductSales(world.a.as[role], { productId: hoe.id, ...day }), role).rejects.toBeInstanceOf(ForbiddenError);
     }
     await expect(getProductSales(world.b.as.ADMIN, { productId: hoe.id, ...day })).rejects.toBeInstanceOf(NotFoundError);
-    // The reports themselves are closed to a manager now, though the sales list is not.
-    await expect(getSalesReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    // A manager sees the Sales report for the last 7 days only (C82; C70 had closed it).
+    expect((await getSalesReport(world.a.as.MANAGER)).limited).toBe(true);
   });
 });

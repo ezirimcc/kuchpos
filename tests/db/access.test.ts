@@ -29,6 +29,7 @@ import { getDb } from "@/server/db/client";
 import { ForbiddenError, NotFoundError } from "@/server/errors";
 import * as businesses from "@/server/platform/businesses";
 import * as backups from "@/server/platform/backups";
+import * as paymentCorrections from "@/server/business/payment-corrections";
 import * as errorLog from "@/server/platform/error-log";
 import * as overview from "@/server/platform/overview";
 import * as owners from "@/server/platform/owners";
@@ -648,12 +649,13 @@ const OPERATIONS: Operation[] = [
   },
   {
     name: "reports.getSalesReport",
-    allowed: REPORT_PAGE_READERS,
+    // A manager too, for the last 7 days (C82).
+    allowed: REPORT_READERS,
     run: (context) => reports.getSalesReport(context),
   },
   {
     name: "reports.getCollectionsReport",
-    allowed: REPORT_PAGE_READERS,
+    allowed: REPORT_READERS,
     run: (context) => reports.getCollectionsReport(context),
   },
   {
@@ -743,6 +745,24 @@ const OPERATIONS: Operation[] = [
     name: "returns.listReturns",
     allowed: SALES_VIEWERS,
     run: (context) => returns.listReturns(context),
+  },
+  {
+    name: "paymentCorrections.correctPayment",
+    allowed: PRODUCT_MANAGERS,
+    run: async (context) =>
+      paymentCorrections.correctPayment(context, {
+        requestId: randomUUID(),
+        paymentId: (await getDb().payment.findFirstOrThrow({ where: { saleId: saleInA } })).id,
+        methodId: world.a.transferMethodId,
+        reason: "Paid by transfer",
+      }),
+    runAgainstB: async (context) =>
+      paymentCorrections.correctPayment(context, {
+        requestId: randomUUID(),
+        paymentId: (await getDb().payment.findFirstOrThrow({ where: { saleId: saleInB } })).id,
+        methodId: world.a.transferMethodId,
+        reason: "Paid by transfer",
+      }),
   },
   {
     name: "sales.cancelSale",
@@ -1251,7 +1271,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(approvals).map((name) => `approvals.${name}`),
       ...Object.keys(offline).map((name) => `offline.${name}`),
       ...Object.keys(returns).map((name) => `returns.${name}`),
-      ...Object.keys(reports).filter((name) => !["rangeOf", "madeIn", "periodSchema"].includes(name)).map((name) => `reports.${name}`),
+      ...Object.keys(reports).filter((name) => !["rangeOf", "madeIn", "periodSchema", "RECENT_REPORT_DAYS"].includes(name)).map((name) => `reports.${name}`),
       ...Object.keys(exports).map((name) => `exports.${name}`),
       ...Object.keys(importHistory).map((name) => `importHistory.${name}`),
       ...Object.keys(imports).filter((name) => name !== "importNumber" && name !== "OPENING_STOCK_SUPPLIER").map((name) => `imports.${name}`),
@@ -1262,6 +1282,7 @@ describe("every server operation is listed here", () => {
       ...Object.keys(system).map((name) => `system.${name}`),
       ...Object.keys(errorLog).map((name) => `errorLog.${name}`),
       ...Object.keys(backups).map((name) => `backups.${name}`),
+      ...Object.keys(paymentCorrections).map((name) => `paymentCorrections.${name}`),
     ].sort();
     expect(OPERATIONS.map((operation) => operation.name).sort()).toEqual(exported);
   });

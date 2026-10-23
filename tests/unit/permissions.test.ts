@@ -39,6 +39,7 @@ const SPEC_TABLE: Array<{ row: string; permission: Permission; allowed: Business
   { row: "Request an extra discount", permission: "discount.request", allowed: [A, M, C] },
   { row: "Approve an extra discount", permission: "discount.approve", allowed: [A, M] },
   { row: "Cancel a whole sale on the same day, with a note (C48)", permission: "sale.cancel", allowed: [A, M] },
+  { row: "Correct how a sale was paid, while its till is open (C81)", permission: "payment.correct", allowed: [A, M] },
   { row: "Void a sale / process a return — request", permission: "return.request", allowed: [A, M, C] },
   { row: "Void a sale / process a return — without needing approval", permission: "return.approve", allowed: [A, M] },
   { row: "Open and close own till session", permission: "till.operateOwn", allowed: [A, M, C] },
@@ -70,6 +71,7 @@ const SPEC_TABLE: Array<{ row: string; permission: Permission; allowed: Business
   { row: "Discounts & approvals report", permission: "report.discounts.view", allowed: [A, M, AC] },
   { row: "Export reports to spreadsheet", permission: "report.export", allowed: [A, M, AC] },
   { row: "Open the Reports pages", permission: "report.pages.view", allowed: [A, AC, S] },
+  { row: "Sales and Collections reports for the last 7 days only (C82)", permission: "report.recent.view", allowed: [A, M] },
   { row: "Analysis charts on the home page", permission: "dashboard.analysis.view", allowed: [A] },
 ];
 

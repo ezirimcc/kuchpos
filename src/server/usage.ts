@@ -35,6 +35,7 @@ export const USER_COLUMNS: Record<string, string[]> = {
   payment: ["receivedByUserId"],
   priceChange: ["changedByUserId"],
   refund: ["refundedByUserId"],
+  paymentCorrection: ["correctedByUserId"],
   repayment: ["receivedByUserId"],
   sale: ["cashierUserId", "sentByUserId"],
   saleCancellation: ["cancelledByUserId"],
@@ -113,9 +114,9 @@ export function supplierWasUsed(db: Reader, supplierId: string): Promise<boolean
   return anyRow(db, ["goodsReceipt", "goodsReceiptVersion"], { supplierId });
 }
 
-/** True once a payment method has taken a payment or a repayment, or given a refund. */
-export function paymentMethodWasUsed(db: Reader, methodId: string): Promise<boolean> {
-  return anyRow(db, ["payment", "refund", "repayment"], { methodId });
+/** True once a payment method has taken a payment or a repayment, given a refund, or been named in a payment correction. */
+export async function paymentMethodWasUsed(db: Reader, methodId: string): Promise<boolean> {
+  return (await anyRow(db, ["payment", "refund", "repayment"], { methodId })) || (await anyRow(db, ["paymentCorrection"], { toMethodId: methodId }));
 }
 
 /** True once a checkout terminal has made a sale or had a till opened. */

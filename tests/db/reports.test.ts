@@ -335,9 +335,9 @@ describe("who may read and export reports", () => {
       await expect(getCustomerReport(world.a.as[role], day), role).rejects.toBeInstanceOf(ForbiddenError);
       await expect(exportReport(world.a.as[role], { report: "stock-movements", ...day }), role).rejects.toBeInstanceOf(ForbiddenError);
     }
-    // A manager reads the sales list but may not open the Reports pages (C70).
-    await expect(getSalesReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
-    await expect(getCollectionsReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
+    // A manager may not open the other Reports pages (C70); Sales and Collections only for the last 7 days (C82).
+    expect((await getSalesReport(world.a.as.MANAGER)).limited).toBe(true);
+    expect((await getCollectionsReport(world.a.as.MANAGER)).limited).toBe(true);
     await expect(getDebtReport(world.a.as.MANAGER)).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getStockReport(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getStockMovements(world.a.as.MANAGER, day)).rejects.toBeInstanceOf(ForbiddenError);

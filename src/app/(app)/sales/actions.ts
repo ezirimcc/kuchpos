@@ -4,6 +4,7 @@ import type { FormState } from "@/lib/form-state";
 import { runAction } from "@/server/action";
 import { type ApprovalGiven, approveAtScreen, decideApprovalRequest, requestApproval, withdrawApprovalRequest } from "@/server/business/approvals";
 import { reviewOfflineException } from "@/server/business/offline";
+import { correctPayment } from "@/server/business/payment-corrections";
 import { cancelSale, postSale, recordReceiptPrint, type SaleResult } from "@/server/business/sales";
 
 /** Saves a sale sent whole from the checkout screen. On success the answer carries the saved sale. */
@@ -22,6 +23,11 @@ export async function recordReceiptPrintAction(saleId: string): Promise<FormStat
     reprint = (await recordReceiptPrint(context, { saleId })).reprint;
   });
   return result.status === "success" ? { ...result, reprint } : result;
+}
+
+/** Corrects how a payment of a sale was made (C81): the payment stays, a correction is kept beside it. */
+export async function correctPaymentAction(input: unknown): Promise<FormState> {
+  return runAction({ success: "How it was paid has been corrected." }, (context) => correctPayment(context, input));
 }
 
 /** Cancels a whole sale: goods back to stock, payments refunded, the sale marked as cancelled. */

@@ -1,15 +1,16 @@
 import "server-only";
 import { Decimal } from "@/lib/decimal";
 import type { businessDb } from "@/server/db/scoped";
+import { kindShifts } from "@/server/payment-corrections";
 
 type Db = ReturnType<typeof businessDb>;
-type Reader = Pick<Db, "payment" | "refund" | "repayment" | "tillCashRequest" | "saleReturn">;
+type Reader = Pick<Db, "payment" | "paymentCorrection" | "refund" | "repayment" | "tillCashRequest" | "saleReturn">;
 
 /**
  * What moved in and out of a till's drawer during a session, apart from the opening float.
  * The ONE place this is worked out: expected cash at closing, "does the drawer hold enough
  * for this refund / this cash-out", and the session page all use it. Cash handed back for
- * returned goods is part of `refunds`.
+ * returned goods is part of `refunds`. Cash sales count payments as corrected by a manager (C81).
  *
  * Not an operation: callers have checked who is asking and pass their business-scoped client
  * (or the transaction they are in).
@@ -27,9 +28,11 @@ export async function drawerMovements(
     db.tillCashRequest.aggregate({ where: { ...approved, direction: "OUT" }, _sum: { amount: true } }),
   ]);
   const returned = await db.saleReturn.aggregate({ where: { tillSessionId: sessionId, refundKind: "CASH" }, _sum: { refundPaid: true } });
+  // A payment corrected to or from cash by a manager (C81) moves its amount in or out of the drawer.
+  const corrected = (await kindShifts(db, { tillSessionId: sessionId })).get("CASH") ?? new Decimal(0);
   const amount = (sum: { _sum: { amount: { toFixed(places: number): string } | null } }) => new Decimal(sum._sum.amount?.toFixed(2) ?? "0");
   const parts = {
-    sales: amount(taken),
+    sales: amount(taken).plus(corrected),
     repayments: amount(repaid),
     refunds: amount(refunded).plus(returned._sum.refundPaid?.toFixed(2) ?? "0"),
     cashIn: amount(putIn),

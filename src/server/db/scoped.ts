@@ -57,6 +57,7 @@ const BUSINESS_SCOPE: Record<string, { filter: (businessId: string) => WhereFrag
   TillSessionClose: { filter: (businessId) => ({ businessId }), stamp: true },
   SaleCancellation: { filter: (businessId) => ({ businessId }), stamp: true },
   Refund: { filter: (businessId) => ({ businessId }), stamp: true },
+  PaymentCorrection: { filter: (businessId) => ({ businessId }), stamp: true },
   Customer: { filter: (businessId) => ({ businessId }), stamp: true },
   CustomerAccountEntry: { filter: (businessId) => ({ businessId }), stamp: true },
   CreditLimitChange: { filter: (businessId) => ({ businessId }), stamp: true },

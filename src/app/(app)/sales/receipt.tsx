@@ -13,10 +13,12 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
       .map((line) => line.trim())
       .filter(Boolean);
   const hasTax = sale.taxTotal !== "0.00";
+  const footer = lines(sale.business.receiptFooter);
+  const returnDays = sale.business.returnDays;
 
   return (
     <div
-      className="receipt-paper flex flex-col gap-1.5 rounded-md border bg-white p-2 leading-snug break-words text-black shadow-sm"
+      className="receipt-paper flex flex-col gap-2.5 rounded-md border bg-white p-2 leading-relaxed break-words text-black shadow-sm"
       data-width={sale.paperWidth}
       data-testid="receipt"
     >
@@ -65,6 +67,11 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
           </div>
         ))}
       </div>
+
+      <p className="flex justify-between gap-2 border-t border-dashed border-black pt-1" data-testid="receipt-item-count">
+        <span>Items</span>
+        <span>{sale.lines.length}</span>
+      </p>
 
       <div className="border-t border-dashed border-black pt-1 tabular-nums">
         {sale.discountAmount !== "0.00" && (
@@ -126,13 +133,19 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
         )}
       </div>
 
-      {lines(sale.business.receiptFooter).length > 0 && (
-        <div className="border-t border-dashed border-black pt-1 text-center">
-          {lines(sale.business.receiptFooter).map((line, index) => (
-            <p key={index}>{line}</p>
-          ))}
-        </div>
-      )}
+      <div className="border-t border-dashed border-black pt-1 text-center" data-testid="receipt-footer">
+        {/* The shop's own closing lines (Settings → Receipt text); a plain thank-you when none are set. */}
+        {(footer.length > 0 ? footer : ["Thank you for your patronage!"]).map((line, index) => (
+          <p key={index}>{line}</p>
+        ))}
+        {returnDays !== undefined && returnDays > 0 && !sale.cancellation && (
+          <p className="mt-1 text-[0.9em]" data-testid="receipt-return-rule">
+            Goods may be returned within {returnDays} day{returnDays === 1 ? "" : "s"} with this receipt.
+          </p>
+        )}
+      </div>
+      {/* Blank paper at the end, so tearing it off never cuts through the last line. */}
+      <div className="h-[10mm]" aria-hidden />
     </div>
   );
 }

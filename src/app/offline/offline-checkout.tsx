@@ -59,17 +59,19 @@ function receiptFor(kit: StoredKit, sale: SaleToSave, receiptNumber: string): Of
       locationName: line.fromStoreroom ? "Storeroom" : "Shelf",
     };
   });
-  const payments = sale.payments.map((payment) => {
+  const payments = sale.payments.map((payment, index) => {
     const method = catalogue.paymentMethods.find((candidate) => candidate.id === payment.methodId)!;
     const cash = method.kind === "CASH";
     const tendered = cash ? (payment.tendered === "" ? payment.amount : moneyToString(new Decimal(payment.tendered))) : null;
     return {
+      id: `${sale.requestId}-${index}`,
       methodName: method.name,
       kind: method.kind,
       amount: payment.amount,
       tendered,
       change: tendered === null ? null : moneyToString(new Decimal(tendered).minus(payment.amount)),
       reference: payment.reference || null,
+      corrections: [],
     };
   });
   return {
@@ -84,6 +86,7 @@ function receiptFor(kit: StoredKit, sale: SaleToSave, receiptNumber: string): Of
     taxTotal: moneyToString(sumMoney(lines.map((line) => new Decimal(line.taxAmount)))),
     costTotal: null,
     payments,
+    paymentCorrection: null,
     change: moneyToString(sumMoney(payments.map((payment) => new Decimal(payment.change ?? "0")))),
     subtotal: sale.expectedTotal,
     discountAmount: "0.00",

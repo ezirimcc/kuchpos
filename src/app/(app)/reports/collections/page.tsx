@@ -10,7 +10,7 @@ import { nairaFromText } from "@/lib/format";
 import { requirePagePermission } from "@/server/auth/request";
 import { getCollectionsReport } from "@/server/business/reports";
 import { ValidationError } from "@/server/errors";
-import { ExportLink, PeriodLinks, periodText, ReportTabs } from "../report-parts";
+import { ExportLink, PeriodLinks, periodText, recentPeriods, ReportTabs } from "../report-parts";
 
 export const metadata: Metadata = { title: "Collections report — KuchPos" };
 
@@ -42,9 +42,9 @@ export default async function CollectionsReportPage({ searchParams }: PageProps<
         <ExportLink context={context} report="collections" params={{ from: period.from, to: period.to }} />
       </PageHeader>
       <ReportTabs context={context} current="collections" />
-      {problem && <Alert variant="destructive">{problem} Showing this month instead.</Alert>}
+      {problem && <Alert variant="destructive">{problem} Showing {report.limited ? "the last 7 days" : "this month"} instead.</Alert>}
       <div className="flex flex-wrap items-center gap-3">
-        <PeriodLinks path="/reports/collections" period={period} />
+        <PeriodLinks path="/reports/collections" period={period} periods={report.limited ? recentPeriods() : undefined} />
         <Suspense>
           <FilterDate name="from" label="From" />
           <FilterDate name="to" label="To" />

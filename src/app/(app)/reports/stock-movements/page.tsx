@@ -33,6 +33,8 @@ function text(value: string | string[] | undefined): string {
 
 export default async function StockMovementsPage({ searchParams }: PageProps<"/reports/stock-movements">) {
   const context = await requirePagePermission("report.stock.view");
+  // Not part of the last-7-days view of a manager (C82).
+  await requirePagePermission("report.pages.view");
   const params = await searchParams;
   const filters = { q: text(params.q), type: text(params.type), location: text(params.location), from: text(params.from), to: text(params.to) };
   const ask = (dates: { from: string; to: string }) =>

@@ -18,6 +18,7 @@ import { cashierOfPass, type OfflineNote } from "@/server/offline-cashier";
 import { drawerMovements } from "@/server/till-cash";
 import { addToBatch, batchFor, settleStoreroomBatches } from "@/server/stock-batches";
 import { coverStockOwed } from "@/server/stock-owed";
+import { type CorrectionView, withCorrections } from "@/server/payment-corrections";
 import { authorize, can } from "@/server/permissions";
 import { type CheckedPayment, writeSale } from "@/server/sale-write";
 import { APPROVAL_MINUTES, checkDiscount, checkSaleLines, creditFingerprint, discountFingerprint, saleLinesSchema } from "@/server/sale-lines";
@@ -789,8 +790,9 @@ export type SaleDetail = {
   taxTotal: string;
   /** What the goods cost, and the profit — only for those who may see cost prices. */
   costTotal: string | null;
-  /** How it was paid: one entry, or several when it was split. */
+  /** How it was paid: one entry, or several when it was split — as corrected by a manager, if it was (C81). */
   payments: {
+    id: string;
     methodName: string;
     kind: PaymentKindValue;
     amount: string;
@@ -798,7 +800,11 @@ export type SaleDetail = {
     tendered: string | null;
     change: string | null;
     reference: string | null;
+    /** Corrections of how it was paid, oldest first (C81). */
+    corrections: CorrectionView[];
   }[];
+  /** Set when this person may correct how it was paid now (C81): the ways of paying to choose from. */
+  paymentCorrection: { methods: { id: string; name: string; kind: PaymentKindValue }[] } | null;
   /** Cash handed back to the customer in all. */
   change: string;
   /** What the items came to before any discount; the discount; and who approved it. */
@@ -832,7 +838,7 @@ export type SaleDetail = {
   /** How many times the receipt has been printed so far. */
   printCount: number;
   /** What is printed around the sale: taken from the business's settings as they are now. */
-  business: { name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null; autoPrintReceipts: boolean };
+  business: { name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null; autoPrintReceipts: boolean; returnDays?: number };
   lines: {
     lineNumber: number;
     productName: string;
@@ -870,9 +876,17 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         _count: { select: { receiptPrints: true } },
       },
     }),
-    db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true, autoPrintReceipts: true } }),
+    db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true, autoPrintReceipts: true, returnDays: true } }),
   ]);
   if (!row || !business) throw new NotFoundError("That sale could not be found.");
+  const payments = await withCorrections(db, row.payments);
+  // How it was paid can be corrected while its till is still open, and not once it is cancelled (C81).
+  const correctable =
+    can(context, "payment.correct") &&
+    row.cancellation === null &&
+    row.tillSessionId !== null &&
+    (await db.tillSessionClose.count({ where: { sessionId: row.tillSessionId } })) === 0 &&
+    payments.length > 0;
   return {
     id: row.id,
     receiptNumber: row.receiptNumber,
@@ -884,15 +898,21 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
     taxRatePercent: row.taxRatePercent.toFixed(2),
     taxTotal: row.taxTotal.toFixed(2),
     costTotal: can(context, "cost.view") ? row.costTotal.toFixed(2) : null,
-    payments: row.payments.map((payment) => ({
+    payments: payments.map((payment) => ({
+      id: payment.id,
       methodName: payment.methodName,
       kind: payment.kind,
       amount: payment.amount.toFixed(2),
-      tendered: payment.tendered?.toFixed(2) ?? null,
-      change: payment.changeGiven?.toFixed(2) ?? null,
+      // What was handed over and the change only mean something for a payment that is still cash.
+      tendered: payment.kind === "CASH" ? (payment.tendered?.toFixed(2) ?? null) : null,
+      change: payment.kind === "CASH" ? (payment.changeGiven?.toFixed(2) ?? null) : null,
       reference: payment.reference,
+      corrections: payment.corrections,
     })),
-    change: moneyToString(sumMoney(row.payments.map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
+    paymentCorrection: correctable
+      ? { methods: await db.paymentMethod.findMany({ where: { deactivatedAt: null }, orderBy: [{ builtIn: "desc" }, { name: "asc" }], select: { id: true, name: true, kind: true } }) }
+      : null,
+    change: moneyToString(sumMoney(payments.filter((payment) => payment.kind === "CASH").map((payment) => new Decimal(payment.changeGiven?.toFixed(2) ?? "0")))),
     subtotal: moneyToString(new Decimal(row.total.toFixed(2)).plus(row.discountAmount.toFixed(2))),
     discountAmount: row.discountAmount.toFixed(2),
     discountPercent: row.discountPercent?.toFixed(2) ?? null,
@@ -1014,8 +1034,10 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
         cancellation: { select: { id: true } },
       },
     });
-  const sale = await load();
-  if (!sale) throw new NotFoundError("That sale could not be found.");
+  const found = await load();
+  if (!found) throw new NotFoundError("That sale could not be found.");
+  // Money goes back the way it was really paid, after any manager's correction (C81).
+  const sale = { ...found, payments: await withCorrections(db, found.payments) };
   const refunded = moneyToString(sumMoney(sale.payments.map((payment) => new Decimal(payment.amount.toFixed(2)))));
   const already = (): CancelResult => ({ id: sale.id, receiptNumber: sale.receiptNumber, refunded, alreadyCancelled: true });
   if (sale.cancellation) return already();
@@ -1042,6 +1064,11 @@ export async function cancelSale(context: AppContext, input: unknown): Promise<C
       async (tx) => {
         // The terminal's "turn", as for selling and for opening and closing its till.
         await tx.terminal.update({ where: { id: sale.terminalId }, data: { updatedAt: new Date() }, select: { id: true } });
+        // A correction of how it was paid takes the same turn: one made since it was read changes the refunds.
+        const corrections = await tx.paymentCorrection.count({ where: { saleId: sale.id } });
+        if (corrections !== sale.payments.reduce((count, payment) => count + payment.corrections.length, 0)) {
+          throw new ValidationError("Nothing was cancelled: how this sale was paid has just been corrected. Open the sale again and cancel it.");
+        }
         const till = await tx.tillSession.findFirst({
           where: { terminalId: sale.terminalId, close: null },
           select: { id: true, openingFloat: true },

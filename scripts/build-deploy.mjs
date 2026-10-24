@@ -74,7 +74,19 @@ run(esbuild, [
   `--outfile=${join(bundle, "tools", "seed.cjs")}`,
 ]);
 
-const version = execFileSync("git", ["describe", "--tags", "--always", "--dirty"], { cwd: root, encoding: "utf8" }).trim();
+const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+let version = git("describe", "--tags", "--always", "--dirty");
+// When two checkpoints mark the same version (m16 and m17 do), name it after the newest one.
+const described = /^(.+)-(\d+)-g([0-9a-f]+)(-dirty)?$/.exec(version);
+const base = described ? described[1] : version.replace(/-dirty$/, "");
+const sameCommit = (() => {
+  try {
+    return git("tag", "--points-at", `${base}^{commit}`, "--sort=-version:refname").split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+})();
+if (sameCommit.length > 1 && sameCommit.includes(base)) version = version.replace(base, sameCommit[0]);
 writeFileSync(join(bundle, "VERSION.txt"), `${version}\nbuilt ${new Date().toISOString()}\n`);
 
 console.log("4/5  Checking that no secrets are included …");

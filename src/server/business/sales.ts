@@ -838,7 +838,7 @@ export type SaleDetail = {
   /** How many times the receipt has been printed so far. */
   printCount: number;
   /** What is printed around the sale: taken from the business's settings as they are now. */
-  business: { name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null; autoPrintReceipts: boolean; returnDays?: number };
+  business: { name: string; receiptHeader: string | null; receiptFooter: string | null; taxNumber: string | null; autoPrintReceipts: boolean };
   lines: {
     lineNumber: number;
     productName: string;
@@ -876,7 +876,7 @@ export async function getSale(context: AppContext, input: unknown): Promise<Sale
         _count: { select: { receiptPrints: true } },
       },
     }),
-    db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true, autoPrintReceipts: true, returnDays: true } }),
+    db.business.findFirst({ select: { name: true, receiptHeader: true, receiptFooter: true, taxNumber: true, autoPrintReceipts: true } }),
   ]);
   if (!row || !business) throw new NotFoundError("That sale could not be found.");
   const payments = await withCorrections(db, row.payments);

@@ -579,7 +579,6 @@ describe("the checkout's copy of the catalogue, and receipts", () => {
       receiptFooter: "No refund after 7 days",
       taxNumber: "12345678-0001",
       autoPrintReceipts: true,
-      returnDays: 7,
     });
   });
 });

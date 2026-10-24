@@ -14,7 +14,6 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
       .filter(Boolean);
   const hasTax = sale.taxTotal !== "0.00";
   const footer = lines(sale.business.receiptFooter);
-  const returnDays = sale.business.returnDays;
 
   return (
     <div
@@ -138,11 +137,6 @@ export function Receipt({ sale, reprint }: { sale: SaleDetail; reprint: boolean 
         {(footer.length > 0 ? footer : ["Thank you for your patronage!"]).map((line, index) => (
           <p key={index}>{line}</p>
         ))}
-        {returnDays !== undefined && returnDays > 0 && !sale.cancellation && (
-          <p className="mt-1 text-[0.9em]" data-testid="receipt-return-rule">
-            Goods may be returned within {returnDays} day{returnDays === 1 ? "" : "s"} with this receipt.
-          </p>
-        )}
       </div>
       {/* Blank paper at the end, so tearing it off never cuts through the last line. */}
       <div className="h-[10mm]" aria-hidden />
